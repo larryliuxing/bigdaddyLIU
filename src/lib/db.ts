@@ -39,6 +39,7 @@ const DEFAULT_MEMBERS: Array<{ name: string; role: MemberRole }> = [
   { name: "丹", role: "normal" },
   { name: "安格斯牛堡", role: "normal" },
   { name: "熠珠", role: "normal" },
+  { name: "唐小虎", role: "normal" },
 ];
 
 export function ensureDb(): Database.Database {
@@ -139,6 +140,17 @@ export function ensureDb(): Database.Database {
       amount REAL NOT NULL DEFAULT 0,
       is_temporary INTEGER NOT NULL DEFAULT 0,
       note TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS leaderboard_entries (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      member_id INTEGER NOT NULL UNIQUE,
+      member_name TEXT NOT NULL,
+      combat_power INTEGER NOT NULL,
+      ocr_name TEXT NOT NULL,
+      image_data TEXT,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY(member_id) REFERENCES members(id)
     );
   `);
 
@@ -1164,3 +1176,88 @@ export function matchNamesFromText(text: string): {
     unrecognized,
   };
 }
+
+/* -------------------- Leaderboard -------------------- */
+
+type LeaderboardRow = {
+  id: number;
+  member_id: number;
+  member_name: string;
+  combat_power: number;
+  ocr_name: string;
+  image_data: string | null;
+  updated_at: string;
+};
+
+export function upsertLeaderboardEntry(input: {
+  memberId: number;
+  memberName: string;
+  combatPower: number;
+  ocrName: string;
+  imageData?: string | null;
+}) {
+  ensureDb()
+    .prepare(
+      `INSERT INTO leaderboard_entries
+         (member_id, member_name, combat_power, ocr_name, image_data, updated_at)
+       VALUES (?, ?, ?, ?, ?, datetime('now'))
+       ON CONFLICT(member_id) DO UPDATE SET
+         member_name = excluded.member_name,
+         combat_power = excluded.combat_power,
+         ocr_name = excluded.ocr_name,
+         image_data = excluded.image_data,
+         updated_at = datetime('now')`,
+    )
+    .run(
+      input.memberId,
+      input.memberName,
+      input.combatPower,
+      input.ocrName,
+      input.imageData ?? null,
+    );
+}
+
+export function deleteLeaderboardEntry(memberId: number): boolean {
+  const result = ensureDb()
+    .prepare(`DELETE FROM leaderboard_entries WHERE member_id = ?`)
+    .run(memberId);
+  return result.changes > 0;
+}
+
+export function getLeaderboardBoard(thresholdRatio = 0.85) {
+  const rows = ensureDb()
+    .prepare(
+      `SELECT * FROM leaderboard_entries ORDER BY combat_power DESC, updated_at ASC, id ASC`,
+    )
+    .all() as LeaderboardRow[];
+
+  const count = rows.length;
+  const average =
+    count === 0
+      ? 0
+      : rows.reduce((sum, row) => sum + row.combat_power, 0) / count;
+  const threshold = average * thresholdRatio;
+
+  const entries = rows.map((row, index) => ({
+    id: row.id,
+    memberId: row.member_id,
+    memberName: row.member_name,
+    combatPower: row.combat_power,
+    ocrName: row.ocr_name,
+    imageData: row.image_data,
+    updatedAt: row.updated_at,
+    rank: index + 1,
+    belowThreshold: count > 0 ? row.combat_power < threshold : false,
+  }));
+
+  return {
+    entries,
+    stats: {
+      count,
+      average: Math.round(average * 10) / 10,
+      threshold: Math.round(threshold * 10) / 10,
+      thresholdRatio,
+    },
+  };
+}
+

@@ -122,3 +122,22 @@ export interface AuctionRoomState {
   dividends: DividendEntry[];
   dividendsCalculated: boolean;
 }
+
+export interface LeaderboardEntry {
+  id: number;
+  memberId: number;
+  memberName: string;
+  combatPower: number;
+  ocrName: string;
+  imageData: string | null;
+  updatedAt: string;
+  rank: number;
+  belowThreshold: boolean;
+}
+
+export interface LeaderboardStats {
+  count: number;
+  average: number;
+  threshold: number; // average * 0.85
+  thresholdRatio: number;
+}
