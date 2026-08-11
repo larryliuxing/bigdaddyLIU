@@ -152,6 +152,58 @@ export function ensureDb(): Database.Database {
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
       FOREIGN KEY(member_id) REFERENCES members(id)
     );
+
+    CREATE TABLE IF NOT EXISTS bosses (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL UNIQUE,
+      color TEXT NOT NULL DEFAULT '#c084fc',
+      spawn_rate INTEGER NOT NULL DEFAULT 50,
+      interval_hours REAL NOT NULL DEFAULT 6,
+      last_kill_at TEXT,
+      next_spawn_at TEXT,
+      drops_note TEXT,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS boss_vote_rounds (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      boss_id INTEGER NOT NULL,
+      vote_type TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'open',
+      started_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      resolved_at TEXT,
+      FOREIGN KEY(boss_id) REFERENCES bosses(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS boss_votes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      round_id INTEGER NOT NULL,
+      boss_id INTEGER NOT NULL,
+      vote_type TEXT NOT NULL,
+      member_id INTEGER NOT NULL,
+      member_name TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(round_id, member_id),
+      FOREIGN KEY(round_id) REFERENCES boss_vote_rounds(id),
+      FOREIGN KEY(boss_id) REFERENCES bosses(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS boss_chat (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      member_id INTEGER,
+      member_name TEXT NOT NULL,
+      message TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS boss_presence (
+      member_id INTEGER PRIMARY KEY,
+      member_name TEXT NOT NULL,
+      last_seen_at TEXT NOT NULL
+    );
   `);
 
   seedIfEmpty(db);
@@ -207,6 +259,24 @@ function seedIfEmpty(database: Database.Database) {
          VALUES (1, '15:00', 30, 20, 1)`,
       )
       .run();
+  }
+
+  const bossCount = database
+    .prepare("SELECT COUNT(*) as count FROM bosses")
+    .get() as { count: number };
+  if (bossCount.count === 0) {
+    const insertBoss = database.prepare(
+      `INSERT INTO bosses (name, color, spawn_rate, interval_hours, sort_order, drops_note)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    );
+    const defaults = [
+      ["魔图拉", "#c084fc", 50, 6, 0, "可查询掉落物"],
+      ["潘柴特", "#f472b6", 100, 12, 1, "可查询掉落物"],
+      ["坦佛斯特", "#fb7185", 50, 6, 2, "可查询掉落物"],
+    ] as const;
+    for (const row of defaults) {
+      insertBoss.run(...row);
+    }
   }
 }
 
@@ -1260,4 +1330,404 @@ export function getLeaderboardBoard(thresholdRatio = 0.85) {
     },
   };
 }
+
+/* -------------------- Boss Timer -------------------- */
+
+export const BOSS_VOTE_NEED = 3;
+export const BOSS_VOTE_WINDOW_SECONDS = 10;
+export const BOSS_PRESENCE_TTL_SECONDS = 45;
+
+type BossRow = {
+  id: number;
+  name: string;
+  color: string;
+  spawn_rate: number;
+  interval_hours: number;
+  last_kill_at: string | null;
+  next_spawn_at: string | null;
+  drops_note: string | null;
+  sort_order: number;
+  enabled: number;
+};
+
+type RoundRow = {
+  id: number;
+  boss_id: number;
+  vote_type: "killed" | "not_spawned";
+  status: "open" | "passed" | "expired";
+  started_at: string;
+  expires_at: string;
+  resolved_at: string | null;
+};
+
+function remainingFrom(iso: string | null): number | null {
+  if (!iso) return null;
+  return Math.max(0, Math.floor((new Date(iso).getTime() - Date.now()) / 1000));
+}
+
+function expireOpenRounds(database: Database.Database = ensureDb()) {
+  const now = new Date().toISOString();
+  database
+    .prepare(
+      `UPDATE boss_vote_rounds
+       SET status = 'expired', resolved_at = ?
+       WHERE status = 'open' AND expires_at <= ?`,
+    )
+    .run(now, now);
+}
+
+function getRoundVotes(roundId: number) {
+  return ensureDb()
+    .prepare(
+      `SELECT member_id, member_name, created_at
+       FROM boss_votes WHERE round_id = ? ORDER BY id ASC`,
+    )
+    .all(roundId) as Array<{
+    member_id: number;
+    member_name: string;
+    created_at: string;
+  }>;
+}
+
+function toRound(row: RoundRow): import("./types").BossVoteRound {
+  const votes = getRoundVotes(row.id).map((v) => ({
+    memberId: v.member_id,
+    memberName: v.member_name,
+    createdAt: v.created_at,
+  }));
+  return {
+    id: row.id,
+    bossId: row.boss_id,
+    voteType: row.vote_type,
+    status: row.status,
+    startedAt: row.started_at,
+    expiresAt: row.expires_at,
+    resolvedAt: row.resolved_at,
+    votes,
+    voteCount: votes.length,
+    remainingSeconds: remainingFrom(row.expires_at) ?? 0,
+  };
+}
+
+function getOpenRoundForBoss(bossId: number) {
+  expireOpenRounds();
+  const row = ensureDb()
+    .prepare(
+      `SELECT * FROM boss_vote_rounds
+       WHERE boss_id = ? AND status = 'open'
+       ORDER BY id DESC LIMIT 1`,
+    )
+    .get(bossId) as RoundRow | undefined;
+  return row ? toRound(row) : null;
+}
+
+function toBoss(row: BossRow): import("./types").Boss {
+  return {
+    id: row.id,
+    name: row.name,
+    color: row.color,
+    spawnRate: row.spawn_rate,
+    intervalHours: row.interval_hours,
+    lastKillAt: row.last_kill_at,
+    nextSpawnAt: row.next_spawn_at,
+    dropsNote: row.drops_note,
+    sortOrder: row.sort_order,
+    enabled: Boolean(row.enabled),
+    remainingSeconds: remainingFrom(row.next_spawn_at),
+    activeRound: getOpenRoundForBoss(row.id),
+  };
+}
+
+export function listBosses(includeDisabled = false) {
+  expireOpenRounds();
+  const rows = ensureDb()
+    .prepare(
+      includeDisabled
+        ? `SELECT * FROM bosses ORDER BY sort_order ASC, id ASC`
+        : `SELECT * FROM bosses WHERE enabled = 1 ORDER BY sort_order ASC, id ASC`,
+    )
+    .all() as BossRow[];
+  return rows.map(toBoss);
+}
+
+export function getBossById(id: number) {
+  const row = ensureDb()
+    .prepare(`SELECT * FROM bosses WHERE id = ?`)
+    .get(id) as BossRow | undefined;
+  return row ? toBoss(row) : null;
+}
+
+export function createBoss(input: {
+  name: string;
+  color?: string;
+  spawnRate?: number;
+  intervalHours?: number;
+  dropsNote?: string;
+}) {
+  const maxOrder = ensureDb()
+    .prepare(`SELECT COALESCE(MAX(sort_order), -1) as m FROM bosses`)
+    .get() as { m: number };
+  const result = ensureDb()
+    .prepare(
+      `INSERT INTO bosses (name, color, spawn_rate, interval_hours, drops_note, sort_order)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      input.name.trim(),
+      input.color || "#c084fc",
+      input.spawnRate ?? 50,
+      input.intervalHours ?? 6,
+      input.dropsNote ?? null,
+      maxOrder.m + 1,
+    );
+  return getBossById(Number(result.lastInsertRowid))!;
+}
+
+export function updateBoss(
+  id: number,
+  data: Partial<{
+    name: string;
+    color: string;
+    spawnRate: number;
+    intervalHours: number;
+    dropsNote: string | null;
+    enabled: boolean;
+    lastKillAt: string | null;
+    nextSpawnAt: string | null;
+  }>,
+) {
+  const current = ensureDb()
+    .prepare(`SELECT * FROM bosses WHERE id = ?`)
+    .get(id) as BossRow | undefined;
+  if (!current) return null;
+
+  ensureDb()
+    .prepare(
+      `UPDATE bosses SET
+         name = ?, color = ?, spawn_rate = ?, interval_hours = ?,
+         drops_note = ?, enabled = ?, last_kill_at = ?, next_spawn_at = ?
+       WHERE id = ?`,
+    )
+    .run(
+      data.name?.trim() ?? current.name,
+      data.color ?? current.color,
+      data.spawnRate ?? current.spawn_rate,
+      data.intervalHours ?? current.interval_hours,
+      data.dropsNote === undefined ? current.drops_note : data.dropsNote,
+      data.enabled === undefined ? current.enabled : data.enabled ? 1 : 0,
+      data.lastKillAt === undefined ? current.last_kill_at : data.lastKillAt,
+      data.nextSpawnAt === undefined ? current.next_spawn_at : data.nextSpawnAt,
+      id,
+    );
+  return getBossById(id);
+}
+
+export function deleteBoss(id: number) {
+  const database = ensureDb();
+  database.prepare(`DELETE FROM boss_votes WHERE boss_id = ?`).run(id);
+  database.prepare(`DELETE FROM boss_vote_rounds WHERE boss_id = ?`).run(id);
+  const result = database.prepare(`DELETE FROM bosses WHERE id = ?`).run(id);
+  return result.changes > 0;
+}
+
+function applyPassedVote(bossId: number, voteType: "killed" | "not_spawned") {
+  const boss = getBossById(bossId);
+  if (!boss) return;
+  const now = new Date();
+  const next = new Date(
+    now.getTime() + boss.intervalHours * 60 * 60 * 1000,
+  ).toISOString();
+
+  if (voteType === "killed") {
+    updateBoss(bossId, {
+      lastKillAt: now.toISOString(),
+      nextSpawnAt: next,
+    });
+  } else {
+    // 未刷新：按新一轮重新计时
+    updateBoss(bossId, {
+      nextSpawnAt: next,
+    });
+  }
+}
+
+export function castBossVote(input: {
+  bossId: number;
+  voteType: "killed" | "not_spawned";
+  memberId: number;
+  memberName: string;
+}) {
+  expireOpenRounds();
+  const boss = getBossById(input.bossId);
+  if (!boss || !boss.enabled) throw new Error("BOSS 不存在或已停用");
+
+  const database = ensureDb();
+  let round = getOpenRoundForBoss(input.bossId);
+
+  if (round && round.voteType !== input.voteType) {
+    throw new Error(
+      `当前正在进行「${round.voteType === "killed" ? "已击杀" : "未刷新"}」投票，请先完成或等待结束`,
+    );
+  }
+
+  if (!round) {
+    const started = new Date();
+    const expires = new Date(
+      started.getTime() + BOSS_VOTE_WINDOW_SECONDS * 1000,
+    );
+    const result = database
+      .prepare(
+        `INSERT INTO boss_vote_rounds (boss_id, vote_type, status, started_at, expires_at)
+         VALUES (?, ?, 'open', ?, ?)`,
+      )
+      .run(
+        input.bossId,
+        input.voteType,
+        started.toISOString(),
+        expires.toISOString(),
+      );
+    round = toRound(
+      database
+        .prepare(`SELECT * FROM boss_vote_rounds WHERE id = ?`)
+        .get(Number(result.lastInsertRowid)) as RoundRow,
+    );
+  }
+
+  if (round.status !== "open") {
+    throw new Error("投票已结束，请重新发起");
+  }
+  if (new Date(round.expiresAt).getTime() <= Date.now()) {
+    expireOpenRounds();
+    throw new Error("投票已超时，请重新发起");
+  }
+
+  try {
+    database
+      .prepare(
+        `INSERT INTO boss_votes (round_id, boss_id, vote_type, member_id, member_name)
+         VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run(
+        round.id,
+        input.bossId,
+        input.voteType,
+        input.memberId,
+        input.memberName,
+      );
+  } catch {
+    throw new Error("你已在本轮投过票");
+  }
+
+  round = toRound(
+    database
+      .prepare(`SELECT * FROM boss_vote_rounds WHERE id = ?`)
+      .get(round.id) as RoundRow,
+  );
+
+  let passed = false;
+  if (round.voteCount >= BOSS_VOTE_NEED) {
+    database
+      .prepare(
+        `UPDATE boss_vote_rounds
+         SET status = 'passed', resolved_at = ?
+         WHERE id = ?`,
+      )
+      .run(new Date().toISOString(), round.id);
+    applyPassedVote(input.bossId, input.voteType);
+    passed = true;
+    addBossChatSystem(
+      `「${boss.name}」${input.voteType === "killed" ? "已击杀" : "未刷新"}标记生效（${round.voteCount}人同意）`,
+    );
+    round = toRound(
+      database
+        .prepare(`SELECT * FROM boss_vote_rounds WHERE id = ?`)
+        .get(round.id) as RoundRow,
+    );
+  }
+
+  return { round, passed, boss: getBossById(input.bossId)! };
+}
+
+export function touchBossPresence(memberId: number, memberName: string) {
+  ensureDb()
+    .prepare(
+      `INSERT INTO boss_presence (member_id, member_name, last_seen_at)
+       VALUES (?, ?, ?)
+       ON CONFLICT(member_id) DO UPDATE SET
+         member_name = excluded.member_name,
+         last_seen_at = excluded.last_seen_at`,
+    )
+    .run(memberId, memberName, new Date().toISOString());
+}
+
+export function getBossOnlineCount() {
+  const cutoff = new Date(
+    Date.now() - BOSS_PRESENCE_TTL_SECONDS * 1000,
+  ).toISOString();
+  const row = ensureDb()
+    .prepare(
+      `SELECT COUNT(*) as count FROM boss_presence WHERE last_seen_at >= ?`,
+    )
+    .get(cutoff) as { count: number };
+  return row.count;
+}
+
+export function listBossChat(limit = 30) {
+  const rows = ensureDb()
+    .prepare(
+      `SELECT * FROM boss_chat ORDER BY id DESC LIMIT ?`,
+    )
+    .all(limit) as Array<{
+    id: number;
+    member_id: number | null;
+    member_name: string;
+    message: string;
+    created_at: string;
+  }>;
+  return rows
+    .map((r) => ({
+      id: r.id,
+      memberId: r.member_id,
+      memberName: r.member_name,
+      message: r.message,
+      createdAt: r.created_at,
+    }))
+    .reverse();
+}
+
+export function addBossChat(input: {
+  memberId: number | null;
+  memberName: string;
+  message: string;
+}) {
+  const text = input.message.trim().slice(0, 200);
+  if (!text) throw new Error("消息不能为空");
+  const result = ensureDb()
+    .prepare(
+      `INSERT INTO boss_chat (member_id, member_name, message) VALUES (?, ?, ?)`,
+    )
+    .run(input.memberId, input.memberName, text);
+  return listBossChat().find((m) => m.id === Number(result.lastInsertRowid))!;
+}
+
+function addBossChatSystem(message: string) {
+  ensureDb()
+    .prepare(
+      `INSERT INTO boss_chat (member_id, member_name, message) VALUES (NULL, '系统', ?)`,
+    )
+    .run(message);
+}
+
+export function getBossRoomState() {
+  expireOpenRounds();
+  return {
+    bosses: listBosses(false),
+    onlineCount: getBossOnlineCount(),
+    chat: listBossChat(40),
+    serverNow: new Date().toISOString(),
+    voteNeed: BOSS_VOTE_NEED,
+    voteWindowSeconds: BOSS_VOTE_WINDOW_SECONDS,
+  };
+}
+
 

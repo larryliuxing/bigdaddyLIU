@@ -141,3 +141,51 @@ export interface LeaderboardStats {
   threshold: number; // average * 0.85
   thresholdRatio: number;
 }
+
+export type BossVoteType = "killed" | "not_spawned";
+export type BossVoteRoundStatus = "open" | "passed" | "expired";
+
+export interface Boss {
+  id: number;
+  name: string;
+  color: string;
+  spawnRate: number;
+  intervalHours: number;
+  lastKillAt: string | null;
+  nextSpawnAt: string | null;
+  dropsNote: string | null;
+  sortOrder: number;
+  enabled: boolean;
+  remainingSeconds: number | null;
+  activeRound: BossVoteRound | null;
+}
+
+export interface BossVoteRound {
+  id: number;
+  bossId: number;
+  voteType: BossVoteType;
+  status: BossVoteRoundStatus;
+  startedAt: string;
+  expiresAt: string;
+  resolvedAt: string | null;
+  votes: Array<{ memberId: number; memberName: string; createdAt: string }>;
+  voteCount: number;
+  remainingSeconds: number;
+}
+
+export interface BossChatMessage {
+  id: number;
+  memberId: number | null;
+  memberName: string;
+  message: string;
+  createdAt: string;
+}
+
+export interface BossRoomState {
+  bosses: Boss[];
+  onlineCount: number;
+  chat: BossChatMessage[];
+  serverNow: string;
+  voteNeed: number;
+  voteWindowSeconds: number;
+}

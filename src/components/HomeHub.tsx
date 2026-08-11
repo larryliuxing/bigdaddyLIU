@@ -60,6 +60,10 @@ export function HomeHub({ user }: { user: Extract<SessionUser, { type: "member" 
       router.push("/leaderboard");
       return;
     }
+    if (key === "boss") {
+      router.push("/boss");
+      return;
+    }
     setToast(`${title} 功能开发中，敬请期待`);
     window.setTimeout(() => setToast(""), 2200);
   }
