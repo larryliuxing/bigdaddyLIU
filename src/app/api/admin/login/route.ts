@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { setSessionCookie } from "@/lib/auth";
+import { attachSessionCookie } from "@/lib/auth";
 import { verifyAdmin } from "@/lib/db";
 
 export const runtime = "nodejs";
@@ -24,13 +24,19 @@ export async function POST(request: Request) {
     );
   }
 
-  await setSessionCookie({
-    type: "admin",
-    username: admin.username,
-  });
-
-  return NextResponse.json({
+  const response = NextResponse.json({
     ok: true,
     user: { type: "admin", username: admin.username },
   });
+
+  await attachSessionCookie(
+    response,
+    {
+      type: "admin",
+      username: admin.username,
+    },
+    request,
+  );
+
+  return response;
 }

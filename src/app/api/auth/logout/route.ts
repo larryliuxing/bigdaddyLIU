@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import {
-  clearAdminSessionCookie,
-  clearMemberSessionCookie,
+  clearAdminCookieOnResponse,
+  clearMemberCookieOnResponse,
   getAdminSession,
   getMemberSession,
 } from "@/lib/auth";
@@ -12,24 +12,41 @@ export async function POST(request: Request) {
   const body = await request.json().catch(() => ({}));
   const scope = String(body?.scope ?? "all");
 
-  if (scope === "admin") {
-    await clearAdminSessionCookie();
-  } else if (scope === "member") {
-    await clearMemberSessionCookie();
-  } else {
-    await clearAdminSessionCookie();
-    await clearMemberSessionCookie();
+  // Read current sessions from the incoming request cookies first
+  const memberSession = await getMemberSession();
+  const adminSession = await getAdminSession();
+
+  let member = memberSession
+    ? {
+        id: memberSession.id,
+        name: memberSession.name,
+        role: memberSession.role,
+      }
+    : null;
+  let admin = adminSession ? { username: adminSession.username } : null;
+
+  const response = NextResponse.json({ ok: true });
+
+  if (scope === "admin" || scope === "all") {
+    clearAdminCookieOnResponse(response);
+    admin = null;
+  }
+  if (scope === "member" || scope === "all") {
+    clearMemberCookieOnResponse(response);
+    member = null;
   }
 
-  const member = await getMemberSession();
-  const admin = await getAdminSession();
-
-  return NextResponse.json({
+  const finalResponse = NextResponse.json({
     ok: true,
-    member: member
-      ? { id: member.id, name: member.name, role: member.role }
-      : null,
-    admin: admin ? { username: admin.username } : null,
+    member,
+    admin,
     user: member ?? admin,
   });
+
+  // Preserve Set-Cookie headers from the clear operations
+  for (const cookie of response.cookies.getAll()) {
+    finalResponse.cookies.set(cookie);
+  }
+
+  return finalResponse;
 }

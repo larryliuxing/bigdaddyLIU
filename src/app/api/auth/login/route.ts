@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { setSessionCookie } from "@/lib/auth";
+import { attachSessionCookie } from "@/lib/auth";
 import {
   claimMemberPassword,
   getMemberById,
@@ -48,14 +48,7 @@ export async function POST(request: Request) {
   }
 
   const fresh = getMemberById(memberId)!;
-  await setSessionCookie({
-    type: "member",
-    id: fresh.id,
-    name: fresh.name,
-    role: fresh.role,
-  });
-
-  return NextResponse.json({
+  const response = NextResponse.json({
     ok: true,
     user: {
       id: fresh.id,
@@ -63,4 +56,17 @@ export async function POST(request: Request) {
       role: fresh.role,
     },
   });
+
+  await attachSessionCookie(
+    response,
+    {
+      type: "member",
+      id: fresh.id,
+      name: fresh.name,
+      role: fresh.role,
+    },
+    request,
+  );
+
+  return response;
 }

@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import type { Member } from "@/lib/types";
 import { AdminLoginModal } from "./AdminLoginModal";
@@ -13,17 +12,22 @@ function roleClass(role: Member["role"]) {
   return "";
 }
 
+function hardNavigate(path: string) {
+  // Full navigation so the newly set session cookie is always sent
+  window.location.assign(path);
+}
+
 export function IdentitySelect({ members }: { members: Member[] }) {
-  const router = useRouter();
+  const [list, setList] = useState(members);
   const [selected, setSelected] = useState<Member | null>(null);
   const [showAdmin, setShowAdmin] = useState(false);
   const ordered = useMemo(
     () =>
-      [...members].sort((a, b) => {
+      [...list].sort((a, b) => {
         const rank = { leader: 0, officer: 1, normal: 2 };
         return rank[a.role] - rank[b.role] || a.id - b.id;
       }),
-    [members],
+    [list],
   );
 
   return (
@@ -80,9 +84,13 @@ export function IdentitySelect({ members }: { members: Member[] }) {
             member={selected}
             onClose={() => setSelected(null)}
             onSuccess={() => {
+              setList((prev) =>
+                prev.map((m) =>
+                  m.id === selected.id ? { ...m, hasPassword: true } : m,
+                ),
+              );
               setSelected(null);
-              router.push("/home");
-              router.refresh();
+              hardNavigate("/home");
             }}
           />
         )}
@@ -92,8 +100,7 @@ export function IdentitySelect({ members }: { members: Member[] }) {
             onClose={() => setShowAdmin(false)}
             onSuccess={() => {
               setShowAdmin(false);
-              router.push("/admin");
-              router.refresh();
+              hardNavigate("/admin");
             }}
           />
         )}
