@@ -8,7 +8,9 @@ import type {
   SessionUser,
 } from "@/lib/types";
 import { recognizeImageText } from "@/lib/auction/client";
+import { parseCombatPowerScreenshot } from "@/lib/leaderboard/parse";
 import { TrophyIcon } from "@/components/Icons";
+import { hubPath } from "@/lib/nav";
 
 export function LeaderboardPanel({
   member,
@@ -68,27 +70,21 @@ export function LeaderboardPanel({
         const text = await recognizeImageText(file);
         setOcrText(text);
 
-        const name = member?.name || "";
-        const nameOk = name
-          ? text.replace(/\s+/g, "").includes(name.replace(/\s+/g, "")) ||
-            text.includes(name)
-          : false;
-        setPreviewNameOk(name ? nameOk : null);
-
-        const powerMatch =
-          text.match(/战\s*斗\s*力\s*[:：]?\s*([0-9]{3,7})/) ||
-          text.match(/战斗力[^\d]{0,12}([0-9]{3,7})/);
-        const power = powerMatch ? Number(powerMatch[1]) : null;
-        setPreviewPower(power);
-
-        if (!name) {
+        if (!member) {
           setStatus("已识别，请以成员身份登录后提交");
-        } else if (!nameOk) {
-          setStatus(`未在截图中找到账号名「${name}」，无法上榜`);
-        } else if (!power) {
-          setStatus("已找到名字，但未识别到战斗力，请换更清晰截图");
+          setPreviewNameOk(null);
+          setPreviewPower(null);
         } else {
-          setStatus(`识别成功：${name} · 战斗力 ${power}，可提交上榜`);
+          const parsed = parseCombatPowerScreenshot(text, member.name);
+          setPreviewNameOk(parsed.ok);
+          setPreviewPower(parsed.combatPower);
+          if (!parsed.ok) {
+            setStatus(parsed.error || "识别未通过");
+          } else {
+            setStatus(
+              `识别成功：${member.name} · 战斗力 ${parsed.combatPower}，可提交上榜`,
+            );
+          }
         }
       } catch {
         setStatus("识别失败，请重试或更换截图");
@@ -201,7 +197,7 @@ export function LeaderboardPanel({
           <button
             type="button"
             className="btn-ghost text-sm"
-            onClick={() => router.push("/home")}
+            onClick={() => router.push(hubPath(Boolean(member), isAdmin))}
           >
             返回导航
           </button>

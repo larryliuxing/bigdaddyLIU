@@ -39,13 +39,26 @@ export async function POST(request: Request) {
   }
 
   try {
+    const spawnRate =
+      body?.spawnRate !== undefined && body?.spawnRate !== null
+        ? Number(body.spawnRate)
+        : undefined;
+    const intervalHours =
+      body?.intervalHours !== undefined && body?.intervalHours !== null
+        ? Number(body.intervalHours)
+        : undefined;
+    if (
+      (spawnRate !== undefined && Number.isNaN(spawnRate)) ||
+      (intervalHours !== undefined && Number.isNaN(intervalHours))
+    ) {
+      return NextResponse.json({ error: "数值无效" }, { status: 400 });
+    }
+
     const boss = createBoss({
       name,
       color: body?.color,
-      spawnRate: body?.spawnRate ? Number(body.spawnRate) : undefined,
-      intervalHours: body?.intervalHours
-        ? Number(body.intervalHours)
-        : undefined,
+      spawnRate,
+      intervalHours,
       dropsNote: body?.dropsNote,
     });
     return NextResponse.json(

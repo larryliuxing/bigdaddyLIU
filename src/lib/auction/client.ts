@@ -45,8 +45,10 @@ export function formatCountdown(totalSeconds: number | null) {
 }
 
 export function todayAtTime(hhmm: string) {
-  const [hh, mm] = hhmm.split(":").map(Number);
+  const parts = hhmm.split(":").map(Number);
+  const hh = Number.isFinite(parts[0]) ? parts[0] : 15;
+  const mm = Number.isFinite(parts[1]) ? parts[1] : 0;
   const d = new Date();
-  d.setHours(hh || 15, mm || 0, 0, 0);
+  d.setHours(hh, mm, 0, 0);
   return d.toISOString();
 }

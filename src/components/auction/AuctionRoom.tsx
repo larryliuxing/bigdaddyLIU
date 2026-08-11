@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { AuctionRoomState, SessionUser } from "@/lib/types";
+import { AdminLoginModal } from "@/components/AdminLoginModal";
+import { hubPath } from "@/lib/nav";
 import { formatCountdown, qualityMeta } from "@/lib/auction/client";
 import { GavelIcon } from "@/components/Icons";
-import { AdminLoginModal } from "@/components/AdminLoginModal";
 
 function HourglassIcon() {
   return (
@@ -67,13 +68,7 @@ export function AuctionRoom({
     return () => window.clearInterval(timer);
   }, [remainingActive]);
 
-  const minBid = useMemo(() => {
-    const item = room?.activeItem;
-    if (!item) return 0;
-    const hasBids = room?.recentBids.some((b) => b.itemId === item.id);
-    if (!hasBids) return item.startPrice;
-    return item.currentPrice + item.bidIncrement;
-  }, [room]);
+  const minBid = room?.minNextBid ?? 0;
 
   const activeItemId = room?.activeItem?.id ?? null;
   const [bidDraft, setBidDraft] = useState({
@@ -147,7 +142,7 @@ export function AuctionRoom({
             <button
               type="button"
               className="btn-ghost"
-              onClick={() => router.push("/home")}
+              onClick={() => router.push(hubPath(Boolean(member), isAdmin))}
             >
               返回导航
             </button>

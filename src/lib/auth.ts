@@ -1,5 +1,6 @@
 import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
+import { getMemberById } from "./db";
 import type { MemberRole, SessionUser } from "./types";
 
 const MEMBER_COOKIE = "guild_session";
@@ -90,7 +91,20 @@ export async function getMemberSession() {
   if (!token) return null;
   const session = await verifySessionToken(token);
   if (!session || session.type !== "member") return null;
-  return session;
+
+  // Re-validate against DB so deleted/renamed members cannot keep stale access
+  const row = getMemberById(session.id);
+  if (!row) {
+    jar.delete(MEMBER_COOKIE);
+    return null;
+  }
+
+  return {
+    type: "member" as const,
+    id: row.id,
+    name: row.name,
+    role: row.role,
+  };
 }
 
 export async function getAdminSession() {
@@ -115,4 +129,14 @@ export async function requireMemberSession() {
 
 export async function requireAdminSession() {
   return getAdminSession();
+}
+
+/** Navigate helper target after logout based on remaining sessions. */
+export function logoutRedirectPath(remaining: {
+  member: boolean;
+  admin: boolean;
+}) {
+  if (remaining.member) return "/home";
+  if (remaining.admin) return "/admin";
+  return "/";
 }

@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { setSessionCookie } from "@/lib/auth";
 import {
+  claimMemberPassword,
   getMemberById,
-  setMemberPassword,
   verifyMemberPassword,
 } from "@/lib/db";
 
@@ -33,24 +33,34 @@ export async function POST(request: Request) {
   }
 
   if (!member.password_hash) {
-    setMemberPassword(memberId, password);
+    const claimed = claimMemberPassword(memberId, password);
+    if (!claimed) {
+      // Another request set the password first — verify instead
+      if (!verifyMemberPassword(memberId, password)) {
+        return NextResponse.json(
+          { error: "该身份刚被设置密码，请使用正确密码登录" },
+          { status: 401 },
+        );
+      }
+    }
   } else if (!verifyMemberPassword(memberId, password)) {
     return NextResponse.json({ error: "密码错误" }, { status: 401 });
   }
 
+  const fresh = getMemberById(memberId)!;
   await setSessionCookie({
     type: "member",
-    id: member.id,
-    name: member.name,
-    role: member.role,
+    id: fresh.id,
+    name: fresh.name,
+    role: fresh.role,
   });
 
   return NextResponse.json({
     ok: true,
     user: {
-      id: member.id,
-      name: member.name,
-      role: member.role,
+      id: fresh.id,
+      name: fresh.name,
+      role: fresh.role,
     },
   });
 }

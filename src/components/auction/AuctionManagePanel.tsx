@@ -6,6 +6,7 @@ import type { AuctionItem, AuctionRoomState, Member } from "@/lib/types";
 import { formatCountdown, todayAtTime } from "@/lib/auction/client";
 import { qualityMeta } from "@/lib/auction/client";
 import { AddAuctionItemForm } from "./AddAuctionItemForm";
+import { hubPath } from "@/lib/nav";
 
 export function AuctionManagePanel({
   initialMembers,
@@ -170,7 +171,7 @@ export function AuctionManagePanel({
             <button
               type="button"
               className="btn-ghost text-sm"
-              onClick={() => router.push("/home")}
+              onClick={() => router.push(hubPath(false, true))}
             >
               返回导航
             </button>
@@ -232,7 +233,7 @@ export function AuctionManagePanel({
             <button
               type="button"
               className="btn-ghost text-sm"
-              disabled={busy || !session || session.status === "ended"}
+              disabled={busy || session?.status !== "live"}
               onClick={() => sessionAction("end")}
             >
               结束拍卖
@@ -240,7 +241,10 @@ export function AuctionManagePanel({
             <button
               type="button"
               className="btn-ghost text-sm"
-              disabled={busy}
+              disabled={
+                busy ||
+                Boolean(session && session.status !== "ended")
+              }
               onClick={() => sessionAction("create")}
             >
               新建场次

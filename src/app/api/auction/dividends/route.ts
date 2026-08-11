@@ -4,6 +4,7 @@ import {
   addTemporaryDividend,
   calculateDividends,
   getLatestSession,
+  getSessionById,
   listDividends,
   listSessions,
   updateDividendAmount,
@@ -12,12 +13,24 @@ import { buildRoomState } from "@/lib/auction/room";
 
 export const runtime = "nodejs";
 
+function resolveTargetSession(bodySessionId?: unknown) {
+  const id = Number(bodySessionId);
+  if (Number.isFinite(id) && id > 0) {
+    return getSessionById(id);
+  }
+  // Prefer latest ended session for dividend ops when latest is a new draft
+  const latest = getLatestSession();
+  if (latest?.status === "ended") return latest;
+  const ended = listSessions().find((s) => s.status === "ended");
+  return ended ?? latest;
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const sessionId = Number(searchParams.get("sessionId"));
   const session = sessionId
     ? listSessions().find((s) => s.id === sessionId)
-    : getLatestSession();
+    : resolveTargetSession();
 
   return NextResponse.json({
     sessions: listSessions(),
@@ -35,7 +48,7 @@ export async function POST(request: Request) {
 
   const body = await request.json().catch(() => null);
   const action = String(body?.action ?? "calculate");
-  const session = getLatestSession();
+  const session = resolveTargetSession(body?.sessionId);
   if (!session) {
     return NextResponse.json({ error: "暂无场次" }, { status: 400 });
   }
@@ -45,16 +58,21 @@ export async function POST(request: Request) {
       const dividends = calculateDividends(session.id);
       return NextResponse.json({
         dividends,
+        session,
         room: buildRoomState(session.id),
       });
     }
 
     if (action === "addTemporary") {
+      const amount = Number(body?.amount ?? 0);
+      if (!(amount > 0)) {
+        return NextResponse.json({ error: "金额必须大于 0" }, { status: 400 });
+      }
       const entry = addTemporaryDividend({
         sessionId: session.id,
         memberId: body?.memberId ? Number(body.memberId) : null,
         memberName: String(body?.memberName ?? ""),
-        amount: Number(body?.amount ?? 0),
+        amount,
         note: body?.note,
       });
       return NextResponse.json({
@@ -65,9 +83,14 @@ export async function POST(request: Request) {
     }
 
     if (action === "updateAmount") {
+      const amount = Number(body?.amount ?? 0);
+      if (!(amount >= 0) || Number.isNaN(amount)) {
+        return NextResponse.json({ error: "金额无效" }, { status: 400 });
+      }
       const entry = updateDividendAmount(
         Number(body?.id),
-        Number(body?.amount ?? 0),
+        amount,
+        session.id,
       );
       if (!entry) {
         return NextResponse.json({ error: "记录不存在" }, { status: 404 });

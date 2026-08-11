@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
-import { clearAdminSessionCookie, clearMemberSessionCookie, getSession } from "@/lib/auth";
+import {
+  clearAdminSessionCookie,
+  clearMemberSessionCookie,
+  getAdminSession,
+  getMemberSession,
+} from "@/lib/auth";
 
 export const runtime = "nodejs";
 
@@ -16,5 +21,15 @@ export async function POST(request: Request) {
     await clearMemberSessionCookie();
   }
 
-  return NextResponse.json({ ok: true, user: await getSession() });
+  const member = await getMemberSession();
+  const admin = await getAdminSession();
+
+  return NextResponse.json({
+    ok: true,
+    member: member
+      ? { id: member.id, name: member.name, role: member.role }
+      : null,
+    admin: admin ? { username: admin.username } : null,
+    user: member ?? admin,
+  });
 }

@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import type { Member, MemberRole } from "@/lib/types";
+import { logoutAndRedirect } from "@/lib/nav";
 
 const ROLE_LABEL: Record<MemberRole, string> = {
   normal: "普通",
@@ -33,13 +34,7 @@ export function AdminPanel({
   }
 
   async function logout() {
-    await fetch("/api/auth/logout", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ scope: "admin" }),
-    });
-    router.push("/");
-    router.refresh();
+    await logoutAndRedirect("admin", router);
   }
 
   async function addMember(e: React.FormEvent) {
@@ -134,9 +129,16 @@ export function AdminPanel({
             <button
               type="button"
               className="btn-ghost text-sm"
-              onClick={() => router.push("/")}
+              onClick={() => router.push("/home")}
             >
-              回登录页
+              成员首页
+            </button>
+            <button
+              type="button"
+              className="btn-ghost text-sm"
+              onClick={() => router.push("/?switch=1")}
+            >
+              切换身份
             </button>
             <button type="button" className="btn-ghost text-sm" onClick={logout}>
               退出

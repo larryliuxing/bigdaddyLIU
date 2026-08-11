@@ -11,6 +11,7 @@ import {
   TrophyIcon,
 } from "./Icons";
 import { AdminLoginModal } from "./AdminLoginModal";
+import { logoutAndRedirect } from "@/lib/nav";
 
 const FEATURES = [
   {
@@ -42,13 +43,7 @@ export function HomeHub({ user }: { user: Extract<SessionUser, { type: "member" 
   const [toast, setToast] = useState("");
 
   async function logout() {
-    await fetch("/api/auth/logout", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ scope: "member" }),
-    });
-    router.push("/");
-    router.refresh();
+    await logoutAndRedirect("member", router);
   }
 
   function openFeature(key: string, title: string) {

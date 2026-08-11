@@ -61,7 +61,8 @@ export async function POST(request: Request) {
 
 export async function DELETE(request: Request) {
   const { searchParams } = new URL(request.url);
-  const memberId = Number(searchParams.get("memberId"));
+  const memberIdParam = searchParams.get("memberId");
+  const memberId = memberIdParam ? Number(memberIdParam) : NaN;
   const member = await requireMemberSession();
   const admin = await getAdminSession();
 
@@ -69,16 +70,17 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ error: "未授权" }, { status: 401 });
   }
 
-  // Members can only delete themselves; admin can delete any
-  if (member && !admin) {
+  // Admin deleting a specific member
+  if (admin && Number.isFinite(memberId) && memberId > 0) {
+    deleteLeaderboardEntry(memberId);
+    return NextResponse.json({ ok: true, board: getLeaderboardBoard(0.85) });
+  }
+
+  // Member (even if also admin) removing self
+  if (member) {
     deleteLeaderboardEntry(member.id);
     return NextResponse.json({ ok: true, board: getLeaderboardBoard(0.85) });
   }
 
-  if (!memberId) {
-    return NextResponse.json({ error: "缺少成员 ID" }, { status: 400 });
-  }
-
-  deleteLeaderboardEntry(memberId);
-  return NextResponse.json({ ok: true, board: getLeaderboardBoard(0.85) });
+  return NextResponse.json({ error: "缺少成员 ID" }, { status: 400 });
 }

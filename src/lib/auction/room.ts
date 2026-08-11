@@ -1,4 +1,5 @@
 import {
+  countBidsForItem,
   getAuctionSettings,
   getLatestSession,
   isDividendsCalculated,
@@ -25,6 +26,14 @@ export function buildRoomState(sessionId?: number): AuctionRoomState {
     items.find((i) => i.id === session?.currentItemId && i.status === "active") ??
     null;
 
+  let minNextBid: number | null = null;
+  if (activeItem) {
+    const hasBids = countBidsForItem(activeItem.id) > 0;
+    minNextBid = hasBids
+      ? activeItem.currentPrice + activeItem.bidIncrement
+      : activeItem.startPrice;
+  }
+
   let remainingSeconds: number | null = null;
   if (session?.status === "live" && session.endsAt) {
     remainingSeconds = Math.max(
@@ -45,6 +54,7 @@ export function buildRoomState(sessionId?: number): AuctionRoomState {
     session,
     items,
     activeItem,
+    minNextBid,
     recentEvents: session ? listEvents(session.id, 8) : [],
     recentBids: session ? listBids(session.id, 20) : [],
     serverNow: new Date().toISOString(),

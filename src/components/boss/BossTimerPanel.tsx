@@ -6,6 +6,7 @@ import type { Boss, BossRoomState, SessionUser } from "@/lib/types";
 import { formatCountdown } from "@/lib/auction/client";
 import { AdminLoginModal } from "@/components/AdminLoginModal";
 import { SettingsIcon, TimerIcon } from "@/components/Icons";
+import { hubPath } from "@/lib/nav";
 
 function formatTime(iso: string | null) {
   if (!iso) return "-";
@@ -21,39 +22,39 @@ function BossCard({
   voteNeed,
   onVote,
   busy,
+  serverNow,
 }: {
   boss: Boss;
   member: Extract<SessionUser, { type: "member" }> | null;
   voteNeed: number;
   onVote: (bossId: number, voteType: "killed" | "not_spawned") => void;
   busy: boolean;
+  serverNow: string;
 }) {
-  const [tick, setTick] = useState(0);
+  const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
-    const timer = window.setInterval(() => {
-      setTick((n) => n + 1);
-    }, 1000);
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, []);
 
-  void tick;
-  const remain =
-    boss.remainingSeconds == null
-      ? null
-      : Math.max(0, boss.remainingSeconds - tick);
-  const roundRemain =
-    boss.activeRound?.remainingSeconds == null
-      ? null
-      : Math.max(0, boss.activeRound.remainingSeconds - tick);
+  const skew = now - new Date(serverNow).getTime();
+  const wall = now - Math.min(Math.max(skew, -5000), 5000);
 
-  // Reset local tick when server values refresh
-  const syncKey = `${boss.remainingSeconds}-${boss.activeRound?.id}-${boss.activeRound?.remainingSeconds}`;
-  const [lastSync, setLastSync] = useState(syncKey);
-  if (lastSync !== syncKey) {
-    setLastSync(syncKey);
-    setTick(0);
-  }
+  const remain = boss.nextSpawnAt
+    ? Math.max(
+        0,
+        Math.floor((new Date(boss.nextSpawnAt).getTime() - wall) / 1000),
+      )
+    : null;
+  const roundRemain = boss.activeRound?.expiresAt
+    ? Math.max(
+        0,
+        Math.floor(
+          (new Date(boss.activeRound.expiresAt).getTime() - wall) / 1000,
+        ),
+      )
+    : null;
 
   const round = boss.activeRound;
 
@@ -324,7 +325,7 @@ export function BossTimerPanel({
             <button
               type="button"
               className="btn-ghost text-sm"
-              onClick={() => router.push("/home")}
+              onClick={() => router.push(hubPath(Boolean(member), isAdmin))}
             >
               返回导航
             </button>
@@ -351,6 +352,7 @@ export function BossTimerPanel({
               voteNeed={voteNeed}
               onVote={vote}
               busy={busy}
+              serverNow={room?.serverNow ?? new Date().toISOString()}
             />
           ))}
           {bosses.length === 0 && (

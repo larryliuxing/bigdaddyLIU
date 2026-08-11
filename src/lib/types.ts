@@ -115,6 +115,7 @@ export interface AuctionRoomState {
   session: AuctionSession | null;
   items: AuctionItem[];
   activeItem: AuctionItem | null;
+  minNextBid: number | null;
   recentEvents: AuctionEvent[];
   recentBids: AuctionBid[];
   serverNow: string;

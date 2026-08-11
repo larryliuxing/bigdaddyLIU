@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { DividendEntry, Member, AuctionSession } from "@/lib/types";
 import { AdminLoginModal } from "@/components/AdminLoginModal";
+import { hubPath } from "@/lib/nav";
 
 export function DividendPanel({
   members,
@@ -136,7 +137,7 @@ export function DividendPanel({
             <button
               type="button"
               className="btn-ghost text-sm"
-              onClick={() => router.push("/home")}
+              onClick={() => router.push(hubPath(true, isAdmin))}
             >
               返回导航
             </button>

@@ -29,6 +29,17 @@ export async function POST(request: Request) {
     let session = getLatestSession();
 
     if (action === "create") {
+      if (session && session.status !== "ended") {
+        return NextResponse.json(
+          {
+            error:
+              session.status === "live"
+                ? "拍卖进行中，请先结束再新建场次"
+                : "已有未结束场次，请先结束或继续使用当前场次",
+          },
+          { status: 400 },
+        );
+      }
       session = createDraftSession({
         scheduledStart: body?.scheduledStart ?? null,
         durationMinutes: body?.durationMinutes
@@ -46,6 +57,12 @@ export async function POST(request: Request) {
     } else if (action === "end") {
       if (!session) {
         return NextResponse.json({ error: "没有可结束的场次" }, { status: 400 });
+      }
+      if (session.status !== "live") {
+        return NextResponse.json(
+          { error: "只能结束进行中的拍卖" },
+          { status: 400 },
+        );
       }
       session = endAuctionSession(session.id);
     } else {

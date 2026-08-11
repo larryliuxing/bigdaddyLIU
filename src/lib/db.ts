@@ -363,6 +363,17 @@ export function setMemberPassword(id: number, password: string): void {
     .run(hash, id);
 }
 
+/** Atomically set password only if still unset. Returns true if claimed. */
+export function claimMemberPassword(id: number, password: string): boolean {
+  const hash = bcrypt.hashSync(password, 10);
+  const result = ensureDb()
+    .prepare(
+      "UPDATE members SET password_hash = ? WHERE id = ? AND password_hash IS NULL",
+    )
+    .run(hash, id);
+  return result.changes > 0;
+}
+
 export function verifyMemberPassword(id: number, password: string): boolean {
   const member = getMemberById(id);
   if (!member?.password_hash) return false;
@@ -579,6 +590,17 @@ export function updateSessionSchedule(
   if (!session || session.status === "live" || session.status === "ended") {
     return null;
   }
+
+  let status: AuctionSessionStatus = "draft";
+  if (data.scheduledStart) {
+    const startMs = new Date(data.scheduledStart).getTime();
+    // Only mark scheduled when start time is still in the future
+    status =
+      Number.isFinite(startMs) && startMs > Date.now() + 5000
+        ? "scheduled"
+        : "draft";
+  }
+
   ensureDb()
     .prepare(
       `UPDATE auction_sessions
@@ -589,7 +611,7 @@ export function updateSessionSchedule(
       data.scheduledStart,
       data.durationMinutes ?? session.durationMinutes,
       data.note ?? session.note,
-      data.scheduledStart ? "scheduled" : "draft",
+      status,
       sessionId,
     );
   return getSessionById(sessionId);
@@ -737,6 +759,13 @@ export function listBids(sessionId: number, limit = 30): AuctionBid[] {
     isAnonymous: Boolean(r.is_anonymous),
     createdAt: r.created_at,
   }));
+}
+
+export function countBidsForItem(itemId: number): number {
+  const row = ensureDb()
+    .prepare(`SELECT COUNT(*) as count FROM auction_bids WHERE item_id = ?`)
+    .get(itemId) as { count: number };
+  return row.count;
 }
 
 function nowIso() {
@@ -1169,6 +1198,7 @@ export function addTemporaryDividend(input: {
 export function updateDividendAmount(
   entryId: number,
   amount: number,
+  sessionId?: number,
 ): DividendEntry | null {
   const existing = ensureDb()
     .prepare(`SELECT * FROM auction_dividend_entries WHERE id = ?`)
@@ -1184,6 +1214,7 @@ export function updateDividendAmount(
       }
     | undefined;
   if (!existing) return null;
+  if (sessionId && existing.session_id !== sessionId) return null;
 
   ensureDb()
     .prepare(`UPDATE auction_dividend_entries SET amount = ? WHERE id = ?`)
@@ -1206,38 +1237,32 @@ export function matchNamesFromText(text: string): {
 } {
   const members = listMembers();
   const byName = new Map(members.map((m) => [m.name, m]));
-  // Prefer longer names first to avoid partial collisions
-  const names = [...byName.keys()].sort((a, b) => b.length - a.length);
+  const byNameLower = new Map(
+    members.map((m) => [m.name.toLowerCase(), m] as const),
+  );
 
-  const matchedIds = new Set<number>();
-  const foundRaw = new Set<string>();
-
-  for (const name of names) {
-    if (text.includes(name)) {
-      matchedIds.add(byName.get(name)!.id);
-      foundRaw.add(name);
-    }
-  }
-
-  // Also catch standalone tokens that look like names but aren't in roster
   const tokens = text
     .split(/[\s,，、|/\\;；\n\r\t:：]+/)
     .map((t) => t.trim())
     .filter((t) => t.length >= 1 && t.length <= 12);
 
+  const matchedIds = new Set<number>();
   const unrecognized: string[] = [];
+  const skip =
+    /贡献|获得|品级|战盟|名称|普通|守护|参与|战斗力|能力值|力量|体质|灵巧|敏捷|智力|智慧/;
+
   for (const token of tokens) {
-    if (/^[0-9.,]+$/.test(token)) continue;
-    if (/贡献|获得|品级|战盟|名称|普通|守护|参与/.test(token)) continue;
-    if (byName.has(token)) {
-      matchedIds.add(byName.get(token)!.id);
+    if (/^[0-9.,%]+$/.test(token)) continue;
+    if (skip.test(token)) continue;
+
+    const exact = byName.get(token) || byNameLower.get(token.toLowerCase());
+    if (exact) {
+      matchedIds.add(exact.id);
       continue;
     }
-    // Chinese-ish / latin nickname tokens not in roster
-    if (/^[\u4e00-\u9fffA-Za-z0-9_·]+$/.test(token) && !foundRaw.has(token)) {
-      if (!unrecognized.includes(token) && token.length >= 2) {
-        unrecognized.push(token);
-      }
+
+    if (/^[\u4e00-\u9fffA-Za-z0-9_·]+$/.test(token) && token.length >= 2) {
+      if (!unrecognized.includes(token)) unrecognized.push(token);
     }
   }
 
@@ -1557,95 +1582,137 @@ export function castBossVote(input: {
   memberId: number;
   memberName: string;
 }) {
-  expireOpenRounds();
   const boss = getBossById(input.bossId);
   if (!boss || !boss.enabled) throw new Error("BOSS 不存在或已停用");
 
   const database = ensureDb();
-  let round = getOpenRoundForBoss(input.bossId);
 
-  if (round && round.voteType !== input.voteType) {
-    throw new Error(
-      `当前正在进行「${round.voteType === "killed" ? "已击杀" : "未刷新"}」投票，请先完成或等待结束`,
-    );
-  }
+  const run = database.transaction(() => {
+    expireOpenRounds(database);
 
-  if (!round) {
-    const started = new Date();
-    const expires = new Date(
-      started.getTime() + BOSS_VOTE_WINDOW_SECONDS * 1000,
-    );
-    const result = database
+    let roundRow = database
       .prepare(
-        `INSERT INTO boss_vote_rounds (boss_id, vote_type, status, started_at, expires_at)
-         VALUES (?, ?, 'open', ?, ?)`,
+        `SELECT * FROM boss_vote_rounds
+         WHERE boss_id = ? AND status = 'open'
+         ORDER BY id DESC LIMIT 1`,
       )
-      .run(
-        input.bossId,
-        input.voteType,
-        started.toISOString(),
-        expires.toISOString(),
+      .get(input.bossId) as RoundRow | undefined;
+
+    if (roundRow && roundRow.vote_type !== input.voteType) {
+      throw new Error(
+        `当前正在进行「${roundRow.vote_type === "killed" ? "已击杀" : "未刷新"}」投票，请先完成或等待结束`,
       );
-    round = toRound(
+    }
+
+    if (!roundRow) {
+      const started = new Date();
+      const expires = new Date(
+        started.getTime() + BOSS_VOTE_WINDOW_SECONDS * 1000,
+      );
+      // Close any stray open rounds for this boss before creating
+      database
+        .prepare(
+          `UPDATE boss_vote_rounds
+           SET status = 'expired', resolved_at = ?
+           WHERE boss_id = ? AND status = 'open'`,
+        )
+        .run(started.toISOString(), input.bossId);
+
+      const result = database
+        .prepare(
+          `INSERT INTO boss_vote_rounds (boss_id, vote_type, status, started_at, expires_at)
+           VALUES (?, ?, 'open', ?, ?)`,
+        )
+        .run(
+          input.bossId,
+          input.voteType,
+          started.toISOString(),
+          expires.toISOString(),
+        );
+      roundRow = database
+        .prepare(`SELECT * FROM boss_vote_rounds WHERE id = ?`)
+        .get(Number(result.lastInsertRowid)) as RoundRow;
+    }
+
+    if (new Date(roundRow.expires_at).getTime() <= Date.now()) {
+      database
+        .prepare(
+          `UPDATE boss_vote_rounds
+           SET status = 'expired', resolved_at = ?
+           WHERE id = ?`,
+        )
+        .run(new Date().toISOString(), roundRow.id);
+      throw new Error("投票已超时，请重新发起");
+    }
+
+    try {
+      database
+        .prepare(
+          `INSERT INTO boss_votes (round_id, boss_id, vote_type, member_id, member_name)
+           VALUES (?, ?, ?, ?, ?)`,
+        )
+        .run(
+          roundRow.id,
+          input.bossId,
+          input.voteType,
+          input.memberId,
+          input.memberName,
+        );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      if (/UNIQUE|constraint/i.test(message)) {
+        throw new Error("你已在本轮投过票");
+      }
+      throw error;
+    }
+
+    const voteCount = (
+      database
+        .prepare(`SELECT COUNT(*) as count FROM boss_votes WHERE round_id = ?`)
+        .get(roundRow.id) as { count: number }
+    ).count;
+
+    let passed = false;
+    if (voteCount >= BOSS_VOTE_NEED) {
+      const now = new Date().toISOString();
+      const result = database
+        .prepare(
+          `UPDATE boss_vote_rounds
+           SET status = 'passed', resolved_at = ?
+           WHERE id = ? AND status = 'open' AND expires_at > ?`,
+        )
+        .run(now, roundRow.id, now);
+      if (result.changes > 0) {
+        passed = true;
+      }
+    }
+
+    const round = toRound(
       database
         .prepare(`SELECT * FROM boss_vote_rounds WHERE id = ?`)
-        .get(Number(result.lastInsertRowid)) as RoundRow,
+        .get(roundRow.id) as RoundRow,
     );
-  }
 
-  if (round.status !== "open") {
-    throw new Error("投票已结束，请重新发起");
-  }
-  if (new Date(round.expiresAt).getTime() <= Date.now()) {
-    expireOpenRounds();
-    throw new Error("投票已超时，请重新发起");
-  }
+    return { round, passed, voteCount };
+  });
 
-  try {
-    database
-      .prepare(
-        `INSERT INTO boss_votes (round_id, boss_id, vote_type, member_id, member_name)
-         VALUES (?, ?, ?, ?, ?)`,
-      )
-      .run(
-        round.id,
-        input.bossId,
-        input.voteType,
-        input.memberId,
-        input.memberName,
-      );
-  } catch {
-    throw new Error("你已在本轮投过票");
-  }
-
-  round = toRound(
-    database
-      .prepare(`SELECT * FROM boss_vote_rounds WHERE id = ?`)
-      .get(round.id) as RoundRow,
-  );
-
-  let passed = false;
-  if (round.voteCount >= BOSS_VOTE_NEED) {
-    database
-      .prepare(
-        `UPDATE boss_vote_rounds
-         SET status = 'passed', resolved_at = ?
-         WHERE id = ?`,
-      )
-      .run(new Date().toISOString(), round.id);
+  const { round, passed } = run();
+  if (passed) {
     applyPassedVote(input.bossId, input.voteType);
-    passed = true;
     addBossChatSystem(
       `「${boss.name}」${input.voteType === "killed" ? "已击杀" : "未刷新"}标记生效（${round.voteCount}人同意）`,
     );
-    round = toRound(
-      database
-        .prepare(`SELECT * FROM boss_vote_rounds WHERE id = ?`)
-        .get(round.id) as RoundRow,
-    );
   }
 
-  return { round, passed, boss: getBossById(input.bossId)! };
+  return {
+    round: toRound(
+      ensureDb()
+        .prepare(`SELECT * FROM boss_vote_rounds WHERE id = ?`)
+        .get(round.id) as RoundRow,
+    ),
+    passed,
+    boss: getBossById(input.bossId)!,
+  };
 }
 
 export function touchBossPresence(memberId: number, memberName: string) {
