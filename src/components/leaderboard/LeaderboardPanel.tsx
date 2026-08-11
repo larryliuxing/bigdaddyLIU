@@ -7,8 +7,8 @@ import type {
   LeaderboardStats,
   SessionUser,
 } from "@/lib/types";
-import { recognizeImageText } from "@/lib/auction/client";
 import { parseCombatPowerScreenshot } from "@/lib/leaderboard/parse";
+import { recognizeCombatPowerScreenshot } from "@/lib/leaderboard/recognize";
 import { TrophyIcon } from "@/components/Icons";
 import { hubPath } from "@/lib/nav";
 
@@ -67,7 +67,8 @@ export function LeaderboardPanel({
       const dataUrl = String(reader.result || "");
       setImageData(dataUrl);
       try {
-        const text = await recognizeImageText(file);
+        // Multi-pass OCR: full frame + cyan name crops + combat-power crop
+        const text = await recognizeCombatPowerScreenshot(file);
         setOcrText(text);
 
         if (!member) {
@@ -76,7 +77,9 @@ export function LeaderboardPanel({
           setPreviewPower(null);
         } else {
           const parsed = parseCombatPowerScreenshot(text, member.name);
-          setPreviewNameOk(parsed.ok);
+          setPreviewNameOk(
+            parsed.ok || parsed.detectedName === member.name,
+          );
           setPreviewPower(parsed.combatPower);
           if (!parsed.ok) {
             setStatus(parsed.error || "识别未通过");
@@ -231,7 +234,7 @@ export function LeaderboardPanel({
               上传本人战力截图
             </h2>
             <p className="mt-1 text-xs leading-5 text-[var(--text-muted)]">
-              截图需包含角色名「{member.name}」与「战斗力」数值；名字与当前账号不一致将拒绝上榜。
+              截图需包含角色名「{member.name}」与「战斗力」数值。系统会单独增强识别顶部浅色名字区域；名字与当前账号不一致将拒绝上榜。
             </p>
 
             <div
