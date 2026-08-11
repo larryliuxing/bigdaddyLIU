@@ -1,21 +1,18 @@
 import { redirect } from "next/navigation";
-import { IdentitySelect } from "@/components/IdentitySelect";
+import { DividendPanel } from "@/components/auction/DividendPanel";
 import { getAdminSession, getMemberSession } from "@/lib/auth";
 import { listMembers } from "@/lib/db";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export default async function LoginPage() {
+export default async function AuctionDividendsPage() {
   const member = await getMemberSession();
-  if (member) {
-    redirect("/home");
-  }
   const admin = await getAdminSession();
-  if (admin) {
-    redirect("/admin");
+  if (!member && !admin) {
+    redirect("/");
   }
-
-  const members = listMembers();
-  return <IdentitySelect members={members} />;
+  return (
+    <DividendPanel members={listMembers()} isAdmin={Boolean(admin)} />
+  );
 }

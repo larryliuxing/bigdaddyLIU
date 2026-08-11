@@ -2,7 +2,8 @@ import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
 import type { MemberRole, SessionUser } from "./types";
 
-const COOKIE_NAME = "guild_session";
+const MEMBER_COOKIE = "guild_session";
+const ADMIN_COOKIE = "guild_admin_session";
 const MAX_AGE = 60 * 60 * 24 * 7; // 7 days
 
 function getSecret() {
@@ -48,7 +49,17 @@ export async function verifySessionToken(
 export async function setSessionCookie(user: SessionUser) {
   const token = await createSessionToken(user);
   const jar = await cookies();
-  jar.set(COOKIE_NAME, token, {
+  if (user.type === "admin") {
+    jar.set(ADMIN_COOKIE, token, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      path: "/",
+      maxAge: MAX_AGE,
+    });
+    return;
+  }
+  jar.set(MEMBER_COOKIE, token, {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
@@ -59,24 +70,49 @@ export async function setSessionCookie(user: SessionUser) {
 
 export async function clearSessionCookie() {
   const jar = await cookies();
-  jar.delete(COOKIE_NAME);
+  jar.delete(MEMBER_COOKIE);
+  jar.delete(ADMIN_COOKIE);
 }
 
-export async function getSession(): Promise<SessionUser | null> {
+export async function clearMemberSessionCookie() {
   const jar = await cookies();
-  const token = jar.get(COOKIE_NAME)?.value;
-  if (!token) return null;
-  return verifySessionToken(token);
+  jar.delete(MEMBER_COOKIE);
 }
 
-export async function requireMemberSession() {
-  const session = await getSession();
+export async function clearAdminSessionCookie() {
+  const jar = await cookies();
+  jar.delete(ADMIN_COOKIE);
+}
+
+export async function getMemberSession() {
+  const jar = await cookies();
+  const token = jar.get(MEMBER_COOKIE)?.value;
+  if (!token) return null;
+  const session = await verifySessionToken(token);
   if (!session || session.type !== "member") return null;
   return session;
 }
 
-export async function requireAdminSession() {
-  const session = await getSession();
+export async function getAdminSession() {
+  const jar = await cookies();
+  const token = jar.get(ADMIN_COOKIE)?.value;
+  if (!token) return null;
+  const session = await verifySessionToken(token);
   if (!session || session.type !== "admin") return null;
   return session;
+}
+
+/** Prefer member identity for UI; fall back to admin. */
+export async function getSession(): Promise<SessionUser | null> {
+  const member = await getMemberSession();
+  if (member) return member;
+  return getAdminSession();
+}
+
+export async function requireMemberSession() {
+  return getMemberSession();
+}
+
+export async function requireAdminSession() {
+  return getAdminSession();
 }

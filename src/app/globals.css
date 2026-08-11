@@ -67,6 +67,13 @@ select {
   padding: 28px 20px 40px;
 }
 
+.auction-frame {
+  width: min(100%, 960px);
+  min-height: 100dvh;
+  position: relative;
+  padding: 24px 20px 40px;
+}
+
 .grid-bg {
   position: absolute;
   inset: 0;

@@ -42,12 +42,20 @@ export function HomeHub({ user }: { user: Extract<SessionUser, { type: "member" 
   const [toast, setToast] = useState("");
 
   async function logout() {
-    await fetch("/api/auth/logout", { method: "POST" });
+    await fetch("/api/auth/logout", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scope: "member" }),
+    });
     router.push("/");
     router.refresh();
   }
 
-  function openFeature(title: string) {
+  function openFeature(key: string, title: string) {
+    if (key === "auction") {
+      router.push("/auction");
+      return;
+    }
     setToast(`${title} 功能开发中，敬请期待`);
     window.setTimeout(() => setToast(""), 2200);
   }
@@ -84,7 +92,7 @@ export function HomeHub({ user }: { user: Extract<SessionUser, { type: "member" 
               key={feature.key}
               type="button"
               className={`feature-card ${index === 1 ? "animate-fade-up-delay" : ""} ${index === 2 ? "animate-fade-up-delay-2" : ""}`}
-              onClick={() => openFeature(feature.title)}
+              onClick={() => openFeature(feature.key, feature.title)}
             >
               <span className="feature-icon" style={{ background: feature.iconBg }}>
                 {feature.icon}

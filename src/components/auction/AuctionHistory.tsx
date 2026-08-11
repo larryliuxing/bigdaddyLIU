@@ -1,0 +1,117 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import type { AuctionItem, AuctionSession } from "@/lib/types";
+import { qualityMeta } from "@/lib/auction/client";
+
+export function AuctionHistory() {
+  const router = useRouter();
+  const [sessions, setSessions] = useState<AuctionSession[]>([]);
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [items, setItems] = useState<AuctionItem[]>([]);
+
+  useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      const res = await fetch("/api/auction/dividends");
+      const data = await res.json();
+      if (!alive || !res.ok) return;
+      const list = (data.sessions || []) as AuctionSession[];
+      setSessions(list);
+      if (list[0]) setSelectedId(list[0].id);
+    };
+    const timeout = window.setTimeout(() => {
+      void load();
+    }, 0);
+    return () => {
+      alive = false;
+      window.clearTimeout(timeout);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!selectedId) return;
+    let alive = true;
+    const load = async () => {
+      const res = await fetch(`/api/auction/items?sessionId=${selectedId}`);
+      const data = await res.json();
+      if (!alive || !res.ok) return;
+      setItems(data.items || []);
+    };
+    const timeout = window.setTimeout(() => {
+      void load();
+    }, 0);
+    return () => {
+      alive = false;
+      window.clearTimeout(timeout);
+    };
+  }, [selectedId]);
+
+  return (
+    <div className="app-shell">
+      <div className="auction-frame">
+        <header className="mb-6 flex items-start justify-between gap-3">
+          <div>
+            <p className="text-sm text-[var(--text-muted)]">拍卖</p>
+            <h1 className="mt-1 text-2xl font-bold">历史记录</h1>
+          </div>
+          <button
+            type="button"
+            className="btn-ghost text-sm"
+            onClick={() => router.push("/auction")}
+          >
+            返回拍卖
+          </button>
+        </header>
+
+        <div className="mb-4 flex flex-wrap gap-2">
+          {sessions.map((s) => (
+            <button
+              key={s.id}
+              type="button"
+              className={`rounded-lg px-3 py-1.5 text-sm ${
+                selectedId === s.id
+                  ? "bg-[#2a3350]"
+                  : "border border-[var(--border-soft)] text-[var(--text-muted)]"
+              }`}
+              onClick={() => setSelectedId(s.id)}
+            >
+              #{s.id} · {s.status}
+            </button>
+          ))}
+          {sessions.length === 0 && (
+            <p className="text-sm text-[var(--text-muted)]">暂无历史场次</p>
+          )}
+        </div>
+
+        <section className="overflow-hidden rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)]">
+          <ul className="divide-y divide-[var(--border-soft)]">
+            {items.length === 0 && (
+              <li className="px-4 py-8 text-sm text-[var(--text-muted)]">
+                该场次暂无拍品
+              </li>
+            )}
+            {items.map((item) => (
+              <li key={item.id} className="px-4 py-3">
+                <p className="font-medium">
+                  <span
+                    className="mr-2 inline-block h-2.5 w-2.5 rounded-full"
+                    style={{ background: qualityMeta(item.quality).color }}
+                  />
+                  {item.name}
+                </p>
+                <p className="mt-1 text-xs text-[var(--text-muted)]">
+                  {item.status}
+                  {item.soldPrice != null
+                    ? ` · 成交 ¥${item.soldPrice} · ${item.winnerName ?? ""}`
+                    : ""}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </section>
+      </div>
+    </div>
+  );
+}

@@ -33,7 +33,11 @@ export function AdminPanel({
   }
 
   async function logout() {
-    await fetch("/api/auth/logout", { method: "POST" });
+    await fetch("/api/auth/logout", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scope: "admin" }),
+    });
     router.push("/");
     router.refresh();
   }
@@ -120,6 +124,13 @@ export function AdminPanel({
             </p>
           </div>
           <div className="flex gap-2">
+            <button
+              type="button"
+              className="btn-ghost text-sm"
+              onClick={() => router.push("/auction/manage")}
+            >
+              拍卖管理
+            </button>
             <button
               type="button"
               className="btn-ghost text-sm"
