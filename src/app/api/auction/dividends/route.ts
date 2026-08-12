@@ -3,10 +3,15 @@ import { requireAdminSession } from "@/lib/auth";
 import {
   addTemporaryDividend,
   calculateDividends,
+  deleteDividendEntry,
+  getAuctionSettings,
+  getDividendReport,
   getLatestSession,
   getSessionById,
   listDividends,
   listSessions,
+  setItemDividendMembers,
+  updateAuctionSettings,
   updateDividendAmount,
 } from "@/lib/db";
 import { buildRoomState } from "@/lib/auction/room";
@@ -18,7 +23,6 @@ function resolveTargetSession(bodySessionId?: unknown) {
   if (Number.isFinite(id) && id > 0) {
     return getSessionById(id);
   }
-  // Prefer latest ended session for dividend ops when latest is a new draft
   const latest = getLatestSession();
   if (latest?.status === "ended") return latest;
   const ended = listSessions().find((s) => s.status === "ended");
@@ -32,10 +36,13 @@ export async function GET(request: Request) {
     ? listSessions().find((s) => s.id === sessionId)
     : resolveTargetSession();
 
+  const report = session ? getDividendReport(session.id) : null;
   return NextResponse.json({
     sessions: listSessions(),
     session,
+    settings: getAuctionSettings(),
     dividends: session ? listDividends(session.id) : [],
+    report,
     room: buildRoomState(session?.id),
   });
 }
@@ -48,17 +55,56 @@ export async function POST(request: Request) {
 
   const body = await request.json().catch(() => null);
   const action = String(body?.action ?? "calculate");
-  const session = resolveTargetSession(body?.sessionId);
-  if (!session) {
-    return NextResponse.json({ error: "暂无场次" }, { status: 400 });
-  }
 
   try {
+    if (action === "setTaxRate") {
+      const taxPercent = Number(body?.taxPercent ?? body?.taxRate);
+      const taxRate =
+        body?.taxRate != null && Number(body.taxRate) <= 1
+          ? Number(body.taxRate)
+          : taxPercent / 100;
+      if (!Number.isFinite(taxRate) || taxRate < 0 || taxRate > 0.5) {
+        return NextResponse.json(
+          { error: "税率需在 0%–50% 之间" },
+          { status: 400 },
+        );
+      }
+      const settings = updateAuctionSettings({ taxRate });
+      return NextResponse.json({ settings });
+    }
+
+    const session = resolveTargetSession(body?.sessionId);
+    if (!session) {
+      return NextResponse.json({ error: "暂无场次" }, { status: 400 });
+    }
+
     if (action === "calculate") {
-      const dividends = calculateDividends(session.id);
+      const taxPercent = body?.taxPercent != null ? Number(body.taxPercent) : null;
+      const taxRate =
+        taxPercent != null && Number.isFinite(taxPercent)
+          ? taxPercent / 100
+          : body?.taxRate != null
+            ? Number(body.taxRate)
+            : undefined;
+      const report = calculateDividends(session.id, taxRate);
       return NextResponse.json({
-        dividends,
+        report,
+        dividends: report.totals,
         session,
+        room: buildRoomState(session.id),
+        settings: getAuctionSettings(),
+      });
+    }
+
+    if (action === "setItemMembers") {
+      const itemId = Number(body?.itemId);
+      const memberIds = Array.isArray(body?.memberIds)
+        ? body.memberIds.map(Number)
+        : [];
+      const report = setItemDividendMembers(itemId, memberIds);
+      return NextResponse.json({
+        report,
+        dividends: report.totals,
         room: buildRoomState(session.id),
       });
     }
@@ -77,6 +123,20 @@ export async function POST(request: Request) {
       });
       return NextResponse.json({
         entry,
+        report: getDividendReport(session.id),
+        dividends: listDividends(session.id),
+        room: buildRoomState(session.id),
+      });
+    }
+
+    if (action === "deleteTemporary") {
+      const ok = deleteDividendEntry(Number(body?.id), session.id);
+      if (!ok) {
+        return NextResponse.json({ error: "记录不存在" }, { status: 404 });
+      }
+      return NextResponse.json({
+        ok: true,
+        report: getDividendReport(session.id),
         dividends: listDividends(session.id),
         room: buildRoomState(session.id),
       });
@@ -97,6 +157,7 @@ export async function POST(request: Request) {
       }
       return NextResponse.json({
         entry,
+        report: getDividendReport(session.id),
         dividends: listDividends(session.id),
         room: buildRoomState(session.id),
       });

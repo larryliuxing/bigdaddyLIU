@@ -1,6 +1,7 @@
 import {
   countBidsForItem,
   getAuctionSettings,
+  getDividendReport,
   getPublicAuctionSession,
   getSessionById,
   isDividendsCalculated,
@@ -49,6 +50,10 @@ export function buildRoomState(sessionId?: number): AuctionRoomState {
     );
   }
 
+  const dividendsCalculated = session
+    ? isDividendsCalculated(session.id)
+    : false;
+
   return {
     settings,
     session,
@@ -62,8 +67,10 @@ export function buildRoomState(sessionId?: number): AuctionRoomState {
     serverNow: new Date().toISOString(),
     remainingSeconds,
     dividends: session ? listDividends(session.id) : [],
-    dividendsCalculated: session
-      ? isDividendsCalculated(session.id)
-      : false,
+    dividendsCalculated,
+    dividendReport:
+      session && (session.status === "ended" || dividendsCalculated)
+        ? getDividendReport(session.id)
+        : null,
   };
 }

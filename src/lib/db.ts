@@ -12,6 +12,10 @@ import type {
   AuctionSessionSummary,
   AuctionSettings,
   DividendEntry,
+  DividendReport,
+  DividendSummary,
+  ItemDividendGroup,
+  ItemDividendLine,
   ItemQuality,
   Member,
   MemberRole,
@@ -143,6 +147,20 @@ export function ensureDb(): Database.Database {
       note TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS auction_item_dividend_lines (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id INTEGER NOT NULL,
+      item_id INTEGER NOT NULL,
+      member_id INTEGER,
+      member_name TEXT NOT NULL,
+      sold_price REAL NOT NULL DEFAULT 0,
+      tax_rate REAL NOT NULL DEFAULT 0.05,
+      tax_amount REAL NOT NULL DEFAULT 0,
+      pool_amount REAL NOT NULL DEFAULT 0,
+      share_amount REAL NOT NULL DEFAULT 0,
+      is_temporary INTEGER NOT NULL DEFAULT 0
+    );
+
     CREATE TABLE IF NOT EXISTS leaderboard_entries (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       member_id INTEGER NOT NULL UNIQUE,
@@ -262,6 +280,13 @@ function seedIfEmpty(database: Database.Database) {
       .run();
   }
 
+  ensureColumn(
+    database,
+    "auction_settings",
+    "tax_rate",
+    "REAL NOT NULL DEFAULT 0.05",
+  );
+
   const bossCount = database
     .prepare("SELECT COUNT(*) as count FROM bosses")
     .get() as { count: number };
@@ -279,6 +304,19 @@ function seedIfEmpty(database: Database.Database) {
       insertBoss.run(...row);
     }
   }
+}
+
+function ensureColumn(
+  database: Database.Database,
+  table: string,
+  column: string,
+  definition: string,
+) {
+  const cols = database.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+    name: string;
+  }>;
+  if (cols.some((c) => c.name === column)) return;
+  database.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 }
 
 function toMember(row: MemberRow): Member {
@@ -484,7 +522,8 @@ function toItem(row: ItemRow): AuctionItem {
 export function getAuctionSettings(): AuctionSettings {
   const row = ensureDb()
     .prepare(
-      `SELECT id, default_start_time, duration_minutes, bid_extension_seconds, sound_enabled_default
+      `SELECT id, default_start_time, duration_minutes, bid_extension_seconds,
+              sound_enabled_default, tax_rate
        FROM auction_settings WHERE id = 1`,
     )
     .get() as {
@@ -493,7 +532,13 @@ export function getAuctionSettings(): AuctionSettings {
     duration_minutes: number;
     bid_extension_seconds: number;
     sound_enabled_default: number;
+    tax_rate: number | null;
   };
+
+  const taxRate =
+    typeof row.tax_rate === "number" && Number.isFinite(row.tax_rate)
+      ? Math.min(0.5, Math.max(0, row.tax_rate))
+      : 0.05;
 
   return {
     id: row.id,
@@ -501,6 +546,7 @@ export function getAuctionSettings(): AuctionSettings {
     durationMinutes: row.duration_minutes,
     bidExtensionSeconds: row.bid_extension_seconds,
     soundEnabledDefault: Boolean(row.sound_enabled_default),
+    taxRate,
   };
 }
 
@@ -508,18 +554,24 @@ export function updateAuctionSettings(data: {
   defaultStartTime?: string;
   durationMinutes?: number;
   bidExtensionSeconds?: number;
+  taxRate?: number;
 }): AuctionSettings {
   const current = getAuctionSettings();
+  const taxRate =
+    data.taxRate != null && Number.isFinite(Number(data.taxRate))
+      ? Math.min(0.5, Math.max(0, Number(data.taxRate)))
+      : current.taxRate;
   ensureDb()
     .prepare(
       `UPDATE auction_settings
-       SET default_start_time = ?, duration_minutes = ?, bid_extension_seconds = ?
+       SET default_start_time = ?, duration_minutes = ?, bid_extension_seconds = ?, tax_rate = ?
        WHERE id = 1`,
     )
     .run(
       data.defaultStartTime ?? current.defaultStartTime,
       data.durationMinutes ?? current.durationMinutes,
       data.bidExtensionSeconds ?? current.bidExtensionSeconds,
+      taxRate,
     );
   return getAuctionSettings();
 }
@@ -1177,43 +1229,67 @@ export function maybeAutoProgress(sessionId: number): AuctionSession | null {
   return session;
 }
 
-export function calculateDividends(sessionId: number): DividendEntry[] {
-  const session = getSessionById(sessionId);
-  if (!session) throw new Error("场次不存在");
-  if (session.status !== "ended") {
-    throw new Error("请先结束拍卖再计算分红");
-  }
+export function getBelowThresholdMemberIds(thresholdRatio = 0.85): number[] {
+  const board = getLeaderboardBoard(thresholdRatio);
+  return board.entries.filter((e) => e.belowThreshold).map((e) => e.memberId);
+}
 
-  const items = listItems(sessionId).filter(
-    (i) => i.status === "sold" && i.soldPrice != null,
-  );
-  const totals = new Map<number, { name: string; amount: number }>();
+function roundMoney(n: number) {
+  return Math.round(n * 100) / 100;
+}
 
-  for (const item of items) {
-    const ids = item.dividendMemberIds;
-    if (!ids.length || !item.soldPrice) continue;
-    const share = item.soldPrice / ids.length;
-    for (const memberId of ids) {
-      const member = getMemberById(memberId);
-      if (!member) continue;
-      const prev = totals.get(memberId) ?? { name: member.name, amount: 0 };
-      prev.amount += share;
-      totals.set(memberId, prev);
-    }
-  }
-
+function rebuildSessionDividendTotals(sessionId: number) {
   const database = ensureDb();
+  const lineRows = database
+    .prepare(
+      `SELECT member_id, member_name, SUM(share_amount) as total
+       FROM auction_item_dividend_lines
+       WHERE session_id = ?
+       GROUP BY member_id, member_name`,
+    )
+    .all(sessionId) as Array<{
+    member_id: number | null;
+    member_name: string;
+    total: number;
+  }>;
+
+  // Keep temporary adjustments; rebuild only auto totals from per-item lines.
   database
-    .prepare(`DELETE FROM auction_dividend_entries WHERE session_id = ? AND is_temporary = 0`)
+    .prepare(
+      `DELETE FROM auction_dividend_entries WHERE session_id = ? AND is_temporary = 0`,
+    )
     .run(sessionId);
 
   const insert = database.prepare(
-    `INSERT INTO auction_dividend_entries (session_id, member_id, member_name, amount, is_temporary, note)
+    `INSERT INTO auction_dividend_entries
+     (session_id, member_id, member_name, amount, is_temporary, note)
      VALUES (?, ?, ?, ?, 0, NULL)`,
   );
+
+  const totals = new Map<
+    string,
+    { memberId: number | null; name: string; amount: number }
+  >();
+  for (const row of lineRows) {
+    const key =
+      row.member_id != null ? `id:${row.member_id}` : `name:${row.member_name}`;
+    const prev = totals.get(key) ?? {
+      memberId: row.member_id,
+      name: row.member_name,
+      amount: 0,
+    };
+    prev.amount += Number(row.total) || 0;
+    totals.set(key, prev);
+  }
+
   const tx = database.transaction(() => {
-    for (const [memberId, value] of totals.entries()) {
-      insert.run(sessionId, memberId, value.name, roundMoney(value.amount));
+    for (const value of totals.values()) {
+      insert.run(
+        sessionId,
+        value.memberId,
+        value.name,
+        roundMoney(value.amount),
+      );
     }
     database
       .prepare(
@@ -1222,13 +1298,308 @@ export function calculateDividends(sessionId: number): DividendEntry[] {
       .run(sessionId);
   });
   tx();
-
-  addEvent(sessionId, "dividend", "已自动计算分红");
-  return listDividends(sessionId);
 }
 
-function roundMoney(n: number) {
-  return Math.round(n * 100) / 100;
+export function listItemDividendLines(sessionId: number): ItemDividendLine[] {
+  const rows = ensureDb()
+    .prepare(
+      `SELECT l.*, i.name as item_name
+       FROM auction_item_dividend_lines l
+       LEFT JOIN auction_items i ON i.id = l.item_id
+       WHERE l.session_id = ?
+       ORDER BY l.item_id ASC, l.share_amount DESC, l.id ASC`,
+    )
+    .all(sessionId) as Array<{
+    id: number;
+    session_id: number;
+    item_id: number;
+    item_name: string | null;
+    member_id: number | null;
+    member_name: string;
+    sold_price: number;
+    tax_rate: number;
+    tax_amount: number;
+    pool_amount: number;
+    share_amount: number;
+    is_temporary: number;
+  }>;
+
+  const below = new Set(getBelowThresholdMemberIds());
+  return rows.map((r) => ({
+    id: r.id,
+    sessionId: r.session_id,
+    itemId: r.item_id,
+    itemName: r.item_name || `拍品#${r.item_id}`,
+    memberId: r.member_id,
+    memberName: r.member_name,
+    soldPrice: r.sold_price,
+    taxRate: r.tax_rate,
+    taxAmount: r.tax_amount,
+    poolAmount: r.pool_amount,
+    shareAmount: r.share_amount,
+    isTemporary: Boolean(r.is_temporary),
+    belowThreshold: r.member_id != null ? below.has(r.member_id) : false,
+  }));
+}
+
+export function getDividendReport(sessionId: number): DividendReport {
+  const session = getSessionById(sessionId);
+  const settings = getAuctionSettings();
+  const lines = listItemDividendLines(sessionId);
+  const belowThresholdMemberIds = getBelowThresholdMemberIds();
+  const below = new Set(belowThresholdMemberIds);
+  const totals = listDividends(sessionId).map((d) => ({
+    ...d,
+    belowThreshold: d.memberId != null ? below.has(d.memberId) : false,
+  }));
+
+  const linesByItem = new Map<number, ItemDividendLine[]>();
+  for (const line of lines) {
+    const list = linesByItem.get(line.itemId) ?? [];
+    list.push(line);
+    linesByItem.set(line.itemId, list);
+  }
+
+  const calculated = isDividendsCalculated(sessionId);
+  const soldItems = listItems(sessionId).filter(
+    (i) => i.status === "sold" && i.soldPrice != null && i.soldPrice > 0,
+  );
+
+  const taxRateHint = lines[0]?.taxRate ?? settings.taxRate;
+  const itemGroups: ItemDividendGroup[] = [];
+
+  if (calculated) {
+    // After calculation, list every sold item (even empty roster for editing).
+    for (const item of soldItems) {
+      const itemLines = linesByItem.get(item.id) ?? [];
+      const soldPrice = Number(item.soldPrice) || itemLines[0]?.soldPrice || 0;
+      const taxRate = itemLines[0]?.taxRate ?? taxRateHint;
+      const taxAmount =
+        itemLines[0]?.taxAmount ?? roundMoney(soldPrice * taxRate);
+      const poolAmount =
+        itemLines[0]?.poolAmount ?? roundMoney(soldPrice - taxAmount);
+      itemGroups.push({
+        itemId: item.id,
+        itemName: item.name,
+        soldPrice,
+        taxRate,
+        taxAmount,
+        poolAmount,
+        lines: itemLines,
+      });
+    }
+  }
+
+  // Include line groups not already covered (pre-calc leftovers / deleted items).
+  for (const [itemId, itemLines] of linesByItem.entries()) {
+    if (itemGroups.some((g) => g.itemId === itemId)) continue;
+    const first = itemLines[0];
+    itemGroups.push({
+      itemId,
+      itemName: first.itemName,
+      soldPrice: first.soldPrice,
+      taxRate: first.taxRate,
+      taxAmount: first.taxAmount,
+      poolAmount: first.poolAmount,
+      lines: itemLines,
+    });
+  }
+
+  const grossSales = itemGroups.reduce((s, g) => s + g.soldPrice, 0);
+  const taxTotal = itemGroups.reduce((s, g) => s + g.taxAmount, 0);
+  const dividendPool = itemGroups.reduce((s, g) => s + g.poolAmount, 0);
+  const temporaryTotal = totals
+    .filter((t) => t.isTemporary)
+    .reduce((s, t) => s + t.amount, 0);
+  const payoutTotal = totals.reduce((s, t) => s + t.amount, 0);
+  const taxRate = itemGroups[0]?.taxRate ?? settings.taxRate;
+
+  const summary: DividendSummary = {
+    soldCount: itemGroups.length,
+    grossSales: roundMoney(grossSales),
+    taxRate,
+    taxTotal: roundMoney(taxTotal),
+    dividendPool: roundMoney(dividendPool),
+    payoutTotal: roundMoney(payoutTotal),
+    temporaryTotal: roundMoney(temporaryTotal),
+  };
+
+  return {
+    session,
+    calculated,
+    taxRate,
+    itemGroups,
+    totals,
+    summary,
+    belowThresholdMemberIds,
+  };
+}
+
+export function calculateDividends(
+  sessionId: number,
+  taxRateOverride?: number,
+): DividendReport {
+  const session = getSessionById(sessionId);
+  if (!session) throw new Error("场次不存在");
+  if (session.status !== "ended") {
+    throw new Error("请先结束拍卖再计算分红");
+  }
+
+  const settings = getAuctionSettings();
+  const taxRate =
+    taxRateOverride != null && Number.isFinite(taxRateOverride)
+      ? Math.min(0.5, Math.max(0, taxRateOverride))
+      : settings.taxRate;
+
+  if (taxRateOverride != null) {
+    updateAuctionSettings({ taxRate });
+  }
+
+  const items = listItems(sessionId).filter(
+    (i) => i.status === "sold" && i.soldPrice != null && i.soldPrice > 0,
+  );
+
+  const database = ensureDb();
+  database
+    .prepare(`DELETE FROM auction_item_dividend_lines WHERE session_id = ?`)
+    .run(sessionId);
+
+  const insertLine = database.prepare(
+    `INSERT INTO auction_item_dividend_lines
+     (session_id, item_id, member_id, member_name, sold_price, tax_rate, tax_amount, pool_amount, share_amount, is_temporary)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+  );
+
+  const tx = database.transaction(() => {
+    for (const item of items) {
+      const soldPrice = Number(item.soldPrice) || 0;
+      const taxAmount = roundMoney(soldPrice * taxRate);
+      const poolAmount = roundMoney(soldPrice - taxAmount);
+      const ids = item.dividendMemberIds;
+      if (!ids.length) {
+        // Still mark calculated; admin can add members per item afterwards.
+        continue;
+      }
+      const rawShare = poolAmount / ids.length;
+      let allocated = 0;
+      ids.forEach((memberId, index) => {
+        const member = getMemberById(memberId);
+        if (!member) return;
+        const isLast = index === ids.length - 1;
+        const shareAmount = isLast
+          ? roundMoney(poolAmount - allocated)
+          : roundMoney(rawShare);
+        allocated = roundMoney(allocated + shareAmount);
+        insertLine.run(
+          sessionId,
+          item.id,
+          member.id,
+          member.name,
+          soldPrice,
+          taxRate,
+          taxAmount,
+          poolAmount,
+          shareAmount,
+        );
+      });
+    }
+  });
+  tx();
+
+  rebuildSessionDividendTotals(sessionId);
+  addEvent(
+    sessionId,
+    "dividend",
+    `已计算分红（税率 ${(taxRate * 100).toFixed(1)}%）`,
+  );
+  return getDividendReport(sessionId);
+}
+
+export function setItemDividendMembers(
+  itemId: number,
+  memberIds: number[],
+): DividendReport {
+  const item = getItemById(itemId);
+  if (!item) throw new Error("拍品不存在");
+  if (item.status !== "sold") {
+    throw new Error("仅已成交拍品可调整分红名单");
+  }
+
+  const uniqueIds = [...new Set(memberIds.map(Number).filter((id) => id > 0))];
+  if (uniqueIds.length === 0) {
+    throw new Error("请至少保留一名分红成员");
+  }
+
+  const database = ensureDb();
+  const tx = database.transaction(() => {
+    database
+      .prepare(`DELETE FROM auction_item_dividends WHERE item_id = ?`)
+      .run(itemId);
+    const insert = database.prepare(
+      `INSERT INTO auction_item_dividends (item_id, member_id) VALUES (?, ?)`,
+    );
+    for (const id of uniqueIds) {
+      if (!getMemberById(id)) continue;
+      insert.run(itemId, id);
+    }
+  });
+  tx();
+
+  // Recalculate only this item's lines if session already calculated
+  if (!isDividendsCalculated(item.sessionId)) {
+    return getDividendReport(item.sessionId);
+  }
+
+  const settings = getAuctionSettings();
+  const existing = listItemDividendLines(item.sessionId).find(
+    (l) => l.itemId === itemId,
+  );
+  const taxRate = existing?.taxRate ?? settings.taxRate;
+  const soldPrice = Number(item.soldPrice) || 0;
+  const taxAmount = roundMoney(soldPrice * taxRate);
+  const poolAmount = roundMoney(soldPrice - taxAmount);
+
+  database
+    .prepare(
+      `DELETE FROM auction_item_dividend_lines WHERE session_id = ? AND item_id = ?`,
+    )
+    .run(item.sessionId, itemId);
+
+  const insertLine = database.prepare(
+    `INSERT INTO auction_item_dividend_lines
+     (session_id, item_id, member_id, member_name, sold_price, tax_rate, tax_amount, pool_amount, share_amount, is_temporary)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+  );
+  const rawShare = poolAmount / uniqueIds.length;
+  let allocated = 0;
+  uniqueIds.forEach((memberId, index) => {
+    const member = getMemberById(memberId);
+    if (!member) return;
+    const isLast = index === uniqueIds.length - 1;
+    const shareAmount = isLast
+      ? roundMoney(poolAmount - allocated)
+      : roundMoney(rawShare);
+    allocated = roundMoney(allocated + shareAmount);
+    insertLine.run(
+      item.sessionId,
+      itemId,
+      member.id,
+      member.name,
+      soldPrice,
+      taxRate,
+      taxAmount,
+      poolAmount,
+      shareAmount,
+    );
+  });
+
+  rebuildSessionDividendTotals(item.sessionId);
+  addEvent(
+    item.sessionId,
+    "dividend",
+    `已调整「${item.name}」分红名单（${uniqueIds.length} 人）`,
+  );
+  return getDividendReport(item.sessionId);
 }
 
 export function listDividends(sessionId: number): DividendEntry[] {
@@ -1246,6 +1617,7 @@ export function listDividends(sessionId: number): DividendEntry[] {
     note: string | null;
   }>;
 
+  const below = new Set(getBelowThresholdMemberIds());
   return rows.map((r) => ({
     id: r.id,
     sessionId: r.session_id,
@@ -1254,6 +1626,7 @@ export function listDividends(sessionId: number): DividendEntry[] {
     amount: r.amount,
     isTemporary: Boolean(r.is_temporary),
     note: r.note,
+    belowThreshold: r.member_id != null ? below.has(r.member_id) : false,
   }));
 }
 
@@ -1317,6 +1690,36 @@ export function addTemporaryDividend(input: {
     isTemporary: Boolean(row.is_temporary),
     note: row.note,
   };
+}
+
+export function deleteDividendEntry(
+  entryId: number,
+  sessionId?: number,
+): boolean {
+  const existing = ensureDb()
+    .prepare(`SELECT * FROM auction_dividend_entries WHERE id = ?`)
+    .get(entryId) as
+    | {
+        id: number;
+        session_id: number;
+        member_name: string;
+        is_temporary: number;
+      }
+    | undefined;
+  if (!existing) return false;
+  if (sessionId && existing.session_id !== sessionId) return false;
+  if (!existing.is_temporary) {
+    throw new Error("自动分红请通过调整拍品名单修改，仅可删除临时加人");
+  }
+  ensureDb()
+    .prepare(`DELETE FROM auction_dividend_entries WHERE id = ?`)
+    .run(entryId);
+  addEvent(
+    existing.session_id,
+    "dividend",
+    `已删除临时分红：${existing.member_name}`,
+  );
+  return true;
 }
 
 export function updateDividendAmount(

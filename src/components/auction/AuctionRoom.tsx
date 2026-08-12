@@ -184,7 +184,7 @@ export function AuctionRoom({
               className="btn-ghost"
               onClick={() => router.push("/auction/dividends")}
             >
-              分红统计
+              分红公示
             </button>
           </div>
         </header>
