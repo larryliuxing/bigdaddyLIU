@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ItemQuality, Member } from "@/lib/types";
+import type { ItemPriceStats, ItemQuality, Member } from "@/lib/types";
 import { recognizeItemName } from "@/lib/auction/itemOcr";
 import { recognizeParticipantNames } from "@/lib/auction/participantOcr";
 import { LockIcon } from "@/components/Icons";
+import { ItemPriceStatsLine } from "./ItemPriceStatsLine";
 
 function roleClass(role: Member["role"]) {
   if (role === "leader") return "role-leader";
@@ -34,6 +35,7 @@ export function AddAuctionItemForm({
   const [ocrStatus, setOcrStatus] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [priceStats, setPriceStats] = useState<ItemPriceStats | null>(null);
   const pasteRef = useRef<HTMLDivElement>(null);
   const memberPasteRef = useRef<HTMLDivElement>(null);
 
@@ -108,14 +110,16 @@ export function AddAuctionItemForm({
           return [...set];
         });
         const extra = (data.unrecognized as string[]) || [];
+        const recognized = (ocr.names || []).slice(0, 10).join("、");
         setOcrStatus(
           matched.length
             ? `已匹配 ${matched.length} 名盟成员加入分红` +
+                (recognized ? `；识别名称：${recognized}` : "") +
                 (extra.length
-                  ? `；截图中另有未入库：${extra.slice(0, 5).join("、")}`
+                  ? `；未入库：${extra.slice(0, 8).join("、")}`
                   : "")
-            : extra.length
-              ? `未匹配到盟成员。识别到：${extra.slice(0, 8).join("、")}。请手动点选补全。`
+            : recognized
+              ? `未匹配到盟成员。识别到：${recognized}。请手动点选补全。`
               : "未识别到名称，请换更清晰的参与者截图或手动点选。",
         );
         setTab("members");
@@ -169,6 +173,31 @@ export function AddAuctionItemForm({
     pasteRef.current?.focus();
   }, []);
 
+  useEffect(() => {
+    const trimmed = name.trim();
+    if (trimmed.length < 2) {
+      setPriceStats(null);
+      return;
+    }
+    let alive = true;
+    const timer = window.setTimeout(async () => {
+      try {
+        const res = await fetch(
+          `/api/auction/price-stats?name=${encodeURIComponent(trimmed)}`,
+        );
+        const data = await res.json();
+        if (!alive || !res.ok) return;
+        setPriceStats((data.stats as ItemPriceStats | null) ?? null);
+      } catch {
+        if (alive) setPriceStats(null);
+      }
+    }, 280);
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
+  }, [name]);
+
   return (
     <form
       onSubmit={submit}
@@ -188,6 +217,7 @@ export function AddAuctionItemForm({
             onChange={(e) => setName(e.target.value)}
             placeholder="粘贴装备图后自动识别顶部名称"
           />
+          <ItemPriceStatsLine stats={priceStats} className="mt-1" />
         </label>
         <label className="block space-y-1.5">
           <span className="text-xs text-[var(--text-muted)]">起拍价 ¥</span>

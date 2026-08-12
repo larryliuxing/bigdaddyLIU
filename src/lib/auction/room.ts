@@ -1,6 +1,7 @@
 import {
   countBidsForItem,
   getAuctionSettings,
+  getDividendReport,
   getPublicAuctionSession,
   getSessionById,
   isDividendsCalculated,
@@ -8,11 +9,51 @@ import {
   listDividends,
   listEvents,
   listItems,
+  mapLeadingBidders,
+  mapPriceStatsByNames,
   maybeAutoProgress,
+  normalizeItemNameKey,
 } from "@/lib/db";
-import type { AuctionRoomState } from "@/lib/types";
+import type { AuctionItem, AuctionRoomState } from "@/lib/types";
 
-export function buildRoomState(sessionId?: number): AuctionRoomState {
+export type BuildRoomOptions = {
+  /**
+   * When true, omit base64 item images and dividend roster details.
+   * Used for bid responses and live polling so updates stay fast.
+   */
+  lite?: boolean;
+};
+
+function withLeadingBidders(
+  items: AuctionItem[],
+  leaders: Map<
+    number,
+    { memberId: number; memberName: string; amount: number }
+  >,
+): AuctionItem[] {
+  return items.map((item) => {
+    const lead = leaders.get(item.id);
+    return {
+      ...item,
+      leadingBidderId: lead?.memberId ?? null,
+      leadingBidderName: lead?.memberName ?? null,
+    };
+  });
+}
+
+function withPriceStats(items: AuctionItem[]): AuctionItem[] {
+  const statsMap = mapPriceStatsByNames(items.map((i) => i.name));
+  return items.map((item) => ({
+    ...item,
+    priceStats: statsMap.get(normalizeItemNameKey(item.name)) ?? null,
+  }));
+}
+
+export function buildRoomState(
+  sessionId?: number,
+  options: BuildRoomOptions = {},
+): AuctionRoomState {
+  const lite = Boolean(options.lite);
   const settings = getAuctionSettings();
   let session = sessionId
     ? getSessionById(sessionId)
@@ -22,7 +63,18 @@ export function buildRoomState(sessionId?: number): AuctionRoomState {
     session = maybeAutoProgress(session.id) ?? session;
   }
 
-  const items = session ? listItems(session.id) : [];
+  const live = session?.status === "live";
+  const ended = session?.status === "ended";
+
+  const itemsRaw = session
+    ? listItems(session.id, {
+        includeImages: !lite,
+        includeDividends: !lite && !live,
+      })
+    : [];
+
+  const leaders = session ? mapLeadingBidders(session.id) : new Map();
+  const items = withPriceStats(withLeadingBidders(itemsRaw, leaders));
   const activeItems = items.filter((i) => i.status === "active");
   const activeItem = activeItems[0] ?? null;
 
@@ -49,6 +101,10 @@ export function buildRoomState(sessionId?: number): AuctionRoomState {
     );
   }
 
+  const dividendsCalculated = session
+    ? isDividendsCalculated(session.id)
+    : false;
+
   return {
     settings,
     session,
@@ -61,9 +117,8 @@ export function buildRoomState(sessionId?: number): AuctionRoomState {
     recentBids: session ? listBids(session.id, 20) : [],
     serverNow: new Date().toISOString(),
     remainingSeconds,
-    dividends: session ? listDividends(session.id) : [],
-    dividendsCalculated: session
-      ? isDividendsCalculated(session.id)
-      : false,
+    dividends: ended && session ? listDividends(session.id) : [],
+    dividendsCalculated,
+    dividendReport: session && ended ? getDividendReport(session.id) : null,
   };
 }

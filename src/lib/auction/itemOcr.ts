@@ -42,7 +42,11 @@ function loadImage(source: File | Blob | string): Promise<HTMLImageElement> {
 }
 
 /** Score quality-colored name ink on dark tooltip backgrounds. */
-function qualityInkScore(r: number, g: number, b: number): {
+function qualityInkScore(
+  r: number,
+  g: number,
+  b: number,
+): {
   score: number;
   quality: ItemQuality | null;
 } {
@@ -52,71 +56,50 @@ function qualityInkScore(r: number, g: number, b: number): {
   const brightness = (r + g + b) / 3;
 
   // Dark panel / separators
-  if (brightness < 55) return { score: 0, quality: null };
-  // Near-gray UI icons / labels
-  if (sat < 18 && brightness < 200) return { score: 0, quality: null };
+  if (brightness < 50) return { score: 0, quality: null };
 
-  // White / silver name
-  if (sat < 35 && brightness >= 185) {
-    return { score: 40 + brightness / 8, quality: "white" };
+  // White / silver name (low sat, bright)
+  if (sat < 40 && brightness >= 175) {
+    return { score: 45 + brightness / 8, quality: "white" };
   }
+
+  // Near-gray UI chrome — ignore unless very bright
+  if (sat < 22 && brightness < 200) return { score: 0, quality: null };
 
   // Purple / violet
-  if (b > 90 && r > 90 && r > g + 15 && b > g + 15 && sat >= 35) {
-    return { score: 70 + sat / 3, quality: "purple" };
+  if (b > 85 && r > 85 && r > g + 12 && b > g + 12 && sat >= 30) {
+    return { score: 72 + sat / 3, quality: "purple" };
   }
   // Pink / magenta
-  if (r > 140 && b > 100 && r > g + 25 && b >= g && sat >= 30) {
-    return { score: 65 + sat / 3, quality: "pink" };
+  if (r > 130 && b > 95 && r > g + 20 && b >= g - 5 && sat >= 28) {
+    return { score: 66 + sat / 3, quality: "pink" };
   }
-  // Blue
-  if (b > r + 25 && b >= g && b > 110 && sat >= 28) {
-    return { score: 60 + (b - r) / 2, quality: "blue" };
+  // Blue name text (not gem icons — still scored; icon skipped spatially)
+  if (b > r + 22 && b >= g && b > 100 && sat >= 26) {
+    return { score: 58 + (b - r) / 2, quality: "blue" };
   }
-  // Green
-  if (g > r + 20 && g > b + 15 && g > 110 && sat >= 28) {
-    return { score: 60 + (g - Math.max(r, b)) / 2, quality: "green" };
+  // Green (common / uncommon gear) — bright lime included
+  if (g > r + 15 && g > b + 12 && g > 100 && sat >= 24) {
+    return { score: 68 + (g - Math.max(r, b)) / 2, quality: "green" };
   }
   // Orange / gold
-  if (r > 150 && g > 70 && r > b + 40 && g > b + 20 && sat >= 35) {
+  if (r > 140 && g > 65 && r > b + 35 && g > b + 15 && sat >= 30) {
     return { score: 60 + (r - b) / 3, quality: "orange" };
   }
 
   // Any saturated bright ink as weak fallback (still name-like)
-  if (sat >= 40 && brightness >= 100 && brightness <= 245) {
-    return { score: 20 + sat / 5, quality: null };
+  if (sat >= 35 && brightness >= 95 && brightness <= 250) {
+    return { score: 18 + sat / 5, quality: null };
   }
   return { score: 0, quality: null };
 }
 
-function sampleRegion(
-  data: Uint8ClampedArray,
-  width: number,
-  x0: number,
-  y0: number,
-  x1: number,
-  y1: number,
-) {
-  let ink = 0;
-  const qualityVotes: Partial<Record<ItemQuality, number>> = {};
-  for (let y = y0; y < y1; y++) {
-    for (let x = x0; x < x1; x++) {
-      const i = (y * width + x) * 4;
-      const { score, quality } = qualityInkScore(
-        data[i],
-        data[i + 1],
-        data[i + 2],
-      );
-      if (score <= 0) continue;
-      ink += score;
-      if (quality) {
-        qualityVotes[quality] = (qualityVotes[quality] ?? 0) + score;
-      }
-    }
-  }
+function voteQuality(
+  votes: Partial<Record<ItemQuality, number>>,
+): ItemQuality | null {
   let bestQuality: ItemQuality | null = null;
   let bestVote = 0;
-  for (const [q, vote] of Object.entries(qualityVotes) as Array<
+  for (const [q, vote] of Object.entries(votes) as Array<
     [ItemQuality, number]
   >) {
     if (vote > bestVote) {
@@ -124,12 +107,25 @@ function sampleRegion(
       bestQuality = q;
     }
   }
-  return { ink, quality: bestQuality };
+  return bestQuality;
 }
 
-function findNameBounds(img: HTMLImageElement) {
+type NameBounds = {
+  sx: number;
+  sy: number;
+  sw: number;
+  sh: number;
+  quality: ItemQuality | null;
+  weak: boolean;
+};
+
+/**
+ * Find the top colored name band, skipping the left item icon.
+ * Icon = dense solid block; name glyphs = intermittent column ink.
+ */
+function findNameBounds(img: HTMLImageElement): NameBounds {
   const probe = document.createElement("canvas");
-  const maxW = 480;
+  const maxW = 520;
   const scale = Math.min(1, maxW / img.width);
   probe.width = Math.max(1, Math.round(img.width * scale));
   probe.height = Math.max(1, Math.round(img.height * scale));
@@ -143,24 +139,20 @@ function findNameBounds(img: HTMLImageElement) {
     probe.height,
   );
 
-  // Header band: top ~22%, skip left icon ~16%, skip right close ~8%
-  const y0 = Math.floor(height * 0.02);
-  const y1 = Math.floor(height * 0.22);
-  const x0 = Math.floor(width * 0.16);
-  const x1 = Math.floor(width * 0.92);
+  // Header band: top ~24%
+  const y0 = Math.floor(height * 0.01);
+  const y1 = Math.floor(height * 0.24);
+  // Start after typical icon; still scan a bit left to detect icon edge
+  const xScan0 = Math.floor(width * 0.02);
+  const x1 = Math.floor(width * 0.94);
 
-  let minX = x1;
-  let maxX = x0;
-  let minY = y1;
-  let found = false;
   const qualityVotes: Partial<Record<ItemQuality, number>> = {};
 
-  // Row-scan to keep the first dense text row (name), ignore lower UI rows
   let bestRow = -1;
   let bestRowInk = 0;
   for (let y = y0; y < y1; y++) {
     let rowInk = 0;
-    for (let x = x0; x < x1; x++) {
+    for (let x = xScan0; x < x1; x++) {
       const i = (y * width + x) * 4;
       const { score, quality } = qualityInkScore(
         data[i],
@@ -179,62 +171,105 @@ function findNameBounds(img: HTMLImageElement) {
     }
   }
 
-  if (bestRow < 0 || bestRowInk < 80) {
-    // Fallback: whole header band
-    const band = sampleRegion(data, width, x0, y0, x1, y1);
-    return {
-      sx: img.width * 0.16,
-      sy: img.height * 0.02,
-      sw: img.width * 0.76,
-      sh: img.height * 0.16,
-      quality: band.quality,
-      weak: true,
-    };
+  const fallback = (): NameBounds => ({
+    sx: img.width * 0.2,
+    sy: img.height * 0.02,
+    sw: img.width * 0.72,
+    sh: img.height * 0.14,
+    quality: voteQuality(qualityVotes),
+    weak: true,
+  });
+
+  if (bestRow < 0 || bestRowInk < 60) return fallback();
+
+  const rowPad = Math.max(3, Math.floor(height * 0.014));
+  const ry0 = Math.max(y0, bestRow - rowPad);
+  const ry1 = Math.min(y1, bestRow + Math.max(rowPad * 2, Math.floor(height * 0.035)));
+  const rowH = Math.max(1, ry1 - ry0);
+
+  // Column ink density across the name row — icon is a dense block on the left.
+  const colInk = new Float32Array(width);
+  for (let x = xScan0; x < x1; x++) {
+    let inkPixels = 0;
+    for (let y = ry0; y < ry1; y++) {
+      const i = (y * width + x) * 4;
+      const { score } = qualityInkScore(data[i], data[i + 1], data[i + 2]);
+      if (score > 0) inkPixels += 1;
+    }
+    colInk[x] = inkPixels / rowH;
   }
 
-  const rowPad = Math.max(2, Math.floor(height * 0.012));
-  const ry0 = Math.max(y0, bestRow - rowPad);
-  const ry1 = Math.min(y1, bestRow + rowPad * 2);
+  // Find left icon block: consecutive dense columns near the left.
+  const denseCut = 0.42;
+  let iconEnd = Math.floor(width * 0.12);
+  let inDense = false;
+  let denseStart = -1;
+  for (let x = xScan0; x < Math.floor(width * 0.45); x++) {
+    if (colInk[x] >= denseCut) {
+      if (!inDense) {
+        inDense = true;
+        denseStart = x;
+      }
+    } else if (inDense) {
+      const denseW = x - denseStart;
+      // Icon is roughly square-ish vs row height
+      if (denseW >= rowH * 0.55) {
+        iconEnd = x + Math.max(2, Math.floor(width * 0.01));
+      }
+      inDense = false;
+      denseStart = -1;
+      // First solid block is the icon; stop after it ends
+      if (iconEnd > Math.floor(width * 0.12)) break;
+    }
+  }
+  if (inDense && denseStart >= 0) {
+    const denseW = Math.floor(width * 0.45) - denseStart;
+    if (denseW >= rowH * 0.55) {
+      iconEnd = Math.floor(width * 0.45);
+    }
+  }
 
+  // Name text starts after icon: first run of intermittent ink columns
+  const textCut = 0.06;
+  let minX = x1;
+  let maxX = iconEnd;
+  let found = false;
+  for (let x = Math.max(iconEnd, Math.floor(width * 0.14)); x < x1; x++) {
+    if (colInk[x] >= textCut) {
+      found = true;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+    }
+  }
+
+  // Also refine using actual ink pixels (ignore residual icon bleed)
+  const x0 = Math.max(iconEnd, Math.floor(width * 0.14));
+  let inkMinX = x1;
+  let inkMaxX = x0;
+  let inkFound = false;
   for (let y = ry0; y < ry1; y++) {
     for (let x = x0; x < x1; x++) {
       const i = (y * width + x) * 4;
       const { score } = qualityInkScore(data[i], data[i + 1], data[i + 2]);
       if (score <= 0) continue;
-      found = true;
-      if (x < minX) minX = x;
-      if (x > maxX) maxX = x;
-      if (y < minY) minY = y;
-      // maxY kept via ry1
+      inkFound = true;
+      if (x < inkMinX) inkMinX = x;
+      if (x > inkMaxX) inkMaxX = x;
     }
   }
 
-  let bestQuality: ItemQuality | null = null;
-  let bestVote = 0;
-  for (const [q, vote] of Object.entries(qualityVotes) as Array<
-    [ItemQuality, number]
-  >) {
-    if (vote > bestVote) {
-      bestVote = vote;
-      bestQuality = q;
-    }
+  if (inkFound) {
+    minX = inkMinX;
+    maxX = inkMaxX;
+    found = true;
   }
 
-  if (!found) {
-    return {
-      sx: img.width * 0.16,
-      sy: img.height * 0.02,
-      sw: img.width * 0.76,
-      sh: img.height * 0.14,
-      quality: bestQuality,
-      weak: true,
-    };
-  }
+  if (!found || maxX <= minX) return fallback();
 
-  const padX = Math.max(4, Math.floor((maxX - minX) * 0.08));
-  const padY = Math.max(3, Math.floor((ry1 - ry0) * 0.35));
-  const bx0 = Math.max(0, minX - padX);
-  const by0 = Math.max(0, Math.min(minY, ry0) - padY);
+  const padX = Math.max(4, Math.floor((maxX - minX) * 0.06));
+  const padY = Math.max(4, Math.floor(rowH * 0.45));
+  const bx0 = Math.max(x0, minX - padX);
+  const by0 = Math.max(0, ry0 - padY);
   const bx1 = Math.min(width - 1, maxX + padX);
   const by1 = Math.min(height - 1, ry1 + padY);
 
@@ -243,7 +278,7 @@ function findNameBounds(img: HTMLImageElement) {
     sy: (by0 / height) * img.height,
     sw: ((bx1 - bx0) / width) * img.width,
     sh: ((by1 - by0) / height) * img.height,
-    quality: bestQuality,
+    quality: voteQuality(qualityVotes),
     weak: false,
   };
 }
@@ -284,15 +319,32 @@ function enhanceNameCrop(src: HTMLCanvasElement): HTMLCanvasElement {
   if (!sctx || !dctx) throw new Error("无法创建画布");
   const image = sctx.getImageData(0, 0, src.width, src.height);
   const { data } = image;
+
+  // Adaptive cut based on ink brightness so green/blue/purple all survive
+  let inkSum = 0;
+  let inkCount = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    const { score } = qualityInkScore(data[i], data[i + 1], data[i + 2]);
+    if (score > 0) {
+      inkSum += (data[i] + data[i + 1] + data[i + 2]) / 3;
+      inkCount++;
+    }
+  }
+  const inkMean = inkCount > 0 ? inkSum / inkCount : 160;
+
   for (let i = 0; i < data.length; i += 4) {
     const r = data[i];
     const g = data[i + 1];
     const b = data[i + 2];
+    const brightness = (r + g + b) / 3;
     const { score } = qualityInkScore(r, g, b);
-    if (score > 0) {
-      data[i] = 20;
-      data[i + 1] = 20;
-      data[i + 2] = 20;
+    // Soft ink: keep stroke weight for thin green glyphs
+    if (score > 12 || (score > 0 && brightness >= inkMean - 40)) {
+      const t = Math.max(0, Math.min(1, score / 80));
+      const v = Math.round(28 - t * 18);
+      data[i] = v;
+      data[i + 1] = v;
+      data[i + 2] = v;
       data[i + 3] = 255;
     } else {
       data[i] = 255;
@@ -302,9 +354,9 @@ function enhanceNameCrop(src: HTMLCanvasElement): HTMLCanvasElement {
     }
   }
   dctx.putImageData(image, 0, 0);
-  // Slight padding plate
+
   const padded = document.createElement("canvas");
-  const pad = 10;
+  const pad = 14;
   padded.width = out.width + pad * 2;
   padded.height = out.height + pad * 2;
   const pctx = padded.getContext("2d");
@@ -326,9 +378,18 @@ export function cleanItemName(raw: string) {
   if (cjkRuns?.length) {
     return cjkRuns.sort((a, b) => b.length - a.length)[0];
   }
-  // Allow mixed names with a bit of Latin if needed
-  const mixed = stripped.replace(/[^0-9A-Za-z\u4e00-\u9fff]/g, "");
-  return mixed;
+  return "";
+}
+
+function scoreNameCandidate(raw: string) {
+  const cleaned = cleanItemName(raw);
+  if (cleaned.length < 2) return 0;
+  const cjk = (cleaned.match(/[\u4e00-\u9fff]/g) || []).length;
+  const latin = ((raw || "").match(/[A-Za-z0-9]/g) || []).length;
+  // Prefer pure Chinese item names; Latin/digit OCR noise is common near icons
+  if (cjk < 2) return 0;
+  if (latin >= cjk) return cjk;
+  return cjk * 12 + cleaned.length - latin * 8;
 }
 
 async function recognizeNameVariants(worker: Worker, dataUrl: string) {
@@ -338,6 +399,8 @@ async function recognizeNameVariants(worker: Worker, dataUrl: string) {
       await worker.setParameters({
         tessedit_pageseg_mode: psm,
         preserve_interword_spaces: "0",
+        // Item names are Chinese; Latin/digits usually come from icon noise.
+        tessedit_char_blacklist: "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
       });
       const result = await worker.recognize(dataUrl);
       const text = (result.data.text || "").trim();
@@ -346,14 +409,32 @@ async function recognizeNameVariants(worker: Worker, dataUrl: string) {
       // try next
     }
   }
+  // One pass without blacklist in case a rare mixed name exists
+  try {
+    await worker.setParameters({
+      tessedit_pageseg_mode: PSM.SINGLE_LINE,
+      preserve_interword_spaces: "0",
+      tessedit_char_blacklist: "",
+    });
+    const result = await worker.recognize(dataUrl);
+    const text = (result.data.text || "").trim();
+    if (text) texts.push(text);
+  } catch {
+    // ignore
+  }
   return texts;
 }
 
 function pickBestName(candidates: string[]) {
   let best = "";
+  let bestScore = 0;
   for (const raw of candidates) {
+    const score = scoreNameCandidate(raw);
     const cleaned = cleanItemName(raw);
-    if (cleaned.length > best.length) best = cleaned;
+    if (score > bestScore || (score === bestScore && cleaned.length > best.length)) {
+      bestScore = score;
+      best = cleaned;
+    }
   }
   return best;
 }
@@ -366,24 +447,24 @@ export async function recognizeItemName(
 ): Promise<ItemNameOcrResult> {
   const img = await loadImage(source);
   const bounds = findNameBounds(img);
-  const crop = buildNameCrop(img, bounds, bounds.weak ? 2.5 : 3.2);
+  const crop = buildNameCrop(img, bounds, bounds.weak ? 2.8 : 3.4);
   const enhanced = enhanceNameCrop(crop);
   const previewDataUrl = enhanced.toDataURL("image/png");
 
   const worker = await getNameWorker();
   const rawChunks = await recognizeNameVariants(worker, previewDataUrl);
 
-  // Also try a slightly taller header crop if first pass is weak
+  // Wider header retry if first pass is weak / Latin junk only
   if (pickBestName(rawChunks).length < 2) {
     const fallback = buildNameCrop(
       img,
       {
-        sx: img.width * 0.14,
+        sx: img.width * 0.2,
         sy: img.height * 0.015,
-        sw: img.width * 0.78,
-        sh: img.height * 0.18,
+        sw: img.width * 0.7,
+        sh: img.height * 0.16,
       },
-      2.8,
+      3,
     );
     const enhancedFallback = enhanceNameCrop(fallback);
     const more = await recognizeNameVariants(

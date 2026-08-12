@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireAdminSession } from "@/lib/auth";
-import { matchNamesFromText } from "@/lib/db";
+import { matchParticipantNames } from "@/lib/db";
 
 export const runtime = "nodejs";
 
@@ -15,11 +15,14 @@ export async function POST(request: Request) {
   const names = Array.isArray(body?.names)
     ? body.names.map((n: unknown) => String(n ?? "")).filter(Boolean)
     : [];
-  const combined = [text, ...names].filter(Boolean).join("\n");
-  if (!combined.trim()) {
+  if (!text.trim() && names.length === 0) {
     return NextResponse.json({ error: "没有识别到文字" }, { status: 400 });
   }
 
-  const result = matchNamesFromText(combined);
+  // Prefer structured OCR names for「未入库」display; raw text only helps matching.
+  const result = matchParticipantNames(
+    names.length ? names : text.split(/\n+/).map((s) => s.trim()).filter(Boolean),
+    text,
+  );
   return NextResponse.json(result);
 }

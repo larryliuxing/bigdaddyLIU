@@ -1,14 +1,25 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { AuctionItem, AuctionRoomState, SessionUser } from "@/lib/types";
+import type {
+  AuctionItem,
+  AuctionRoomState,
+  ItemQuality,
+  SessionUser,
+} from "@/lib/types";
 import {
   formatCountdown,
   qualityMeta,
   formatBeijingDateTime,
 } from "@/lib/auction/client";
 import { GavelIcon } from "@/components/Icons";
+import { DividendReportView } from "./DividendReportView";
+import {
+  AuctionItemLightbox,
+  AuctionItemThumb,
+} from "./AuctionItemImage";
+import { ItemPriceStatsLine } from "./ItemPriceStatsLine";
 
 function HourglassIcon() {
   return (
@@ -31,6 +42,30 @@ function itemStatusLabel(status: AuctionItem["status"]) {
   return "待开拍";
 }
 
+/** Keep previously loaded images when applying a lite room payload. */
+function mergeRoomKeepImages(
+  prev: AuctionRoomState | null,
+  next: AuctionRoomState,
+): AuctionRoomState {
+  if (!prev) return next;
+  const imageMap = new Map(
+    prev.items.map((item) => [item.id, item.imageData] as const),
+  );
+  const patch = (items: AuctionItem[]) =>
+    items.map((item) => ({
+      ...item,
+      imageData: item.imageData ?? imageMap.get(item.id) ?? null,
+    }));
+  return {
+    ...next,
+    items: patch(next.items),
+    activeItems: patch(next.activeItems),
+    activeItem: next.activeItem
+      ? patch([next.activeItem])[0]
+      : null,
+  };
+}
+
 export function AuctionRoom({
   member,
 }: {
@@ -38,7 +73,6 @@ export function AuctionRoom({
 }) {
   const router = useRouter();
   const [room, setRoom] = useState<AuctionRoomState | null>(null);
-  const [anonymous, setAnonymous] = useState(false);
   const [soundOn, setSoundOn] = useState(true);
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
@@ -47,27 +81,49 @@ export function AuctionRoom({
     Record<number, { value: string; touched: boolean }>
   >({});
   const [biddingId, setBiddingId] = useState<number | null>(null);
+  const [viewer, setViewer] = useState<{
+    imageData: string;
+    name: string;
+    quality?: ItemQuality | null;
+    detail?: string | null;
+  } | null>(null);
+  const hasImagesRef = useRef(false);
+  const audioCtxRef = useRef<AudioContext | null>(null);
   const remainingActive = remaining != null;
 
   useEffect(() => {
     let alive = true;
-    const tick = async () => {
-      const res = await fetch("/api/auction/session");
+    let timer: number | null = null;
+    const liveRef = { current: false };
+
+    const tick = async (forceFull = false) => {
+      const lite = !forceFull && hasImagesRef.current;
+      const res = await fetch(
+        `/api/auction/session${lite ? "?lite=1" : ""}`,
+      );
       const data = await res.json();
       if (!alive || !res.ok) return;
-      setRoom(data.room);
+      liveRef.current = data.room?.session?.status === "live";
+      setRoom((prev) => mergeRoomKeepImages(prev, data.room));
       setRemaining(data.room.remainingSeconds);
+      if (!lite) hasImagesRef.current = true;
     };
-    const timeout = window.setTimeout(() => {
-      void tick();
-    }, 0);
-    const timer = window.setInterval(() => {
-      void tick();
-    }, 2500);
+
+    const schedule = () => {
+      timer = window.setTimeout(() => {
+        void tick(false).finally(() => {
+          if (alive) schedule();
+        });
+      }, liveRef.current ? 800 : 2500);
+    };
+
+    void tick(true).finally(() => {
+      if (alive) schedule();
+    });
+
     return () => {
       alive = false;
-      window.clearTimeout(timeout);
-      window.clearInterval(timer);
+      if (timer != null) window.clearTimeout(timer);
     };
   }, []);
 
@@ -92,6 +148,26 @@ export function AuctionRoom({
     return String(min);
   }
 
+  function playBidSound() {
+    if (!soundOn) return;
+    try {
+      const ctx =
+        audioCtxRef.current ??
+        new AudioContext();
+      audioCtxRef.current = ctx;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.frequency.value = 880;
+      gain.gain.value = 0.04;
+      osc.start();
+      osc.stop(ctx.currentTime + 0.08);
+    } catch {
+      /* ignore */
+    }
+  }
+
   async function placeBid(itemId: number) {
     setError("");
     setBiddingId(itemId);
@@ -99,39 +175,69 @@ export function AuctionRoom({
       activeItems.find((i) => i.id === itemId) ||
       ({ id: itemId, startPrice: 0 } as AuctionItem);
     const amount = Number(draftValue(target));
-    try {
-      const res = await fetch("/api/auction/bid", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ itemId, amount, isAnonymous: anonymous }),
+
+    // Optimistic local bump so the bidder sees the new price immediately.
+    if (member && Number.isFinite(amount) && amount > 0) {
+      setRoom((prev) => {
+        if (!prev) return prev;
+        const patchItem = (item: AuctionItem) =>
+          item.id !== itemId
+            ? item
+            : {
+                ...item,
+                currentPrice: amount,
+                leadingBidderId: member.id,
+                leadingBidderName: member.name,
+              };
+        return {
+          ...prev,
+          items: prev.items.map(patchItem),
+          activeItems: prev.activeItems.map(patchItem),
+          activeItem: prev.activeItem
+            ? patchItem(prev.activeItem)
+            : null,
+          minNextBids: {
+            ...prev.minNextBids,
+            [itemId]:
+              amount +
+              (prev.activeItems.find((i) => i.id === itemId)?.bidIncrement ??
+                target.bidIncrement ??
+                5),
+          },
+        };
       });
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error || "出价失败");
-        return;
-      }
-      setRoom(data.room);
-      setRemaining(data.room.remainingSeconds);
       setBidDrafts((prev) => ({
         ...prev,
         [itemId]: { value: "", touched: false },
       }));
-      setToast("出价成功");
-      if (soundOn) {
-        try {
-          const ctx = new AudioContext();
-          const osc = ctx.createOscillator();
-          const gain = ctx.createGain();
-          osc.connect(gain);
-          gain.connect(ctx.destination);
-          osc.frequency.value = 880;
-          gain.gain.value = 0.04;
-          osc.start();
-          osc.stop(ctx.currentTime + 0.08);
-        } catch {
-          /* ignore */
+    }
+
+    try {
+      const res = await fetch("/api/auction/bid", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ itemId, amount }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "出价失败");
+        // Refresh authoritative state after rejected optimistic update
+        const refresh = await fetch("/api/auction/session?lite=1");
+        const refreshData = await refresh.json();
+        if (refresh.ok) {
+          setRoom((prev) => mergeRoomKeepImages(prev, refreshData.room));
+          setRemaining(refreshData.room.remainingSeconds);
         }
+        return;
       }
+      setRoom((prev) => mergeRoomKeepImages(prev, data.room));
+      setRemaining(data.room.remainingSeconds);
+      setToast(
+        data.bid?.memberName
+          ? `${data.bid.memberName} 出价 ¥${data.bid.amount}`
+          : "出价成功",
+      );
+      playBidSound();
       window.setTimeout(() => setToast(""), 1600);
     } finally {
       setBiddingId(null);
@@ -164,14 +270,6 @@ export function AuctionRoom({
             <span className="rounded-lg border border-[var(--border-soft)] px-2.5 py-1.5 text-[var(--text-muted)]">
               当前身份：{member?.name ?? "未登录"}
             </span>
-            <label className="flex items-center gap-1.5 rounded-lg border border-[var(--border-soft)] px-2.5 py-1.5 text-[var(--text-muted)]">
-              <input
-                type="checkbox"
-                checked={anonymous}
-                onChange={(e) => setAnonymous(e.target.checked)}
-              />
-              匿名模式
-            </label>
             <button
               type="button"
               className="btn-ghost"
@@ -184,7 +282,7 @@ export function AuctionRoom({
               className="btn-ghost"
               onClick={() => router.push("/auction/dividends")}
             >
-              分红统计
+              分红公示
             </button>
           </div>
         </header>
@@ -260,24 +358,30 @@ export function AuctionRoom({
             activeItems.map((item) => {
               const q = qualityMeta(item.quality);
               const min = room?.minNextBids?.[item.id] ?? item.startPrice;
+              const isMine =
+                member != null && item.leadingBidderId === member.id;
               return (
                 <article
                   key={item.id}
                   className="rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)] p-4"
                 >
                   <div className="flex flex-col gap-4 sm:flex-row">
-                    {item.imageData ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={item.imageData}
-                        alt={item.name}
-                        className="mx-auto h-28 w-28 rounded-xl object-contain sm:mx-0"
-                      />
-                    ) : (
-                      <div className="mx-auto flex h-28 w-28 items-center justify-center rounded-xl bg-[#121826] text-xs text-[var(--text-muted)] sm:mx-0">
-                        无图
-                      </div>
-                    )}
+                    <AuctionItemThumb
+                      imageData={item.imageData}
+                      name={item.name}
+                      quality={item.quality}
+                      className="mx-auto h-28 w-28 sm:mx-0"
+                      onOpen={(payload) =>
+                        setViewer({
+                          ...payload,
+                          detail: `当前 ¥${item.currentPrice}${
+                            item.leadingBidderName
+                              ? ` · ${item.leadingBidderName}`
+                              : ""
+                          }`,
+                        })
+                      }
+                    />
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-start justify-between gap-2">
                         <div>
@@ -291,6 +395,10 @@ export function AuctionRoom({
                           <p className="mt-1 text-xs text-[var(--text-muted)]">
                             起拍 ¥{item.startPrice} · 加价 ¥{item.bidIncrement}
                           </p>
+                          <ItemPriceStatsLine
+                            stats={item.priceStats}
+                            className="mt-1"
+                          />
                         </div>
                         <span className="rounded-full bg-emerald-500/15 px-2.5 py-1 text-xs text-emerald-300">
                           竞拍中
@@ -298,6 +406,23 @@ export function AuctionRoom({
                       </div>
                       <p className="mt-3 text-2xl font-bold text-[var(--accent-gold)]">
                         ¥{item.currentPrice}
+                      </p>
+                      <p className="mt-1 text-sm text-[var(--text-muted)]">
+                        {item.leadingBidderName
+                          ? <>
+                              当前出价：
+                              <span
+                                className={
+                                  isMine
+                                    ? "font-medium text-[var(--accent-gold)]"
+                                    : "font-medium text-[var(--text-primary)]"
+                                }
+                              >
+                                {item.leadingBidderName}
+                                {isMine ? "（我）" : ""}
+                              </span>
+                            </>
+                          : "暂无出价"}
                       </p>
                       {member ? (
                         <div className="mt-3 flex flex-col gap-2 sm:flex-row">
@@ -338,56 +463,94 @@ export function AuctionRoom({
             })}
 
           {session?.status === "ended" && (
-            <div className="rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)] p-5">
-              <div className="text-center">
+            <div className="space-y-5">
+              <div className="rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)] p-5 text-center">
                 <p className="text-lg font-medium">本场拍卖已结束</p>
                 <p className="mt-2 text-sm text-[var(--text-muted)]">
-                  可前往分红统计查看结果
+                  下方为本场分红公示，所有人打开本场即可查看自己的分红。
                 </p>
-                <button
-                  type="button"
-                  className="btn-primary mt-4 max-w-xs"
-                  onClick={() => router.push("/auction/dividends")}
-                >
-                  查看分红
-                </button>
               </div>
+              <DividendReportView
+                report={room?.dividendReport ?? null}
+                editable={false}
+                highlightMemberId={member?.id ?? null}
+              />
               {(room?.items?.length ?? 0) > 0 && (
-                <ul className="mt-6 divide-y divide-[var(--border-soft)] border-t border-[var(--border-soft)]">
-                  {room!.items.map((item) => (
-                    <li
-                      key={item.id}
-                      className="flex items-center justify-between gap-3 py-3 text-sm"
-                    >
-                      <span>
-                        <span
-                          className="mr-2 inline-block h-2 w-2 rounded-full"
-                          style={{
-                            background: qualityMeta(item.quality).color,
-                          }}
-                        />
-                        {item.name}
-                      </span>
-                      <span className="text-[var(--text-muted)]">
-                        {itemStatusLabel(item.status)}
-                        {item.soldPrice != null ? ` · ¥${item.soldPrice}` : ""}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
+                <section className="overflow-hidden rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)]">
+                  <div className="border-b border-[var(--border-soft)] px-4 py-3 text-sm font-medium">
+                    拍品结果
+                  </div>
+                  <ul className="divide-y divide-[var(--border-soft)]">
+                    {room!.items.map((item) => (
+                      <li
+                        key={item.id}
+                        className="flex items-center justify-between gap-3 px-4 py-3 text-sm"
+                      >
+                        <div className="flex min-w-0 items-center gap-3">
+                          <AuctionItemThumb
+                            imageData={item.imageData}
+                            name={item.name}
+                            quality={item.quality}
+                            className="h-12 w-12 shrink-0"
+                            onOpen={(payload) =>
+                              setViewer({
+                                ...payload,
+                                detail:
+                                  item.soldPrice != null
+                                    ? `成交 ¥${item.soldPrice}${
+                                        item.winnerName
+                                          ? ` · ${item.winnerName}`
+                                          : ""
+                                      }`
+                                    : itemStatusLabel(item.status),
+                              })
+                            }
+                          />
+                          <span className="truncate">
+                            <span
+                              className="mr-2 inline-block h-2 w-2 rounded-full"
+                              style={{
+                                background: qualityMeta(item.quality).color,
+                              }}
+                            />
+                            {item.name}
+                          </span>
+                        </div>
+                        <span className="shrink-0 text-[var(--text-muted)]">
+                          {itemStatusLabel(item.status)}
+                          {item.soldPrice != null
+                            ? ` · ¥${item.soldPrice}`
+                            : ""}
+                          {item.winnerName ? ` · ${item.winnerName}` : ""}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
               )}
             </div>
           )}
         </section>
 
         <p className="relative z-10 mt-6 text-center text-xs text-[var(--text-muted)]">
-          不提倡倒爷。本场拍品同时竞拍。
+          不提倡倒爷。本场拍品同时竞拍；出价实名显示。
         </p>
 
         {toast && (
           <div className="fixed bottom-8 left-1/2 z-50 -translate-x-1/2 rounded-full border border-[var(--border-soft)] bg-[#1a2030] px-4 py-2 text-sm shadow-lg">
             {toast}
           </div>
+        )}
+
+        {viewer && (
+          <AuctionItemLightbox
+            open
+            imageData={viewer.imageData}
+            name={viewer.name}
+            quality={viewer.quality}
+            detail={viewer.detail}
+            onClose={() => setViewer(null)}
+          />
         )}
       </div>
     </div>

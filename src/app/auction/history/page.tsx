@@ -11,5 +11,5 @@ export default async function AuctionHistoryPage() {
   if (!member && !admin) {
     redirect("/");
   }
-  return <AuctionHistory />;
+  return <AuctionHistory member={member} />;
 }

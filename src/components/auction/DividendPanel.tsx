@@ -2,22 +2,37 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { DividendEntry, AuctionSession } from "@/lib/types";
+import type { AuctionSession, DividendReport, SessionUser } from "@/lib/types";
+import { formatBeijingSessionLabel } from "@/lib/auction/client";
+import { DividendReportView } from "./DividendReportView";
 
 /** Member-facing read-only dividend view. Admin calculate/adjust is on /auction/manage. */
-export function DividendPanel() {
+export function DividendPanel({
+  member,
+}: {
+  member?: Extract<SessionUser, { type: "member" }> | null;
+}) {
   const router = useRouter();
-  const [dividends, setDividends] = useState<DividendEntry[]>([]);
+  const [sessions, setSessions] = useState<AuctionSession[]>([]);
+  const [sessionId, setSessionId] = useState<number | null>(null);
   const [session, setSession] = useState<AuctionSession | null>(null);
+  const [report, setReport] = useState<DividendReport | null>(null);
 
   useEffect(() => {
     let alive = true;
     const load = async () => {
-      const res = await fetch("/api/auction/dividends");
+      const qs = sessionId != null ? `?sessionId=${sessionId}` : "";
+      const res = await fetch(`/api/auction/dividends${qs}`);
       const data = await res.json();
       if (!alive || !res.ok) return;
-      setDividends(data.dividends || []);
-      setSession(data.session || null);
+      const list = (data.sessions || []) as AuctionSession[];
+      setSessions(list);
+      const nextSession = (data.session as AuctionSession | null) ?? null;
+      setSession(nextSession);
+      if (sessionId == null && nextSession?.id != null) {
+        setSessionId(nextSession.id);
+      }
+      setReport((data.report as DividendReport | null) ?? null);
     };
     const timeout = window.setTimeout(() => {
       void load();
@@ -26,9 +41,9 @@ export function DividendPanel() {
       alive = false;
       window.clearTimeout(timeout);
     };
-  }, []);
+  }, [sessionId]);
 
-  const total = dividends.reduce((sum, d) => sum + d.amount, 0);
+  const endedSessions = sessions.filter((s) => s.status === "ended");
 
   return (
     <div className="app-shell">
@@ -36,9 +51,12 @@ export function DividendPanel() {
         <header className="mb-6 flex flex-wrap items-start justify-between gap-3">
           <div>
             <p className="text-sm text-[var(--text-muted)]">拍卖</p>
-            <h1 className="mt-1 text-2xl font-bold">分红统计</h1>
+            <h1 className="mt-1 text-2xl font-bold">分红公示</h1>
             <p className="mt-1 text-sm text-[var(--text-muted)]">
               场次 #{session?.id ?? "-"} · 状态 {session?.status ?? "无"}
+              {session?.scheduledStart || session?.startedAt
+                ? ` · ${formatBeijingSessionLabel(session.scheduledStart || session.startedAt)}`
+                : ""}
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -60,45 +78,35 @@ export function DividendPanel() {
         </header>
 
         <p className="mb-4 text-sm text-[var(--text-muted)]">
-          分红由管理员在后台计算与调整；成员仅可查看结果。
+          每件拍品分红与综合总表公开留存；登录后会高亮你自己的分红。
         </p>
 
-        <section className="overflow-hidden rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)]">
-          <div className="flex items-center justify-between border-b border-[var(--border-soft)] px-4 py-3 text-sm text-[var(--text-muted)]">
-            <span>分红明细（{dividends.length}）</span>
-            <span>合计 ¥{total.toFixed(2)}</span>
-          </div>
-          <ul className="divide-y divide-[var(--border-soft)]">
-            {dividends.length === 0 && (
-              <li className="px-4 py-8 text-sm text-[var(--text-muted)]">
-                暂无分红数据。拍卖结束后由管理员在后台计算。
-              </li>
-            )}
-            {dividends.map((entry) => (
-              <li
-                key={entry.id}
-                className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
-              >
-                <div>
-                  <p className="font-medium">
-                    {entry.memberName}
-                    {entry.isTemporary && (
-                      <span className="ml-2 text-xs text-[var(--accent-amber)]">
-                        临时
-                      </span>
-                    )}
-                  </p>
-                  {entry.note && (
-                    <p className="text-xs text-[var(--text-muted)]">{entry.note}</p>
-                  )}
-                </div>
-                <p className="text-lg font-semibold text-[var(--accent-gold)]">
-                  ¥{entry.amount.toFixed(2)}
-                </p>
-              </li>
-            ))}
-          </ul>
-        </section>
+        {endedSessions.length > 0 && (
+          <label className="mb-4 block max-w-md space-y-1">
+            <span className="text-xs text-[var(--text-muted)]">选择场次</span>
+            <select
+              className="field"
+              value={sessionId ?? ""}
+              onChange={(e) =>
+                setSessionId(e.target.value ? Number(e.target.value) : null)
+              }
+            >
+              {endedSessions.map((s) => (
+                <option key={s.id} value={s.id}>
+                  #{s.id} ·{" "}
+                  {formatBeijingSessionLabel(s.scheduledStart || s.startedAt)} ·{" "}
+                  {s.status}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+
+        <DividendReportView
+          report={report}
+          editable={false}
+          highlightMemberId={member?.id ?? null}
+        />
       </div>
     </div>
   );

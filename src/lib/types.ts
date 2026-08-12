@@ -47,6 +47,8 @@ export interface AuctionSettings {
   durationMinutes: number;
   bidExtensionSeconds: number;
   soundEnabledDefault: boolean;
+  /** Fraction of sold price taken as tax, e.g. 0.05 = 5%. */
+  taxRate: number;
 }
 
 export interface AuctionSession {
@@ -83,6 +85,20 @@ export interface AuctionItem {
   closedAt: string | null;
   dividendMemberIds: number[];
   dividendMemberNames: string[];
+  /** Current high bidder (live); always real name, never anonymous. */
+  leadingBidderId?: number | null;
+  leadingBidderName?: string | null;
+  /** Historical sold prices for the same item name. */
+  priceStats?: ItemPriceStats | null;
+}
+
+/** Aggregated sale history for identical item names. */
+export interface ItemPriceStats {
+  name: string;
+  count: number;
+  high: number;
+  low: number;
+  avg: number;
 }
 
 export interface AuctionBid {
@@ -112,6 +128,54 @@ export interface DividendEntry {
   amount: number;
   isTemporary: boolean;
   note: string | null;
+  belowThreshold?: boolean;
+}
+
+/** Per-item per-person dividend share (persisted, public). */
+export interface ItemDividendLine {
+  id: number;
+  sessionId: number;
+  itemId: number;
+  itemName: string;
+  memberId: number | null;
+  memberName: string;
+  soldPrice: number;
+  taxRate: number;
+  taxAmount: number;
+  poolAmount: number;
+  shareAmount: number;
+  isTemporary: boolean;
+  belowThreshold?: boolean;
+}
+
+export interface ItemDividendGroup {
+  itemId: number;
+  itemName: string;
+  soldPrice: number;
+  taxRate: number;
+  taxAmount: number;
+  poolAmount: number;
+  lines: ItemDividendLine[];
+}
+
+export interface DividendSummary {
+  soldCount: number;
+  grossSales: number;
+  taxRate: number;
+  taxTotal: number;
+  dividendPool: number;
+  payoutTotal: number;
+  temporaryTotal: number;
+}
+
+export interface DividendReport {
+  session: AuctionSession | null;
+  calculated: boolean;
+  taxRate: number;
+  itemGroups: ItemDividendGroup[];
+  totals: DividendEntry[];
+  summary: DividendSummary;
+  belowThresholdMemberIds: number[];
 }
 
 export interface AuctionRoomState {
@@ -132,6 +196,7 @@ export interface AuctionRoomState {
   remainingSeconds: number | null;
   dividends: DividendEntry[];
   dividendsCalculated: boolean;
+  dividendReport?: DividendReport | null;
 }
 
 export interface LeaderboardEntry {

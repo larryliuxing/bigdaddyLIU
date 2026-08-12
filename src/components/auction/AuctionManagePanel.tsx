@@ -6,7 +6,8 @@ import type {
   AuctionItem,
   AuctionRoomState,
   AuctionSessionSummary,
-  DividendEntry,
+  DividendReport,
+  ItemQuality,
   Member,
 } from "@/lib/types";
 import {
@@ -21,6 +22,12 @@ import {
   sessionLifecycleLabel,
 } from "@/lib/auction/client";
 import { AddAuctionItemForm } from "./AddAuctionItemForm";
+import { DividendReportView } from "./DividendReportView";
+import {
+  AuctionItemLightbox,
+  AuctionItemThumb,
+} from "./AuctionItemImage";
+import { ItemPriceStatsLine } from "./ItemPriceStatsLine";
 
 function statusTone(status: AuctionSessionSummary["status"]) {
   if (status === "live") return "bg-emerald-500/15 text-emerald-300";
@@ -48,10 +55,16 @@ export function AuctionManagePanel({
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [dividends, setDividends] = useState<DividendEntry[]>([]);
-  const [dividendsCalculated, setDividendsCalculated] = useState(false);
-  const [tempMemberId, setTempMemberId] = useState("");
-  const [tempAmount, setTempAmount] = useState(0);
+  const [dividendReport, setDividendReport] = useState<DividendReport | null>(
+    null,
+  );
+  const [taxPercent, setTaxPercent] = useState(5);
+  const [viewer, setViewer] = useState<{
+    imageData: string;
+    name: string;
+    quality?: ItemQuality | null;
+    detail?: string | null;
+  } | null>(null);
 
   const syncEditFields = useCallback((nextRoom: AuctionRoomState | null) => {
     const session = nextRoom?.session;
@@ -79,8 +92,16 @@ export function AuctionManagePanel({
       setSessions(data.sessions || []);
       setRoom(data.room);
       syncEditFields(data.room);
-      setDividends(data.room?.dividends || []);
-      setDividendsCalculated(Boolean(data.room?.dividendsCalculated));
+      const report =
+        (data.room?.dividendReport as DividendReport | null) ?? null;
+      setDividendReport(report);
+      if (report?.taxRate != null) {
+        setTaxPercent(Number((report.taxRate * 100).toFixed(1)));
+      } else if (data.room?.settings?.taxRate != null) {
+        setTaxPercent(
+          Number((Number(data.room.settings.taxRate) * 100).toFixed(1)),
+        );
+      }
     },
     [syncEditFields],
   );
@@ -101,8 +122,12 @@ export function AuctionManagePanel({
       if (!alive || !res.ok) return;
       setSessions(data.sessions || []);
       setRoom(data.room);
-      setDividends(data.room?.dividends || []);
-      setDividendsCalculated(Boolean(data.room?.dividendsCalculated));
+      const report =
+        (data.room?.dividendReport as DividendReport | null) ?? null;
+      setDividendReport(report);
+      if (report?.taxRate != null) {
+        setTaxPercent(Number((report.taxRate * 100).toFixed(1)));
+      }
     };
     const timeout = window.setTimeout(() => {
       void tick();
@@ -262,6 +287,17 @@ export function AuctionManagePanel({
     await loadList();
   }
 
+  function applyDividendPayload(data: {
+    report?: DividendReport | null;
+    room?: AuctionRoomState | null;
+  }) {
+    if (data.report) {
+      setDividendReport(data.report);
+      setTaxPercent(Number((data.report.taxRate * 100).toFixed(1)));
+    }
+    if (data.room) setRoom(data.room);
+  }
+
   async function calculateDividends() {
     if (selectedId == null) return;
     setBusy(true);
@@ -271,16 +307,19 @@ export function AuctionManagePanel({
       const res = await fetch("/api/auction/dividends", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "calculate", sessionId: selectedId }),
+        body: JSON.stringify({
+          action: "calculate",
+          sessionId: selectedId,
+          taxPercent,
+        }),
       });
       const data = await res.json();
       if (!res.ok) {
         setError(data.error || "计算失败");
         return;
       }
-      setDividends(data.dividends || []);
-      setDividendsCalculated(true);
-      setMessage("分红已自动计算完成，可临时加人调整");
+      applyDividendPayload(data);
+      setMessage("分红已按拍品留存；可在单项增删成员，总表自动汇总");
     } catch {
       setError("网络错误");
     } finally {
@@ -288,58 +327,33 @@ export function AuctionManagePanel({
     }
   }
 
-  async function addTemporaryDividend() {
+  async function setItemDividendMembers(itemId: number, memberIds: number[]) {
     if (selectedId == null) return;
     setBusy(true);
     setError("");
-    setMessage("");
     try {
       const res = await fetch("/api/auction/dividends", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          action: "addTemporary",
+          action: "setItemMembers",
           sessionId: selectedId,
-          memberId: tempMemberId ? Number(tempMemberId) : null,
-          memberName:
-            initialMembers.find((m) => String(m.id) === tempMemberId)?.name ||
-            "",
-          amount: tempAmount,
+          itemId,
+          memberIds,
         }),
       });
       const data = await res.json();
       if (!res.ok) {
-        setError(data.error || "添加失败");
+        setError(data.error || "调整名单失败");
         return;
       }
-      setDividends(data.dividends || []);
-      setMessage("已临时加人调整");
-      setTempAmount(0);
+      applyDividendPayload(data);
+      setMessage("已更新该拍品分红名单");
     } catch {
       setError("网络错误");
     } finally {
       setBusy(false);
     }
-  }
-
-  async function updateDividendAmount(id: number, next: number) {
-    if (selectedId == null) return;
-    const res = await fetch("/api/auction/dividends", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        action: "updateAmount",
-        sessionId: selectedId,
-        id,
-        amount: next,
-      }),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      setError(data.error || "更新失败");
-      return;
-    }
-    setDividends(data.dividends || []);
   }
 
   async function openSession(sessionId: number) {
@@ -352,7 +366,6 @@ export function AuctionManagePanel({
   const session = room?.session;
   const items: AuctionItem[] = room?.items ?? [];
   const editable = session ? isSessionEditable(session.status) : false;
-  const dividendTotal = dividends.reduce((sum, d) => sum + d.amount, 0);
 
   return (
     <div className="app-shell">
@@ -660,18 +673,22 @@ export function AuctionManagePanel({
                       className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
                     >
                       <div className="flex items-center gap-3">
-                        {item.imageData ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            src={item.imageData}
-                            alt=""
-                            className="h-12 w-12 rounded-lg object-cover"
-                          />
-                        ) : (
-                          <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-[#1c2230] text-xs text-[var(--text-muted)]">
-                            无图
-                          </div>
-                        )}
+                        <AuctionItemThumb
+                          imageData={item.imageData}
+                          name={item.name}
+                          quality={item.quality}
+                          className="h-12 w-12"
+                          onOpen={(payload) =>
+                            setViewer({
+                              ...payload,
+                              detail: `起拍 ¥${item.startPrice} · ${item.status}${
+                                item.soldPrice != null
+                                  ? ` · 成交 ¥${item.soldPrice}`
+                                  : ""
+                              }`,
+                            })
+                          }
+                        />
                         <div>
                           <p className="font-medium">
                             <span
@@ -687,6 +704,10 @@ export function AuctionManagePanel({
                               ? ` · 成交 ¥${item.soldPrice}`
                               : ""}
                           </p>
+                          <ItemPriceStatsLine
+                            stats={item.priceStats}
+                            className="mt-1"
+                          />
                         </div>
                       </div>
                       {editable &&
@@ -707,96 +728,50 @@ export function AuctionManagePanel({
             </section>
 
             {session?.status === "ended" && (
-              <section className="mt-5 rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)] p-4">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <h2 className="text-sm font-medium text-[var(--text-muted)]">
-                    分红计算与调整
-                  </h2>
-                  <span className="text-xs text-[var(--text-muted)]">
-                    合计 ¥{dividendTotal.toFixed(2)}
-                  </span>
-                </div>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    className="rounded-xl bg-[#e23d4a] px-4 py-2 text-sm font-semibold disabled:opacity-50"
-                    disabled={busy}
-                    onClick={calculateDividends}
-                  >
-                    {dividendsCalculated ? "重新计算分红" : "自动计算分红"}
-                  </button>
-                </div>
-                <ul className="mt-4 divide-y divide-[var(--border-soft)]">
-                  {dividends.length === 0 && (
-                    <li className="py-4 text-sm text-[var(--text-muted)]">
-                      暂无分红。可点击上方计算。
-                    </li>
-                  )}
-                  {dividends.map((entry) => (
-                    <li
-                      key={entry.id}
-                      className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between"
-                    >
-                      <p className="font-medium">
-                        {entry.memberName}
-                        {entry.isTemporary && (
-                          <span className="ml-2 text-xs text-[var(--accent-amber)]">
-                            临时
-                          </span>
-                        )}
-                      </p>
-                      <input
-                        className="field !w-32"
-                        type="number"
-                        step="0.01"
-                        value={entry.amount}
-                        onChange={(e) =>
-                          updateDividendAmount(entry.id, Number(e.target.value))
-                        }
-                      />
-                    </li>
-                  ))}
-                </ul>
-                {dividendsCalculated && (
-                  <div className="mt-4 border-t border-[var(--border-soft)] pt-4">
-                    <h3 className="text-sm font-medium text-[var(--text-muted)]">
-                      临时加人调整
-                    </h3>
-                    <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-                      <select
-                        className="field"
-                        value={tempMemberId}
-                        onChange={(e) => setTempMemberId(e.target.value)}
-                      >
-                        <option value="">选择成员</option>
-                        {initialMembers.map((m) => (
-                          <option key={m.id} value={m.id}>
-                            {m.name}
-                          </option>
-                        ))}
-                      </select>
-                      <input
-                        className="field sm:max-w-[140px]"
-                        type="number"
-                        step="0.01"
-                        placeholder="金额"
-                        value={tempAmount}
-                        onChange={(e) => setTempAmount(Number(e.target.value))}
-                      />
-                      <button
-                        type="button"
-                        className="btn-primary sm:max-w-[120px]"
-                        disabled={busy || !tempMemberId || !(tempAmount > 0)}
-                        onClick={addTemporaryDividend}
-                      >
-                        添加
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </section>
+              <div className="mt-5">
+                <DividendReportView
+                  report={
+                    dividendReport ??
+                    ({
+                      session,
+                      calculated: false,
+                      taxRate: taxPercent / 100,
+                      itemGroups: [],
+                      totals: [],
+                      summary: {
+                        soldCount: 0,
+                        grossSales: 0,
+                        taxRate: taxPercent / 100,
+                        taxTotal: 0,
+                        dividendPool: 0,
+                        payoutTotal: 0,
+                        temporaryTotal: 0,
+                      },
+                      belowThresholdMemberIds: [],
+                    } satisfies DividendReport)
+                  }
+                  members={initialMembers}
+                  editable
+                  busy={busy}
+                  taxPercent={taxPercent}
+                  onTaxPercentChange={setTaxPercent}
+                  onCalculate={calculateDividends}
+                  onSetItemMembers={setItemDividendMembers}
+                />
+              </div>
             )}
           </>
+        )}
+
+        {viewer && (
+          <AuctionItemLightbox
+            open
+            imageData={viewer.imageData}
+            name={viewer.name}
+            quality={viewer.quality}
+            detail={viewer.detail}
+            onClose={() => setViewer(null)}
+          />
         )}
       </div>
     </div>
