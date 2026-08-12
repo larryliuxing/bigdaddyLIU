@@ -53,8 +53,6 @@ export function AuctionManagePanel({
     null,
   );
   const [taxPercent, setTaxPercent] = useState(5);
-  const [tempMemberId, setTempMemberId] = useState("");
-  const [tempAmount, setTempAmount] = useState(0);
 
   const syncEditFields = useCallback((nextRoom: AuctionRoomState | null) => {
     const session = nextRoom?.session;
@@ -309,7 +307,7 @@ export function AuctionManagePanel({
         return;
       }
       applyDividendPayload(data);
-      setMessage("分红已按拍品留存；可增删成员并查看综合总表");
+      setMessage("分红已按拍品留存；可在单项增删成员，总表自动汇总");
     } catch {
       setError("网络错误");
     } finally {
@@ -344,88 +342,6 @@ export function AuctionManagePanel({
     } finally {
       setBusy(false);
     }
-  }
-
-  async function addTemporaryDividend() {
-    if (selectedId == null) return;
-    setBusy(true);
-    setError("");
-    setMessage("");
-    try {
-      const res = await fetch("/api/auction/dividends", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "addTemporary",
-          sessionId: selectedId,
-          memberId: tempMemberId ? Number(tempMemberId) : null,
-          memberName:
-            initialMembers.find((m) => String(m.id) === tempMemberId)?.name ||
-            "",
-          amount: tempAmount,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error || "添加失败");
-        return;
-      }
-      applyDividendPayload(data);
-      setMessage("已临时加人到综合总表");
-      setTempAmount(0);
-    } catch {
-      setError("网络错误");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function deleteTemporaryDividend(id: number) {
-    if (selectedId == null) return;
-    setBusy(true);
-    setError("");
-    try {
-      const res = await fetch("/api/auction/dividends", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "deleteTemporary",
-          sessionId: selectedId,
-          id,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error || "删除失败");
-        return;
-      }
-      applyDividendPayload(data);
-      setMessage("已删除临时分红");
-    } catch {
-      setError("网络错误");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function updateDividendAmount(id: number, next: number) {
-    if (selectedId == null) return;
-    const res = await fetch("/api/auction/dividends", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        action: "updateAmount",
-        sessionId: selectedId,
-        id,
-        amount: next,
-      }),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      setError(data.error || "更新失败");
-      return;
-    }
-    applyDividendPayload(data);
   }
 
   async function openSession(sessionId: number) {
@@ -821,13 +737,6 @@ export function AuctionManagePanel({
                   onTaxPercentChange={setTaxPercent}
                   onCalculate={calculateDividends}
                   onSetItemMembers={setItemDividendMembers}
-                  onAddTemporary={addTemporaryDividend}
-                  onDeleteTemporary={deleteTemporaryDividend}
-                  onUpdateTotalAmount={updateDividendAmount}
-                  tempMemberId={tempMemberId}
-                  tempAmount={tempAmount}
-                  onTempMemberIdChange={setTempMemberId}
-                  onTempAmountChange={setTempAmount}
                 />
               </div>
             )}

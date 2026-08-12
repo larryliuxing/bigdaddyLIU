@@ -2,12 +2,16 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { AuctionSession, DividendReport } from "@/lib/types";
+import type { AuctionSession, DividendReport, SessionUser } from "@/lib/types";
 import { formatBeijingSessionLabel } from "@/lib/auction/client";
 import { DividendReportView } from "./DividendReportView";
 
 /** Member-facing read-only dividend view. Admin calculate/adjust is on /auction/manage. */
-export function DividendPanel() {
+export function DividendPanel({
+  member,
+}: {
+  member?: Extract<SessionUser, { type: "member" }> | null;
+}) {
   const router = useRouter();
   const [sessions, setSessions] = useState<AuctionSession[]>([]);
   const [sessionId, setSessionId] = useState<number | null>(null);
@@ -17,8 +21,7 @@ export function DividendPanel() {
   useEffect(() => {
     let alive = true;
     const load = async () => {
-      const qs =
-        sessionId != null ? `?sessionId=${sessionId}` : "";
+      const qs = sessionId != null ? `?sessionId=${sessionId}` : "";
       const res = await fetch(`/api/auction/dividends${qs}`);
       const data = await res.json();
       if (!alive || !res.ok) return;
@@ -75,7 +78,7 @@ export function DividendPanel() {
         </header>
 
         <p className="mb-4 text-sm text-[var(--text-muted)]">
-          每件拍品分红与综合总表公开留存；战力不合格名字标红，仅供对照。
+          每件拍品分红与综合总表公开留存；登录后会高亮你自己的分红。
         </p>
 
         {endedSessions.length > 0 && (
@@ -99,7 +102,11 @@ export function DividendPanel() {
           </label>
         )}
 
-        <DividendReportView report={report} editable={false} />
+        <DividendReportView
+          report={report}
+          editable={false}
+          highlightMemberId={member?.id ?? null}
+        />
       </div>
     </div>
   );

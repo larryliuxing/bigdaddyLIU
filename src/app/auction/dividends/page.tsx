@@ -11,5 +11,5 @@ export default async function AuctionDividendsPage() {
   if (!member && !admin) {
     redirect("/");
   }
-  return <DividendPanel />;
+  return <DividendPanel member={member} />;
 }

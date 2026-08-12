@@ -9,20 +9,25 @@ function money(n: number) {
 function NameText({
   name,
   belowThreshold,
+  isSelf,
 }: {
   name: string;
   belowThreshold?: boolean;
+  isSelf?: boolean;
 }) {
   return (
     <span
       className={
         belowThreshold
           ? "font-medium text-[var(--accent-crimson)]"
-          : "font-medium"
+          : isSelf
+            ? "font-medium text-[var(--accent-gold)]"
+            : "font-medium"
       }
       title={belowThreshold ? "战力低于合格线（排行榜 85% 均值）" : undefined}
     >
       {name}
+      {isSelf ? "（我）" : ""}
       {belowThreshold ? " · 战力不合格" : ""}
     </span>
   );
@@ -37,13 +42,7 @@ export function DividendReportView({
   onTaxPercentChange,
   onCalculate,
   onSetItemMembers,
-  onAddTemporary,
-  onDeleteTemporary,
-  onUpdateTotalAmount,
-  tempMemberId,
-  tempAmount,
-  onTempMemberIdChange,
-  onTempAmountChange,
+  highlightMemberId,
 }: {
   report: DividendReport | null;
   members?: Member[];
@@ -53,13 +52,8 @@ export function DividendReportView({
   onTaxPercentChange?: (v: number) => void;
   onCalculate?: () => void;
   onSetItemMembers?: (itemId: number, memberIds: number[]) => void;
-  onAddTemporary?: () => void;
-  onDeleteTemporary?: (id: number) => void;
-  onUpdateTotalAmount?: (id: number, amount: number) => void;
-  tempMemberId?: string;
-  tempAmount?: number;
-  onTempMemberIdChange?: (v: string) => void;
-  onTempAmountChange?: (v: number) => void;
+  /** Logged-in member — highlight their shares so everyone can find their payout. */
+  highlightMemberId?: number | null;
 }) {
   if (!report) {
     return (
@@ -71,6 +65,10 @@ export function DividendReportView({
 
   const below = new Set(report.belowThresholdMemberIds);
   const summary = report.summary;
+  const myTotal =
+    highlightMemberId != null
+      ? report.totals.find((t) => t.memberId === highlightMemberId)
+      : undefined;
 
   return (
     <div className="space-y-5">
@@ -134,6 +132,19 @@ export function DividendReportView({
             <p className="font-semibold">{money(summary.payoutTotal)}</p>
           </div>
         </div>
+        {myTotal && (
+          <div className="mt-3 rounded-xl border border-[rgba(232,168,74,0.35)] bg-[rgba(232,168,74,0.08)] px-3 py-2.5">
+            <p className="text-xs text-[var(--text-muted)]">我的本场分红合计</p>
+            <p className="text-lg font-semibold text-[var(--accent-gold)]">
+              {money(myTotal.amount)}
+            </p>
+          </div>
+        )}
+        {highlightMemberId != null && report.calculated && !myTotal && (
+          <p className="mt-3 text-xs text-[var(--text-muted)]">
+            你未出现在本场分红名单中。
+          </p>
+        )}
         {below.size > 0 && (
           <p className="mt-3 text-xs text-[var(--accent-crimson)]">
             标红名字为战力低于排行榜合格线（均值 85%），方便管理员核对是否纳入分红。
@@ -143,7 +154,7 @@ export function DividendReportView({
 
       {!report.calculated && report.itemGroups.length === 0 && (
         <p className="text-sm text-[var(--text-muted)]">
-          尚未计算。管理员计算后，将按拍品逐条公示每人分红。
+          尚未计算。管理员计算后，打开本场拍卖即可查看每人分红。
         </p>
       )}
 
@@ -165,20 +176,28 @@ export function DividendReportView({
               </p>
             </div>
             <ul className="divide-y divide-[var(--border-soft)]">
-              {group.lines.map((line) => (
-                <li
-                  key={line.id}
-                  className="flex items-center justify-between gap-3 px-4 py-2.5 text-sm"
-                >
-                  <NameText
-                    name={line.memberName}
-                    belowThreshold={line.belowThreshold}
-                  />
-                  <span className="tabular-nums text-[var(--accent-gold)]">
-                    {money(line.shareAmount)}
-                  </span>
-                </li>
-              ))}
+              {group.lines.map((line) => {
+                const isSelf =
+                  highlightMemberId != null &&
+                  line.memberId === highlightMemberId;
+                return (
+                  <li
+                    key={line.id}
+                    className={`flex items-center justify-between gap-3 px-4 py-2.5 text-sm ${
+                      isSelf ? "bg-[rgba(232,168,74,0.08)]" : ""
+                    }`}
+                  >
+                    <NameText
+                      name={line.memberName}
+                      belowThreshold={line.belowThreshold}
+                      isSelf={isSelf}
+                    />
+                    <span className="tabular-nums text-[var(--accent-gold)]">
+                      {money(line.shareAmount)}
+                    </span>
+                  </li>
+                );
+              })}
               {group.lines.length === 0 && (
                 <li className="px-4 py-4 text-sm text-[var(--text-muted)]">
                   该拍品暂无分红成员
@@ -236,99 +255,30 @@ export function DividendReportView({
               暂无总表数据
             </li>
           )}
-          {report.totals.map((entry) => (
-            <li
-              key={entry.id}
-              className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
-            >
-              <div>
+          {report.totals.map((entry) => {
+            const isSelf =
+              highlightMemberId != null &&
+              entry.memberId === highlightMemberId;
+            return (
+              <li
+                key={entry.id}
+                className={`flex items-center justify-between gap-3 px-4 py-3 ${
+                  isSelf ? "bg-[rgba(232,168,74,0.08)]" : ""
+                }`}
+              >
                 <NameText
                   name={entry.memberName}
                   belowThreshold={entry.belowThreshold}
+                  isSelf={isSelf}
                 />
-                {entry.isTemporary && (
-                  <span className="ml-2 text-xs text-[var(--accent-amber)]">
-                    临时
-                  </span>
-                )}
-                {entry.note && (
-                  <p className="text-xs text-[var(--text-muted)]">{entry.note}</p>
-                )}
-              </div>
-              <div className="flex items-center gap-2">
-                {editable && entry.isTemporary && onUpdateTotalAmount ? (
-                  <input
-                    className="field !w-28"
-                    type="number"
-                    step="0.01"
-                    value={entry.amount}
-                    onChange={(e) =>
-                      onUpdateTotalAmount(entry.id, Number(e.target.value))
-                    }
-                  />
-                ) : (
-                  <span className="text-lg font-semibold text-[var(--accent-gold)]">
-                    {money(entry.amount)}
-                  </span>
-                )}
-                {editable && entry.isTemporary && onDeleteTemporary && (
-                  <button
-                    type="button"
-                    className="btn-ghost text-xs text-[var(--accent-crimson)]"
-                    disabled={busy}
-                    onClick={() => onDeleteTemporary(entry.id)}
-                  >
-                    删除
-                  </button>
-                )}
-              </div>
-            </li>
-          ))}
+                <span className="text-lg font-semibold text-[var(--accent-gold)]">
+                  {money(entry.amount)}
+                </span>
+              </li>
+            );
+          })}
         </ul>
       </section>
-
-      {editable && report.calculated && (
-        <section className="rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)] p-4">
-          <h3 className="text-sm font-medium text-[var(--text-muted)]">
-            总表临时加人
-          </h3>
-          <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-            <select
-              className="field"
-              value={tempMemberId ?? ""}
-              onChange={(e) => onTempMemberIdChange?.(e.target.value)}
-            >
-              <option value="">选择成员</option>
-              {members.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.name}
-                  {below.has(m.id) ? "（战力不合格）" : ""}
-                </option>
-              ))}
-            </select>
-            <input
-              className="field sm:max-w-[140px]"
-              type="number"
-              step="0.01"
-              placeholder="金额"
-              value={tempAmount ?? 0}
-              onChange={(e) => onTempAmountChange?.(Number(e.target.value))}
-            />
-            <button
-              type="button"
-              className="btn-primary sm:max-w-[120px]"
-              disabled={
-                busy ||
-                !tempMemberId ||
-                !(tempAmount != null && tempAmount > 0)
-              }
-              onClick={onAddTemporary}
-            >
-              添加
-            </button>
-          </div>
-        </section>
-      )}
     </div>
   );
 }

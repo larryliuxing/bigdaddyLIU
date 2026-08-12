@@ -2,14 +2,28 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { AuctionItem, AuctionSession } from "@/lib/types";
-import { qualityMeta } from "@/lib/auction/client";
+import type {
+  AuctionItem,
+  AuctionSession,
+  DividendReport,
+  SessionUser,
+} from "@/lib/types";
+import {
+  formatBeijingSessionLabel,
+  qualityMeta,
+} from "@/lib/auction/client";
+import { DividendReportView } from "./DividendReportView";
 
-export function AuctionHistory() {
+export function AuctionHistory({
+  member,
+}: {
+  member?: Extract<SessionUser, { type: "member" }> | null;
+}) {
   const router = useRouter();
   const [sessions, setSessions] = useState<AuctionSession[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [items, setItems] = useState<AuctionItem[]>([]);
+  const [report, setReport] = useState<DividendReport | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -34,10 +48,15 @@ export function AuctionHistory() {
     if (!selectedId) return;
     let alive = true;
     const load = async () => {
-      const res = await fetch(`/api/auction/items?sessionId=${selectedId}`);
-      const data = await res.json();
-      if (!alive || !res.ok) return;
-      setItems(data.items || []);
+      const [itemsRes, divRes] = await Promise.all([
+        fetch(`/api/auction/items?sessionId=${selectedId}`),
+        fetch(`/api/auction/dividends?sessionId=${selectedId}`),
+      ]);
+      const itemsData = await itemsRes.json();
+      const divData = await divRes.json();
+      if (!alive) return;
+      if (itemsRes.ok) setItems(itemsData.items || []);
+      if (divRes.ok) setReport((divData.report as DividendReport | null) ?? null);
     };
     const timeout = window.setTimeout(() => {
       void load();
@@ -77,7 +96,7 @@ export function AuctionHistory() {
               }`}
               onClick={() => setSelectedId(s.id)}
             >
-              #{s.id} · {s.status}
+              #{s.id} · {formatBeijingSessionLabel(s.scheduledStart || s.startedAt)}
             </button>
           ))}
           {sessions.length === 0 && (
@@ -85,7 +104,10 @@ export function AuctionHistory() {
           )}
         </div>
 
-        <section className="overflow-hidden rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)]">
+        <section className="mb-5 overflow-hidden rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)]">
+          <div className="border-b border-[var(--border-soft)] px-4 py-3 text-sm font-medium">
+            拍品结果
+          </div>
           <ul className="divide-y divide-[var(--border-soft)]">
             {items.length === 0 && (
               <li className="px-4 py-8 text-sm text-[var(--text-muted)]">
@@ -111,6 +133,12 @@ export function AuctionHistory() {
             ))}
           </ul>
         </section>
+
+        <DividendReportView
+          report={report}
+          editable={false}
+          highlightMemberId={member?.id ?? null}
+        />
       </div>
     </div>
   );

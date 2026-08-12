@@ -9,6 +9,7 @@ import {
   formatBeijingDateTime,
 } from "@/lib/auction/client";
 import { GavelIcon } from "@/components/Icons";
+import { DividendReportView } from "./DividendReportView";
 
 function HourglassIcon() {
   return (
@@ -338,43 +339,48 @@ export function AuctionRoom({
             })}
 
           {session?.status === "ended" && (
-            <div className="rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)] p-5">
-              <div className="text-center">
+            <div className="space-y-5">
+              <div className="rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)] p-5 text-center">
                 <p className="text-lg font-medium">本场拍卖已结束</p>
                 <p className="mt-2 text-sm text-[var(--text-muted)]">
-                  可前往分红统计查看结果
+                  下方为本场分红公示，所有人打开本场即可查看自己的分红。
                 </p>
-                <button
-                  type="button"
-                  className="btn-primary mt-4 max-w-xs"
-                  onClick={() => router.push("/auction/dividends")}
-                >
-                  查看分红
-                </button>
               </div>
+              <DividendReportView
+                report={room?.dividendReport ?? null}
+                editable={false}
+                highlightMemberId={member?.id ?? null}
+              />
               {(room?.items?.length ?? 0) > 0 && (
-                <ul className="mt-6 divide-y divide-[var(--border-soft)] border-t border-[var(--border-soft)]">
-                  {room!.items.map((item) => (
-                    <li
-                      key={item.id}
-                      className="flex items-center justify-between gap-3 py-3 text-sm"
-                    >
-                      <span>
-                        <span
-                          className="mr-2 inline-block h-2 w-2 rounded-full"
-                          style={{
-                            background: qualityMeta(item.quality).color,
-                          }}
-                        />
-                        {item.name}
-                      </span>
-                      <span className="text-[var(--text-muted)]">
-                        {itemStatusLabel(item.status)}
-                        {item.soldPrice != null ? ` · ¥${item.soldPrice}` : ""}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
+                <section className="overflow-hidden rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)]">
+                  <div className="border-b border-[var(--border-soft)] px-4 py-3 text-sm font-medium">
+                    拍品结果
+                  </div>
+                  <ul className="divide-y divide-[var(--border-soft)]">
+                    {room!.items.map((item) => (
+                      <li
+                        key={item.id}
+                        className="flex items-center justify-between gap-3 px-4 py-3 text-sm"
+                      >
+                        <span>
+                          <span
+                            className="mr-2 inline-block h-2 w-2 rounded-full"
+                            style={{
+                              background: qualityMeta(item.quality).color,
+                            }}
+                          />
+                          {item.name}
+                        </span>
+                        <span className="text-[var(--text-muted)]">
+                          {itemStatusLabel(item.status)}
+                          {item.soldPrice != null
+                            ? ` · ¥${item.soldPrice}`
+                            : ""}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
               )}
             </div>
           )}
