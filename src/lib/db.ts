@@ -198,6 +198,7 @@ export function ensureDb(): Database.Database {
       last_kill_at TEXT,
       next_spawn_at TEXT,
       drops_note TEXT,
+      drops_image TEXT,
       sort_order INTEGER NOT NULL DEFAULT 0,
       enabled INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -303,6 +304,8 @@ function seedIfEmpty(database: Database.Database) {
     "tax_rate",
     "REAL NOT NULL DEFAULT 0.05",
   );
+
+  ensureColumn(database, "bosses", "drops_image", "TEXT");
 
   const bossCount = database
     .prepare("SELECT COUNT(*) as count FROM bosses")
@@ -2168,6 +2171,7 @@ type BossRow = {
   last_kill_at: string | null;
   next_spawn_at: string | null;
   drops_note: string | null;
+  drops_image: string | null;
   sort_order: number;
   enabled: number;
 };
@@ -2253,6 +2257,7 @@ function toBoss(row: BossRow): import("./types").Boss {
     lastKillAt: row.last_kill_at,
     nextSpawnAt: row.next_spawn_at,
     dropsNote: row.drops_note,
+    dropsImage: row.drops_image ?? null,
     sortOrder: row.sort_order,
     enabled: Boolean(row.enabled),
     remainingSeconds: remainingFrom(row.next_spawn_at),
@@ -2285,14 +2290,15 @@ export function createBoss(input: {
   spawnRate?: number;
   intervalHours?: number;
   dropsNote?: string;
+  dropsImage?: string | null;
 }) {
   const maxOrder = ensureDb()
     .prepare(`SELECT COALESCE(MAX(sort_order), -1) as m FROM bosses`)
     .get() as { m: number };
   const result = ensureDb()
     .prepare(
-      `INSERT INTO bosses (name, color, spawn_rate, interval_hours, drops_note, sort_order)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO bosses (name, color, spawn_rate, interval_hours, drops_note, drops_image, sort_order)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       input.name.trim(),
@@ -2300,6 +2306,7 @@ export function createBoss(input: {
       input.spawnRate ?? 50,
       input.intervalHours ?? 6,
       input.dropsNote ?? null,
+      input.dropsImage ?? null,
       maxOrder.m + 1,
     );
   return getBossById(Number(result.lastInsertRowid))!;
@@ -2313,6 +2320,7 @@ export function updateBoss(
     spawnRate: number;
     intervalHours: number;
     dropsNote: string | null;
+    dropsImage: string | null;
     enabled: boolean;
     lastKillAt: string | null;
     nextSpawnAt: string | null;
@@ -2327,7 +2335,7 @@ export function updateBoss(
     .prepare(
       `UPDATE bosses SET
          name = ?, color = ?, spawn_rate = ?, interval_hours = ?,
-         drops_note = ?, enabled = ?, last_kill_at = ?, next_spawn_at = ?
+         drops_note = ?, drops_image = ?, enabled = ?, last_kill_at = ?, next_spawn_at = ?
        WHERE id = ?`,
     )
     .run(
@@ -2336,6 +2344,9 @@ export function updateBoss(
       data.spawnRate ?? current.spawn_rate,
       data.intervalHours ?? current.interval_hours,
       data.dropsNote === undefined ? current.drops_note : data.dropsNote,
+      data.dropsImage === undefined
+        ? current.drops_image
+        : data.dropsImage,
       data.enabled === undefined ? current.enabled : data.enabled ? 1 : 0,
       data.lastKillAt === undefined ? current.last_kill_at : data.lastKillAt,
       data.nextSpawnAt === undefined ? current.next_spawn_at : data.nextSpawnAt,

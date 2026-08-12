@@ -60,6 +60,8 @@ export async function POST(request: Request) {
       spawnRate,
       intervalHours,
       dropsNote: body?.dropsNote,
+      dropsImage:
+        typeof body?.dropsImage === "string" ? body.dropsImage : null,
     });
     return NextResponse.json(
       { boss, room: getBossRoomState(), allBosses: listBosses(true) },
@@ -93,6 +95,12 @@ export async function PATCH(request: Request) {
           ? Number(body.intervalHours)
           : undefined,
       dropsNote: body?.dropsNote,
+      dropsImage:
+        body?.dropsImage === undefined
+          ? undefined
+          : body.dropsImage === null
+            ? null
+            : String(body.dropsImage),
       enabled: body?.enabled,
       lastKillAt: body?.lastKillAt,
       nextSpawnAt: body?.nextSpawnAt,

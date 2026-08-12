@@ -232,6 +232,8 @@ export interface Boss {
   lastKillAt: string | null;
   nextSpawnAt: string | null;
   dropsNote: string | null;
+  /** Base64 data-URL screenshot of drop table; members can enlarge. */
+  dropsImage: string | null;
   sortOrder: number;
   enabled: boolean;
   remainingSeconds: number | null;

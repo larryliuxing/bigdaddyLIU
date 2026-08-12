@@ -3,19 +3,65 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { Boss } from "@/lib/types";
+import {
+  beijingDateFromIso,
+  beijingHmFromIso,
+  beijingTodayDate,
+  formatBeijingDateTime,
+  fromBeijingDateAndTime,
+} from "@/lib/auction/client";
+import {
+  BossDropsLightbox,
+  BossDropsPasteZone,
+} from "@/components/boss/BossDropsViewer";
+
+type BossForm = {
+  name: string;
+  color: string;
+  spawnRate: number;
+  intervalHours: number;
+  dropsNote: string;
+  dropsImage: string | null;
+};
+
+const emptyForm = (): BossForm => ({
+  name: "",
+  color: "#c084fc",
+  spawnRate: 50,
+  intervalHours: 6,
+  dropsNote: "",
+  dropsImage: null,
+});
+
+function bossToForm(boss: Boss): BossForm {
+  return {
+    name: boss.name,
+    color: boss.color,
+    spawnRate: boss.spawnRate,
+    intervalHours: boss.intervalHours,
+    dropsNote: boss.dropsNote || "",
+    dropsImage: boss.dropsImage,
+  };
+}
 
 export function AdminBossPanel({ adminName }: { adminName: string }) {
   const router = useRouter();
   const [bosses, setBosses] = useState<Boss[]>([]);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
-  const [form, setForm] = useState({
-    name: "",
-    color: "#c084fc",
-    spawnRate: 50,
-    intervalHours: 6,
-    dropsNote: "",
-  });
+  const [form, setForm] = useState<BossForm>(emptyForm);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editForm, setEditForm] = useState<BossForm>(emptyForm);
+  const [killDate, setKillDate] = useState(beijingTodayDate());
+  const [killTime, setKillTime] = useState("12:00");
+  const [nextDate, setNextDate] = useState(beijingTodayDate());
+  const [nextTime, setNextTime] = useState("18:00");
+  const [timerBossId, setTimerBossId] = useState<number | null>(null);
+  const [preview, setPreview] = useState<{
+    name: string;
+    image: string | null;
+    note: string | null;
+  } | null>(null);
 
   async function refresh() {
     const res = await fetch("/api/boss");
@@ -30,6 +76,24 @@ export function AdminBossPanel({ adminName }: { adminName: string }) {
     }, 0);
     return () => window.clearTimeout(timeout);
   }, []);
+
+  function openTimerEditor(boss: Boss) {
+    setTimerBossId(boss.id);
+    if (boss.lastKillAt) {
+      setKillDate(beijingDateFromIso(boss.lastKillAt));
+      setKillTime(beijingHmFromIso(boss.lastKillAt));
+    } else {
+      setKillDate(beijingTodayDate());
+      setKillTime("12:00");
+    }
+    if (boss.nextSpawnAt) {
+      setNextDate(beijingDateFromIso(boss.nextSpawnAt));
+      setNextTime(beijingHmFromIso(boss.nextSpawnAt));
+    } else {
+      setNextDate(beijingTodayDate());
+      setNextTime("18:00");
+    }
+  }
 
   async function createBoss(e: React.FormEvent) {
     e.preventDefault();
@@ -46,18 +110,13 @@ export function AdminBossPanel({ adminName }: { adminName: string }) {
       return;
     }
     setBosses(data.allBosses || []);
-    setForm({
-      name: "",
-      color: "#c084fc",
-      spawnRate: 50,
-      intervalHours: 6,
-      dropsNote: "",
-    });
-    setMessage("BOSS 已添加");
+    setForm(emptyForm());
+    setMessage("BOSS 已添加（固有属性已保存，可在列表中设置击杀/刷新时间）");
   }
 
   async function patchBoss(id: number, patch: Record<string, unknown>) {
     setError("");
+    setMessage("");
     const res = await fetch("/api/boss", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -69,6 +128,43 @@ export function AdminBossPanel({ adminName }: { adminName: string }) {
       return;
     }
     setBosses(data.allBosses || []);
+    return true;
+  }
+
+  async function saveInherent(bossId: number) {
+    const ok = await patchBoss(bossId, {
+      name: editForm.name,
+      color: editForm.color,
+      spawnRate: editForm.spawnRate,
+      intervalHours: editForm.intervalHours,
+      dropsNote: editForm.dropsNote || null,
+      dropsImage: editForm.dropsImage,
+    });
+    if (ok) {
+      setEditingId(null);
+      setMessage("固有属性已更新");
+    }
+  }
+
+  async function applyKillTime(boss: Boss) {
+    const lastKillAt = fromBeijingDateAndTime(killDate, killTime);
+    const nextSpawnAt = new Date(
+      new Date(lastKillAt).getTime() + boss.intervalHours * 60 * 60 * 1000,
+    ).toISOString();
+    const ok = await patchBoss(boss.id, { lastKillAt, nextSpawnAt });
+    if (ok) {
+      setMessage(
+        `已按击杀时间更新：下次刷新 = 击杀 + ${boss.intervalHours} 小时`,
+      );
+    }
+  }
+
+  async function applyNextSpawn(boss: Boss) {
+    const nextSpawnAt = fromBeijingDateAndTime(nextDate, nextTime);
+    const ok = await patchBoss(boss.id, { nextSpawnAt });
+    if (ok) {
+      setMessage("已设置下次刷新时间，盟员端倒计时已同步");
+    }
   }
 
   async function removeBoss(id: number) {
@@ -82,11 +178,13 @@ export function AdminBossPanel({ adminName }: { adminName: string }) {
     }
     setBosses(data.allBosses || []);
     setMessage("已删除");
+    if (editingId === id) setEditingId(null);
+    if (timerBossId === id) setTimerBossId(null);
   }
 
   return (
     <div className="app-shell">
-      <div className="app-frame" style={{ width: "min(100%, 720px)" }}>
+      <div className="app-frame" style={{ width: "min(100%, 760px)" }}>
         <header className="mb-6 flex flex-wrap items-start justify-between gap-3">
           <div>
             <p className="text-sm text-[var(--text-muted)]">后台管理</p>
@@ -113,6 +211,12 @@ export function AdminBossPanel({ adminName }: { adminName: string }) {
           </div>
         </header>
 
+        <p className="mb-4 text-xs leading-relaxed text-[var(--text-muted)]">
+          固有属性：名称、刷新概率、刷新间隔、掉落说明（可粘贴截图）。
+          计时由管理员设置击杀时间（自动推算下次刷新）或直接设置下次刷新时间；
+          全体盟员在 BOSS 模块查看倒计时列表。
+        </p>
+
         {message && <p className="mb-3 text-sm text-emerald-400">{message}</p>}
         {error && (
           <p className="mb-3 text-sm text-[var(--accent-crimson)]">{error}</p>
@@ -120,55 +224,86 @@ export function AdminBossPanel({ adminName }: { adminName: string }) {
 
         <section className="rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)] p-4">
           <h2 className="text-sm font-medium text-[var(--text-muted)]">
-            添加 BOSS
+            添加 BOSS（固有属性）
           </h2>
-          <form onSubmit={createBoss} className="mt-3 grid gap-2 sm:grid-cols-2">
-            <input
-              className="field"
-              placeholder="BOSS 名称"
-              value={form.name}
-              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-              required
-            />
-            <input
-              className="field"
-              type="color"
-              value={form.color}
-              onChange={(e) => setForm((f) => ({ ...f, color: e.target.value }))}
-            />
-            <input
-              className="field"
-              type="number"
-              min={1}
-              max={100}
-              placeholder="刷新概率 %"
-              value={form.spawnRate}
-              onChange={(e) =>
-                setForm((f) => ({ ...f, spawnRate: Number(e.target.value) }))
-              }
-            />
-            <input
-              className="field"
-              type="number"
-              min={0.5}
-              step={0.5}
-              placeholder="间隔小时"
-              value={form.intervalHours}
-              onChange={(e) =>
-                setForm((f) => ({
-                  ...f,
-                  intervalHours: Number(e.target.value),
-                }))
-              }
-            />
-            <input
-              className="field sm:col-span-2"
-              placeholder="掉落说明"
-              value={form.dropsNote}
-              onChange={(e) =>
-                setForm((f) => ({ ...f, dropsNote: e.target.value }))
-              }
-            />
+          <form onSubmit={createBoss} className="mt-3 grid gap-3 sm:grid-cols-2">
+            <label className="block space-y-1.5 sm:col-span-2">
+              <span className="text-xs text-[var(--text-muted)]">BOSS 名称</span>
+              <input
+                className="field"
+                value={form.name}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, name: e.target.value }))
+                }
+                required
+              />
+            </label>
+            <label className="block space-y-1.5">
+              <span className="text-xs text-[var(--text-muted)]">刷新概率 %</span>
+              <input
+                className="field"
+                type="number"
+                min={1}
+                max={100}
+                value={form.spawnRate}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, spawnRate: Number(e.target.value) }))
+                }
+              />
+            </label>
+            <label className="block space-y-1.5">
+              <span className="text-xs text-[var(--text-muted)]">
+                刷新间隔时间（小时）
+              </span>
+              <input
+                className="field"
+                type="number"
+                min={0.5}
+                step={0.5}
+                value={form.intervalHours}
+                onChange={(e) =>
+                  setForm((f) => ({
+                    ...f,
+                    intervalHours: Number(e.target.value),
+                  }))
+                }
+              />
+            </label>
+            <label className="block space-y-1.5 sm:col-span-2">
+              <span className="text-xs text-[var(--text-muted)]">
+                掉落说明（文字，可选）
+              </span>
+              <input
+                className="field"
+                value={form.dropsNote}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, dropsNote: e.target.value }))
+                }
+                placeholder="简要说明，可配合下方截图"
+              />
+            </label>
+            <div className="sm:col-span-2 space-y-1.5">
+              <span className="text-xs text-[var(--text-muted)]">
+                掉落说明（粘贴图片）
+              </span>
+              <BossDropsPasteZone
+                imageData={form.dropsImage}
+                onChange={(dropsImage) =>
+                  setForm((f) => ({ ...f, dropsImage }))
+                }
+              />
+            </div>
+            <label className="block space-y-1.5 sm:col-span-2">
+              <span className="text-xs text-[var(--text-muted)]">显示颜色</span>
+              <input
+                className="field h-10"
+                type="color"
+                value={form.color}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, color: e.target.value }))
+                }
+              />
+            </label>
             <button type="submit" className="btn-primary sm:col-span-2">
               添加 BOSS
             </button>
@@ -185,43 +320,260 @@ export function AdminBossPanel({ adminName }: { adminName: string }) {
                 尚未添加 BOSS
               </li>
             )}
-            {bosses.map((boss) => (
-              <li
-                key={boss.id}
-                className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
-              >
-                <div>
-                  <p className="font-medium" style={{ color: boss.color }}>
-                    {boss.name}
-                  </p>
-                  <p className="text-xs text-[var(--text-muted)]">
-                    {boss.spawnRate}% / {boss.intervalHours}h ·{" "}
-                    {boss.enabled ? "启用" : "停用"}
-                  </p>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    className="btn-ghost text-xs"
-                    onClick={() =>
-                      patchBoss(boss.id, { enabled: !boss.enabled })
-                    }
-                  >
-                    {boss.enabled ? "停用" : "启用"}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn-ghost text-xs text-[var(--accent-crimson)]"
-                    onClick={() => removeBoss(boss.id)}
-                  >
-                    删除
-                  </button>
-                </div>
-              </li>
-            ))}
+            {bosses.map((boss) => {
+              const editing = editingId === boss.id;
+              const timing = timerBossId === boss.id;
+              return (
+                <li key={boss.id} className="px-4 py-3">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0">
+                      <p className="font-medium" style={{ color: boss.color }}>
+                        {boss.name}
+                      </p>
+                      <p className="mt-0.5 text-xs text-[var(--text-muted)]">
+                        刷新概率 {boss.spawnRate}% · 间隔 {boss.intervalHours}h
+                        · {boss.enabled ? "启用" : "停用"}
+                      </p>
+                      <p className="mt-0.5 text-xs text-[var(--text-muted)]">
+                        击杀 {formatBeijingDateTime(boss.lastKillAt)} · 下次刷新{" "}
+                        {formatBeijingDateTime(boss.nextSpawnAt)}
+                      </p>
+                      {(boss.dropsImage || boss.dropsNote) && (
+                        <button
+                          type="button"
+                          className="mt-1 text-xs text-[var(--accent-violet)] underline-offset-2 hover:underline"
+                          onClick={() =>
+                            setPreview({
+                              name: boss.name,
+                              image: boss.dropsImage,
+                              note: boss.dropsNote,
+                            })
+                          }
+                        >
+                          预览掉落说明
+                        </button>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        className="btn-ghost text-xs"
+                        onClick={() => {
+                          if (editing) {
+                            setEditingId(null);
+                          } else {
+                            setEditingId(boss.id);
+                            setEditForm(bossToForm(boss));
+                          }
+                        }}
+                      >
+                        {editing ? "收起属性" : "编辑固有属性"}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-ghost text-xs"
+                        onClick={() =>
+                          timing ? setTimerBossId(null) : openTimerEditor(boss)
+                        }
+                      >
+                        {timing ? "收起计时" : "设置击杀/刷新时间"}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-ghost text-xs"
+                        onClick={() =>
+                          patchBoss(boss.id, { enabled: !boss.enabled })
+                        }
+                      >
+                        {boss.enabled ? "停用" : "启用"}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-ghost text-xs text-[var(--accent-crimson)]"
+                        onClick={() => removeBoss(boss.id)}
+                      >
+                        删除
+                      </button>
+                    </div>
+                  </div>
+
+                  {editing && (
+                    <div className="mt-3 grid gap-3 rounded-xl border border-[var(--border-soft)] bg-[#0f1320] p-3 sm:grid-cols-2">
+                      <label className="block space-y-1.5 sm:col-span-2">
+                        <span className="text-xs text-[var(--text-muted)]">
+                          BOSS 名称
+                        </span>
+                        <input
+                          className="field"
+                          value={editForm.name}
+                          onChange={(e) =>
+                            setEditForm((f) => ({
+                              ...f,
+                              name: e.target.value,
+                            }))
+                          }
+                        />
+                      </label>
+                      <label className="block space-y-1.5">
+                        <span className="text-xs text-[var(--text-muted)]">
+                          刷新概率 %
+                        </span>
+                        <input
+                          className="field"
+                          type="number"
+                          min={1}
+                          max={100}
+                          value={editForm.spawnRate}
+                          onChange={(e) =>
+                            setEditForm((f) => ({
+                              ...f,
+                              spawnRate: Number(e.target.value),
+                            }))
+                          }
+                        />
+                      </label>
+                      <label className="block space-y-1.5">
+                        <span className="text-xs text-[var(--text-muted)]">
+                          刷新间隔时间（小时）
+                        </span>
+                        <input
+                          className="field"
+                          type="number"
+                          min={0.5}
+                          step={0.5}
+                          value={editForm.intervalHours}
+                          onChange={(e) =>
+                            setEditForm((f) => ({
+                              ...f,
+                              intervalHours: Number(e.target.value),
+                            }))
+                          }
+                        />
+                      </label>
+                      <label className="block space-y-1.5 sm:col-span-2">
+                        <span className="text-xs text-[var(--text-muted)]">
+                          掉落说明（文字）
+                        </span>
+                        <input
+                          className="field"
+                          value={editForm.dropsNote}
+                          onChange={(e) =>
+                            setEditForm((f) => ({
+                              ...f,
+                              dropsNote: e.target.value,
+                            }))
+                          }
+                        />
+                      </label>
+                      <div className="sm:col-span-2 space-y-1.5">
+                        <span className="text-xs text-[var(--text-muted)]">
+                          掉落说明（粘贴图片）
+                        </span>
+                        <BossDropsPasteZone
+                          imageData={editForm.dropsImage}
+                          onChange={(dropsImage) =>
+                            setEditForm((f) => ({ ...f, dropsImage }))
+                          }
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        className="btn-primary sm:col-span-2"
+                        onClick={() => saveInherent(boss.id)}
+                      >
+                        保存固有属性
+                      </button>
+                    </div>
+                  )}
+
+                  {timing && (
+                    <div className="mt-3 space-y-3 rounded-xl border border-[var(--border-soft)] bg-[#0f1320] p-3">
+                      <p className="text-xs text-[var(--text-muted)]">
+                        北京时间。设置击杀时间将按间隔 {boss.intervalHours}{" "}
+                        小时自动推算下次刷新；也可只改下次刷新时间。
+                      </p>
+                      <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto]">
+                        <label className="block space-y-1.5">
+                          <span className="text-xs text-[var(--text-muted)]">
+                            击杀日期
+                          </span>
+                          <input
+                            className="field"
+                            type="date"
+                            value={killDate}
+                            onChange={(e) => setKillDate(e.target.value)}
+                          />
+                        </label>
+                        <label className="block space-y-1.5">
+                          <span className="text-xs text-[var(--text-muted)]">
+                            击杀时间
+                          </span>
+                          <input
+                            className="field"
+                            type="time"
+                            value={killTime}
+                            onChange={(e) => setKillTime(e.target.value)}
+                          />
+                        </label>
+                        <div className="flex items-end">
+                          <button
+                            type="button"
+                            className="btn-primary w-full"
+                            onClick={() => applyKillTime(boss)}
+                          >
+                            按击杀时间计时
+                          </button>
+                        </div>
+                      </div>
+                      <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto]">
+                        <label className="block space-y-1.5">
+                          <span className="text-xs text-[var(--text-muted)]">
+                            下次刷新日期
+                          </span>
+                          <input
+                            className="field"
+                            type="date"
+                            value={nextDate}
+                            onChange={(e) => setNextDate(e.target.value)}
+                          />
+                        </label>
+                        <label className="block space-y-1.5">
+                          <span className="text-xs text-[var(--text-muted)]">
+                            下次刷新时间
+                          </span>
+                          <input
+                            className="field"
+                            type="time"
+                            value={nextTime}
+                            onChange={(e) => setNextTime(e.target.value)}
+                          />
+                        </label>
+                        <div className="flex items-end">
+                          <button
+                            type="button"
+                            className="btn-ghost w-full"
+                            onClick={() => applyNextSpawn(boss)}
+                          >
+                            直接设下次刷新
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         </section>
       </div>
+
+      <BossDropsLightbox
+        open={Boolean(preview)}
+        onClose={() => setPreview(null)}
+        name={preview?.name || ""}
+        imageData={preview?.image || null}
+        note={preview?.note}
+      />
     </div>
   );
 }

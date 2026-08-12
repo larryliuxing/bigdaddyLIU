@@ -3,16 +3,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { Boss, BossRoomState, SessionUser } from "@/lib/types";
-import { formatCountdown } from "@/lib/auction/client";
+import {
+  formatBeijingDateTime,
+  formatCountdown,
+} from "@/lib/auction/client";
 import { TimerIcon } from "@/components/Icons";
-
-function formatTime(iso: string | null) {
-  if (!iso) return "-";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "-";
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
+import { BossDropsLightbox } from "@/components/boss/BossDropsViewer";
 
 function BossCard({
   boss,
@@ -21,6 +17,7 @@ function BossCard({
   onVote,
   busy,
   serverNow,
+  onOpenDrops,
 }: {
   boss: Boss;
   member: Extract<SessionUser, { type: "member" }> | null;
@@ -28,6 +25,7 @@ function BossCard({
   onVote: (bossId: number, voteType: "killed" | "not_spawned") => void;
   busy: boolean;
   serverNow: string;
+  onOpenDrops: (boss: Boss) => void;
 }) {
   const [now, setNow] = useState(() => Date.now());
 
@@ -55,6 +53,7 @@ function BossCard({
     : null;
 
   const round = boss.activeRound;
+  const hasDrops = Boolean(boss.dropsImage || boss.dropsNote);
 
   return (
     <article
@@ -69,31 +68,51 @@ function BossCard({
             {boss.name}
           </h3>
           <p className="mt-1 text-sm text-[var(--text-muted)]">
-            {boss.spawnRate}% · {boss.intervalHours}小时
+            刷新概率 {boss.spawnRate}% · 间隔 {boss.intervalHours} 小时
           </p>
         </div>
         <button
           type="button"
-          className="rounded-lg bg-[#2b4d8f] px-3 py-1.5 text-xs font-medium text-white"
-          title={boss.dropsNote || "掉落物"}
-          onClick={() =>
-            window.alert(boss.dropsNote || `${boss.name}：暂无掉落说明`)
-          }
+          className="rounded-lg bg-[#2b4d8f] px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+          disabled={!hasDrops}
+          title={hasDrops ? "查看掉落说明" : "暂无掉落说明"}
+          onClick={() => onOpenDrops(boss)}
         >
           查询掉落物
         </button>
       </div>
 
+      {boss.dropsImage && (
+        <button
+          type="button"
+          className="mt-3 block w-full overflow-hidden rounded-xl border border-[var(--border-soft)] bg-black/40"
+          onClick={() => onOpenDrops(boss)}
+          title="点击放大查看掉落说明"
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={boss.dropsImage}
+            alt={`${boss.name} 掉落`}
+            className="mx-auto max-h-28 object-contain"
+          />
+          <span className="block bg-black/50 px-2 py-1 text-center text-[10px] text-white/80">
+            点击放大掉落说明
+          </span>
+        </button>
+      )}
+
       <div className="mt-3 space-y-1 text-xs text-[var(--text-muted)]">
-        <p>最后击杀 {formatTime(boss.lastKillAt)}</p>
-        <p>下次刷新 {formatTime(boss.nextSpawnAt)}</p>
+        <p>最后击杀 {formatBeijingDateTime(boss.lastKillAt)}</p>
+        <p>下次刷新 {formatBeijingDateTime(boss.nextSpawnAt)}</p>
       </div>
 
       <div className="mt-4 text-center">
         <p className="text-4xl font-semibold tracking-wide tabular-nums">
           {formatCountdown(remain)}
         </p>
-        <p className="mt-1 text-xs text-[var(--text-muted)]">距离刷新</p>
+        <p className="mt-1 text-xs text-[var(--text-muted)]">
+          {boss.nextSpawnAt ? "距离刷新" : "尚未设置刷新时间"}
+        </p>
       </div>
 
       {round && round.status === "open" && (
@@ -150,6 +169,7 @@ export function BossTimerPanel({
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
   const [busy, setBusy] = useState(false);
+  const [dropsBoss, setDropsBoss] = useState<Boss | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -266,8 +286,9 @@ export function BossTimerPanel({
         </header>
 
         <p className="relative z-10 mb-3 text-xs text-[var(--text-muted)]">
-          任意成员点击「已击杀 / 未刷新」，{voteNeed} 人在{" "}
-          {room?.voteWindowSeconds ?? 10} 秒内同意后生效并开启新一轮计时。
+          倒计时由管理员设置的击杀/刷新时间与 BOSS 间隔生成；成员也可投票「已击杀
+          / 未刷新」（{voteNeed} 人在 {room?.voteWindowSeconds ?? 10}{" "}
+          秒内同意后生效）。点击掉落图可放大查看。
         </p>
 
         {error && (
@@ -286,6 +307,7 @@ export function BossTimerPanel({
               onVote={vote}
               busy={busy}
               serverNow={room?.serverNow ?? new Date().toISOString()}
+              onOpenDrops={setDropsBoss}
             />
           ))}
           {bosses.length === 0 && (
@@ -333,6 +355,14 @@ export function BossTimerPanel({
             {toast}
           </div>
         )}
+
+        <BossDropsLightbox
+          open={Boolean(dropsBoss)}
+          onClose={() => setDropsBoss(null)}
+          name={dropsBoss?.name || ""}
+          imageData={dropsBoss?.dropsImage || null}
+          note={dropsBoss?.dropsNote}
+        />
       </div>
     </div>
   );
