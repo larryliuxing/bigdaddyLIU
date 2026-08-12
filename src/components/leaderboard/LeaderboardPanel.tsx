@@ -30,6 +30,8 @@ export function LeaderboardPanel({
   });
   const [imageData, setImageData] = useState<string | null>(null);
   const [ocrText, setOcrText] = useState("");
+  const [ocrNameText, setOcrNameText] = useState("");
+  const [ocrPowerText, setOcrPowerText] = useState("");
   const [previewPower, setPreviewPower] = useState<number | null>(null);
   const [previewNameOk, setPreviewNameOk] = useState<boolean | null>(null);
   const [status, setStatus] = useState("");
@@ -67,19 +69,22 @@ export function LeaderboardPanel({
       const dataUrl = String(reader.result || "");
       setImageData(dataUrl);
       try {
-        // Multi-pass OCR: full frame + cyan name crops + combat-power crop
-        const text = await recognizeCombatPowerScreenshot(file);
-        setOcrText(text);
+        // Blue name crops + combat-power crops (kept separate)
+        const ocr = await recognizeCombatPowerScreenshot(file);
+        setOcrText(ocr.text);
+        setOcrNameText(ocr.nameText);
+        setOcrPowerText(ocr.powerText);
 
         if (!member) {
           setStatus("已识别，请以成员身份登录后提交");
           setPreviewNameOk(null);
           setPreviewPower(null);
         } else {
-          const parsed = parseCombatPowerScreenshot(text, member.name);
-          setPreviewNameOk(
-            parsed.ok || parsed.detectedName === member.name,
+          const parsed = parseCombatPowerScreenshot(
+            { nameText: ocr.nameText, powerText: ocr.powerText, text: ocr.text },
+            member.name,
           );
+          setPreviewNameOk(parsed.detectedName === member.name || parsed.ok);
           setPreviewPower(parsed.combatPower);
           if (!parsed.ok) {
             setStatus(parsed.error || "识别未通过");
@@ -126,7 +131,12 @@ export function LeaderboardPanel({
       const res = await fetch("/api/leaderboard", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ocrText, imageData }),
+        body: JSON.stringify({
+          ocrText,
+          ocrNameText,
+          ocrPowerText,
+          imageData,
+        }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -234,7 +244,7 @@ export function LeaderboardPanel({
               上传本人战力截图
             </h2>
             <p className="mt-1 text-xs leading-5 text-[var(--text-muted)]">
-              截图需包含角色名「{member.name}」与「战斗力」数值。系统会单独增强识别顶部浅色名字区域；名字与当前账号不一致将拒绝上榜。
+              截图需包含顶部蓝色角色名「{member.name}」与「战斗力」数值。名字只从蓝色字区域识别，不会把底部白色提示当成名字。
             </p>
 
             <div

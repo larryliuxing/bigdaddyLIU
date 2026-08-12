@@ -3,6 +3,15 @@
 import { createWorker, PSM, type Worker } from "tesseract.js";
 import { buildCombatPowerOcrVariants } from "./preprocess";
 
+export type CombatPowerOcrResult = {
+  /** Blue/cyan name-crop OCR only — use this for identity checks */
+  nameText: string;
+  /** Combat-power crop + full-frame OCR — use for 战斗力 digits */
+  powerText: string;
+  /** Combined text (debug / legacy storage) */
+  text: string;
+};
+
 let workerPromise: Promise<Worker> | null = null;
 
 async function getWorker() {
@@ -26,7 +35,6 @@ async function recognizeVariant(
 
   await worker.setParameters({
     tessedit_pageseg_mode: psm,
-    // Prefer denser CJK; still allow digits for combat power
     preserve_interword_spaces: "1",
   });
 
@@ -34,36 +42,7 @@ async function recognizeVariant(
   return (result.data.text || "").trim();
 }
 
-/**
- * Multi-pass OCR tuned for character equipment screenshots:
- * full image + cyan-enhanced name crops + combat-power crop.
- */
-export async function recognizeCombatPowerScreenshot(
-  image: File | Blob | string,
-): Promise<string> {
-  const worker = await getWorker();
-  const variants = await buildCombatPowerOcrVariants(image);
-  const chunks: string[] = [];
-
-  for (const variant of variants) {
-    try {
-      const text = await recognizeVariant(worker, variant.dataUrl, variant.mode);
-      if (text) chunks.push(text);
-    } catch {
-      // Keep going with other crops
-    }
-  }
-
-  // Reset to a sensible default for any shared worker reuse
-  try {
-    await worker.setParameters({
-      tessedit_pageseg_mode: PSM.AUTO,
-    });
-  } catch {
-    // ignore
-  }
-
-  // Deduplicate while preserving order
+function uniqueJoin(chunks: string[]) {
   const seen = new Set<string>();
   const merged: string[] = [];
   for (const chunk of chunks) {
@@ -72,6 +51,50 @@ export async function recognizeCombatPowerScreenshot(
     seen.add(key);
     merged.push(chunk);
   }
-
   return merged.join("\n");
+}
+
+/**
+ * Multi-pass OCR:
+ * - nameText: ONLY blue-filtered top crops (never bottom white UI)
+ * - powerText: power crop + full frame
+ */
+export async function recognizeCombatPowerScreenshot(
+  image: File | Blob | string,
+): Promise<CombatPowerOcrResult> {
+  const worker = await getWorker();
+  const variants = await buildCombatPowerOcrVariants(image);
+  const nameChunks: string[] = [];
+  const powerChunks: string[] = [];
+
+  for (const variant of variants) {
+    try {
+      const text = await recognizeVariant(worker, variant.dataUrl, variant.mode);
+      if (!text) continue;
+      if (variant.mode === "name") {
+        nameChunks.push(text);
+      } else {
+        powerChunks.push(text);
+      }
+    } catch {
+      // Keep going with other crops
+    }
+  }
+
+  try {
+    await worker.setParameters({
+      tessedit_pageseg_mode: PSM.AUTO,
+    });
+  } catch {
+    // ignore
+  }
+
+  const nameText = uniqueJoin(nameChunks);
+  const powerText = uniqueJoin(powerChunks);
+
+  return {
+    nameText,
+    powerText,
+    text: uniqueJoin([nameText, powerText].filter(Boolean)),
+  };
 }

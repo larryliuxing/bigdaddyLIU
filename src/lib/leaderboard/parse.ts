@@ -1,9 +1,24 @@
 /**
- * Parse combat-power screenshots (e.g. name above character + 战斗力 value).
+ * Parse combat-power screenshots.
+ * Name identity MUST come from blue name-region OCR, not full-frame white UI.
  */
 
 const UI_SKIP =
-  /战斗力|能力值|力量|体质|灵巧|敏捷|智力|智慧|攻击|移动|施法|侍卫|战盟|普通|守护|贡献|获得|品级|名称|参与|铠卫|复活|支配|骑士|经验|等级|装备|背包|技能|任务/;
+  /战斗力|能力值|力量|体质|灵巧|敏捷|智力|智慧|攻击|移动|施法|侍卫|战盟|普通|守护|贡献|获得|品级|名称|参与|铠卫|复活|支配|骑士|经验|等级|装备|背包|技能|任务|日程|自动|进行中|进行|日程自动/;
+
+function isUiPhrase(token: string) {
+  if (UI_SKIP.test(token)) return true;
+  if (token.includes("日程") || token.includes("自动") || token.includes("进行")) {
+    return true;
+  }
+  if (token.includes("战斗力") || token.includes("经验")) return true;
+  // Long status lines are not character names
+  if (token.length >= 6 && /[\u4e00-\u9fff]{6,}/.test(token)) {
+    // Allow long member names only if they look like names (no verb-ish UI)
+    if (/自动|进行|日程|系统|提示|已完成|已击杀/.test(token)) return true;
+  }
+  return false;
+}
 
 export function normalizeOcrText(text: string) {
   return text
@@ -12,7 +27,6 @@ export function normalizeOcrText(text: string) {
     .replace(/[，]/g, ",")
     .replace(/战\s*斗\s*力/g, "战斗力")
     .replace(/能\s*力\s*值/g, "能力值")
-    // Common OCR confusions near cyan CJK glyphs
     .replace(/[０-９]/g, (ch) =>
       String.fromCharCode(ch.charCodeAt(0) - 0xff10 + 0x30),
     );
@@ -35,7 +49,6 @@ export function extractCombatPower(text: string): number | null {
     }
   }
 
-  // Fallback: largest plausible number on the 战斗力 line
   const lines = normalized.split(/\r?\n/);
   for (const line of lines) {
     if (!line.includes("战斗力") && !line.includes("战力")) continue;
@@ -55,7 +68,6 @@ function tokenize(text: string) {
 }
 
 function collapseCjk(text: string) {
-  // Keep CJK / latin / digits; drop most punctuation/noise between name chars
   return text.replace(/[^\u4e00-\u9fffA-Za-z0-9_·]/g, "");
 }
 
@@ -98,10 +110,8 @@ function fuzzyMatchExpected(text: string, expected: string): boolean {
 
   if (compact.includes(exp)) return true;
 
-  // Spaced / noisy OCR still preserves character order: 唐 x 小 y 虎
   if (exp.length >= 2 && charsInOrder(compact, exp)) return true;
 
-  // Allow 1 edit for names >= 3 chars (common OCR misread of one glyph)
   if (exp.length >= 3) {
     const window = Math.max(exp.length - 1, 2);
     for (let i = 0; i <= compact.length - window; i += 1) {
@@ -116,7 +126,6 @@ function fuzzyMatchExpected(text: string, expected: string): boolean {
     }
   }
 
-  // Length-2 names: require both characters present (order flexible only if exact pair window)
   if (exp.length === 2) {
     const [a, b] = exp;
     if (compact.includes(a) && compact.includes(b) && charsInOrder(compact, exp)) {
@@ -127,21 +136,28 @@ function fuzzyMatchExpected(text: string, expected: string): boolean {
   return false;
 }
 
+/**
+ * Extract / match character name from BLUE name-region OCR only.
+ */
 export function extractDetectedName(
-  text: string,
+  nameText: string,
   expectedName: string,
 ): { matched: boolean; detectedName: string | null } {
-  const normalized = normalizeOcrText(text);
+  const normalized = normalizeOcrText(nameText);
   const expected = expectedName.trim();
 
   if (!expected) {
     return { matched: false, detectedName: null };
   }
 
-  const tokens = tokenize(normalized);
+  // Ignore empty blue crops
+  if (!collapseCjk(normalized)) {
+    return { matched: false, detectedName: null };
+  }
+
+  const tokens = tokenize(normalized).filter((t) => !isUiPhrase(t));
   const expectedLower = expected.toLowerCase();
 
-  // Exact token match (case-insensitive for latin)
   const exact = tokens.find(
     (t) => t === expected || t.toLowerCase() === expectedLower,
   );
@@ -149,7 +165,6 @@ export function extractDetectedName(
     return { matched: true, detectedName: expected };
   }
 
-  // Soft OCR: spaced characters of expected name as a sequence
   if (expected.length >= 2) {
     const escaped = expected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const loose = new RegExp(escaped.split("").join("\\s*"), "i");
@@ -158,18 +173,18 @@ export function extractDetectedName(
     }
   }
 
-  // Fuzzy / noisy cyan-text OCR (order-preserving + small edit distance)
   if (fuzzyMatchExpected(normalized, expected)) {
     return { matched: true, detectedName: expected };
   }
 
+  // Candidate for error UI: prefer short name-like tokens, never status lines
   const candidate =
     tokens.find(
       (t) =>
         t.length >= 2 &&
-        t.length <= 12 &&
+        t.length <= 8 &&
         /^[\u4e00-\u9fffA-Za-z0-9_·]+$/.test(t) &&
-        !UI_SKIP.test(t) &&
+        !isUiPhrase(t) &&
         t.toLowerCase() !== expectedLower,
     ) ?? null;
 
@@ -177,7 +192,13 @@ export function extractDetectedName(
 }
 
 export function parseCombatPowerScreenshot(
-  text: string,
+  input:
+    | string
+    | {
+        nameText?: string;
+        powerText?: string;
+        text?: string;
+      },
   expectedName: string,
 ): {
   ok: boolean;
@@ -185,8 +206,15 @@ export function parseCombatPowerScreenshot(
   detectedName: string | null;
   error?: string;
 } {
-  const nameResult = extractDetectedName(text, expectedName);
-  const combatPower = extractCombatPower(text);
+  const nameText =
+    typeof input === "string" ? input : (input.nameText ?? input.text ?? "");
+  const powerText =
+    typeof input === "string"
+      ? input
+      : [input.powerText, input.text].filter(Boolean).join("\n");
+
+  const nameResult = extractDetectedName(nameText, expectedName);
+  const combatPower = extractCombatPower(powerText);
 
   if (!nameResult.matched) {
     return {
@@ -195,7 +223,7 @@ export function parseCombatPowerScreenshot(
       detectedName: nameResult.detectedName,
       error: nameResult.detectedName
         ? `截图角色名「${nameResult.detectedName}」与当前账号「${expectedName}」不一致，无法上榜`
-        : `截图中未识别到当前账号名「${expectedName}」，请上传本人角色界面截图`,
+        : `截图蓝色角色名中未识别到「${expectedName}」，请截取本人角色界面（顶部蓝色名字）`,
     };
   }
 

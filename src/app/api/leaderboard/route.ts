@@ -21,17 +21,26 @@ export async function POST(request: Request) {
 
   const body = await request.json().catch(() => null);
   const ocrText = String(body?.ocrText ?? "");
+  const ocrNameText = String(body?.ocrNameText ?? "");
+  const ocrPowerText = String(body?.ocrPowerText ?? "");
   const imageData =
     typeof body?.imageData === "string" ? body.imageData : null;
 
-  if (!ocrText.trim()) {
+  if (!ocrText.trim() && !ocrNameText.trim() && !ocrPowerText.trim()) {
     return NextResponse.json(
       { error: "请先粘贴或上传战力截图并完成识别" },
       { status: 400 },
     );
   }
 
-  const parsed = parseCombatPowerScreenshot(ocrText, member.name);
+  const parsed = parseCombatPowerScreenshot(
+    {
+      nameText: ocrNameText || ocrText,
+      powerText: ocrPowerText || ocrText,
+      text: ocrText,
+    },
+    member.name,
+  );
   if (!parsed.ok || parsed.combatPower == null) {
     return NextResponse.json(
       {
