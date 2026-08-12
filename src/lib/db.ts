@@ -28,26 +28,6 @@ const dbPath = path.join(dataDir, "guild.db");
 
 let db: Database.Database | null = null;
 
-const DEFAULT_MEMBERS: Array<{ name: string; role: MemberRole }> = [
-  { name: "辜饱饱", role: "leader" },
-  { name: "清风", role: "normal" },
-  { name: "毛毛", role: "normal" },
-  { name: "阿胜", role: "officer" },
-  { name: "大风起兮", role: "normal" },
-  { name: "宇宙大魔王", role: "normal" },
-  { name: "Hira", role: "normal" },
-  { name: "马飞", role: "officer" },
-  { name: "匿名的食铁兽战士", role: "normal" },
-  { name: "小鱼", role: "normal" },
-  { name: "夜行者", role: "normal" },
-  { name: "星辰", role: "normal" },
-  { name: "小龙龙", role: "normal" },
-  { name: "丹", role: "normal" },
-  { name: "安格斯牛堡", role: "normal" },
-  { name: "熠珠", role: "normal" },
-  { name: "唐小虎", role: "normal" },
-];
-
 export function ensureDb(): Database.Database {
   if (db) return db;
 
@@ -250,30 +230,16 @@ export function ensureDb(): Database.Database {
 }
 
 function seedIfEmpty(database: Database.Database) {
-  const memberCount = database
-    .prepare("SELECT COUNT(*) as count FROM members")
-    .get() as { count: number };
+  // Members are managed only via admin — do not auto-seed roster names.
 
-  if (memberCount.count === 0) {
-    const insert = database.prepare(
-      "INSERT INTO members (name, role) VALUES (?, ?)",
-    );
-    const insertMany = database.transaction(
-      (rows: Array<{ name: string; role: MemberRole }>) => {
-        for (const row of rows) {
-          insert.run(row.name, row.role);
-        }
-      },
-    );
-    insertMany(DEFAULT_MEMBERS);
-  } else {
-    const insertIgnore = database.prepare(
-      "INSERT OR IGNORE INTO members (name, role) VALUES (?, ?)",
-    );
-    for (const row of DEFAULT_MEMBERS) {
-      insertIgnore.run(row.name, row.role);
-    }
-  }
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS app_meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    )
+  `);
+
+  wipeRosterAndAuctionsOnce(database);
 
   const adminCount = database
     .prepare("SELECT COUNT(*) as count FROM admins")
@@ -286,6 +252,12 @@ function seedIfEmpty(database: Database.Database) {
     database
       .prepare("INSERT INTO admins (username, password_hash) VALUES (?, ?)")
       .run(username, hash);
+  } else if (adminCount.count > 1) {
+    // Keep a single admin account (lowest id).
+    const keep = database
+      .prepare("SELECT id FROM admins ORDER BY id ASC LIMIT 1")
+      .get() as { id: number };
+    database.prepare("DELETE FROM admins WHERE id != ?").run(keep.id);
   }
 
   const settings = database
@@ -353,6 +325,57 @@ function ensureColumn(
   }>;
   if (cols.some((c) => c.name === column)) return;
   database.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+}
+
+/** One-shot: clear all members + auction data; keep admin + bosses. */
+function wipeRosterAndAuctionsOnce(database: Database.Database) {
+  const done = database
+    .prepare(`SELECT value FROM app_meta WHERE key = ?`)
+    .get("wipe_roster_auctions_v1") as { value: string } | undefined;
+  if (done) return;
+
+  const wipe = database.transaction(() => {
+    database.pragma("foreign_keys = OFF");
+    database.exec(`
+      DELETE FROM auction_item_dividends;
+      DELETE FROM auction_item_dividend_lines;
+      DELETE FROM auction_dividend_entries;
+      DELETE FROM auction_bids;
+      DELETE FROM auction_events;
+      DELETE FROM auction_item_sale_history;
+      DELETE FROM auction_items;
+      DELETE FROM auction_sessions;
+      DELETE FROM leaderboard_entries;
+      DELETE FROM boss_votes;
+      DELETE FROM boss_vote_rounds;
+      DELETE FROM boss_presence;
+      DELETE FROM boss_chat;
+      DELETE FROM members;
+    `);
+    database.pragma("foreign_keys = ON");
+
+    // Keep a single admin row if any exist
+    const admins = database
+      .prepare(`SELECT id FROM admins ORDER BY id ASC`)
+      .all() as Array<{ id: number }>;
+    if (admins.length > 1) {
+      database
+        .prepare(`DELETE FROM admins WHERE id != ?`)
+        .run(admins[0].id);
+    }
+
+    database
+      .prepare(
+        `INSERT INTO app_meta (key, value) VALUES (?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      )
+      .run("wipe_roster_auctions_v1", new Date().toISOString());
+  });
+
+  wipe();
+  console.info(
+    "[db] wiped members + auction data (kept admins + bosses)",
+  );
 }
 
 /** Normalize item names so「祝福的生命之石」matches across spaces / case. */
