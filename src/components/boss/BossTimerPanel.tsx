@@ -9,10 +9,24 @@ import {
 } from "@/lib/auction/client";
 import { TimerIcon } from "@/components/Icons";
 import { BossDropsLightbox } from "@/components/boss/BossDropsViewer";
+import {
+  playLaiLaLaoDi,
+  unlockBossSpawnSound,
+} from "@/lib/boss/spawnSound";
 
 const POLL_MS = 900;
 const TICK_MS = 900;
 const POPUP_MS = 2000;
+const URGENT_SECONDS = 60;
+
+const SPARKS = [
+  { sx: "-48px", sy: "-36px", left: "48%", top: "40%", delay: "0ms" },
+  { sx: "52px", sy: "-28px", left: "52%", top: "38%", delay: "40ms" },
+  { sx: "-36px", sy: "44px", left: "46%", top: "48%", delay: "80ms" },
+  { sx: "44px", sy: "40px", left: "54%", top: "50%", delay: "120ms" },
+  { sx: "0px", sy: "-56px", left: "50%", top: "36%", delay: "60ms" },
+  { sx: "-60px", sy: "8px", left: "42%", top: "44%", delay: "100ms" },
+];
 
 function BossCard({
   boss,
@@ -21,6 +35,8 @@ function BossCard({
   onVote,
   busy,
   onOpenDrops,
+  soundOn,
+  onSpawnReady,
 }: {
   boss: Boss;
   member: Extract<SessionUser, { type: "member" }> | null;
@@ -28,15 +44,25 @@ function BossCard({
   onVote: (bossId: number, voteType: "killed" | "not_spawned") => void;
   busy: boolean;
   onOpenDrops: (boss: Boss) => void;
+  soundOn: boolean;
+  onSpawnReady: (boss: Boss) => void;
 }) {
   const [now, setNow] = useState(() => Date.now());
+  const [burstKey, setBurstKey] = useState(0);
+  const prevRemain = useRef<number | null>(null);
+  const armed = useRef(false);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), TICK_MS);
     return () => window.clearInterval(timer);
   }, []);
 
-  // Absolute target times — tick locally so countdown looks continuous
+  // Arm once we have observed a positive countdown (avoid firing on first paint at 0)
+  useEffect(() => {
+    armed.current = false;
+    prevRemain.current = null;
+  }, [boss.nextSpawnAt]);
+
   const remain = boss.nextSpawnAt
     ? Math.max(
         0,
@@ -52,16 +78,63 @@ function BossCard({
       )
     : null;
 
+  useEffect(() => {
+    if (remain == null) {
+      prevRemain.current = null;
+      return;
+    }
+    if (remain > 0) {
+      armed.current = true;
+      prevRemain.current = remain;
+      return;
+    }
+    // remain === 0
+    if (
+      armed.current &&
+      prevRemain.current != null &&
+      prevRemain.current > 0
+    ) {
+      armed.current = false;
+      setBurstKey((k) => k + 1);
+      onSpawnReady(boss);
+      if (soundOn) playLaiLaLaoDi();
+    }
+    prevRemain.current = 0;
+  }, [remain, boss, soundOn, onSpawnReady]);
+
   const round = boss.activeRound;
   const hasDrops = Boolean(boss.dropsImage || boss.dropsNote);
+  const isReady = remain === 0 && Boolean(boss.nextSpawnAt);
+  const isUrgent =
+    remain != null && remain > 0 && remain <= URGENT_SECONDS;
 
   return (
     <article
-      className="relative overflow-hidden rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)] p-4"
-      style={{
-        boxShadow: `inset 0 0 40px ${boss.color}22`,
-      }}
+      className={`boss-card rounded-2xl p-4 ${isReady ? "is-ready" : ""} ${isUrgent ? "is-urgent" : ""}`}
+      style={{ ["--boss-fx" as string]: boss.color }}
     >
+      {burstKey > 0 && (
+        <>
+          <span key={`burst-${burstKey}`} className="boss-burst" />
+          {SPARKS.map((s, i) => (
+            <span
+              key={`spark-${burstKey}-${i}`}
+              className="boss-spark"
+              style={{
+                left: s.left,
+                top: s.top,
+                ["--sx" as string]: s.sx,
+                ["--sy" as string]: s.sy,
+                animationDelay: s.delay,
+              }}
+            />
+          ))}
+          <span key={`banner-${burstKey}`} className="boss-ready-banner">
+            来啦老弟！
+          </span>
+        </>
+      )}
+
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
           <h3 className="text-xl font-bold" style={{ color: boss.color }}>
@@ -107,11 +180,19 @@ function BossCard({
       </div>
 
       <div className="mt-4 text-center">
-        <p className="text-4xl font-semibold tracking-wide tabular-nums">
-          {formatCountdown(remain)}
+        <p
+          className={`boss-countdown text-4xl font-semibold tracking-wide tabular-nums ${isReady ? "text-[var(--accent-gold)]" : ""}`}
+        >
+          {isReady ? "已刷新" : formatCountdown(remain)}
         </p>
         <p className="mt-1 text-xs text-[var(--text-muted)]">
-          {boss.nextSpawnAt ? "距离刷新" : "尚未设置刷新时间"}
+          {!boss.nextSpawnAt
+            ? "尚未设置刷新时间"
+            : isReady
+              ? "来啦老弟 · 可出发"
+              : isUrgent
+                ? "即将刷新！"
+                : "距离刷新"}
         </p>
       </div>
 
@@ -174,9 +255,13 @@ export function BossTimerPanel({
   } | null>(null);
   const [busy, setBusy] = useState(false);
   const [dropsBoss, setDropsBoss] = useState<Boss | null>(null);
+  const [soundOn, setSoundOn] = useState(true);
   const popupTimer = useRef<number | null>(null);
   const lastSystemId = useRef(0);
   const systemBootstrapped = useRef(false);
+  const showPopupRef = useRef<(text: string, tone?: "ok" | "fail" | "info") => void>(
+    () => {},
+  );
 
   function showPopup(text: string, tone: "ok" | "fail" | "info" = "info") {
     if (popupTimer.current) window.clearTimeout(popupTimer.current);
@@ -186,6 +271,21 @@ export function BossTimerPanel({
       popupTimer.current = null;
     }, POPUP_MS);
   }
+  showPopupRef.current = showPopup;
+
+  const handleSpawnReady = useRef((boss: Boss) => {
+    showPopupRef.current(`「${boss.name}」来啦老弟！`, "ok");
+  }).current;
+
+  useEffect(() => {
+    const unlock = () => unlockBossSpawnSound();
+    window.addEventListener("pointerdown", unlock, { once: true });
+    window.addEventListener("keydown", unlock, { once: true });
+    return () => {
+      window.removeEventListener("pointerdown", unlock);
+      window.removeEventListener("keydown", unlock);
+    };
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -325,6 +425,17 @@ export function BossTimerPanel({
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              className="btn-ghost text-sm"
+              onClick={() => {
+                unlockBossSpawnSound();
+                setSoundOn((v) => !v);
+              }}
+              title={soundOn ? "关闭刷新音效" : "开启刷新音效"}
+            >
+              {soundOn ? "音效开" : "音效关"}
+            </button>
             {!compact && (
               <button
                 type="button"
@@ -345,9 +456,8 @@ export function BossTimerPanel({
         </header>
 
         <p className="relative z-10 mb-3 text-xs text-[var(--text-muted)]">
-          倒计时由管理员设置的击杀/刷新时间与 BOSS 间隔生成；成员也可投票「已击杀
-          / 未刷新」（{voteNeed} 人在 {room?.voteWindowSeconds ?? 10}{" "}
-          秒内同意后生效）。点击掉落图可放大查看。
+          倒计时归零时播放「来啦老弟」并闪光特效；成员也可投票「已击杀 / 未刷新」（
+          {voteNeed} 人在 {room?.voteWindowSeconds ?? 10} 秒内同意后生效）。
         </p>
 
         {error && (
@@ -366,6 +476,8 @@ export function BossTimerPanel({
               onVote={vote}
               busy={busy}
               onOpenDrops={setDropsBoss}
+              soundOn={soundOn}
+              onSpawnReady={handleSpawnReady}
             />
           ))}
           {bosses.length === 0 && (
