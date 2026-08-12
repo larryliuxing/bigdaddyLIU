@@ -150,7 +150,7 @@ export function AuctionManagePanel({
             <p className="text-sm text-[var(--text-muted)]">拍卖管理</p>
             <h1 className="mt-1 text-2xl font-bold">设置与拍品</h1>
             <p className="mt-1 text-sm text-[var(--text-muted)]">
-              管理员：{adminName}
+              管理员：{adminName} · 仅管理员可在此后台管理拍卖物品
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
