@@ -11,5 +11,5 @@ export default async function AuctionPage() {
   if (!member && !admin) {
     redirect("/");
   }
-  return <AuctionRoom member={member} isAdmin={Boolean(admin)} />;
+  return <AuctionRoom member={member} />;
 }

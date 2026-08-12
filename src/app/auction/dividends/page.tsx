@@ -1,7 +1,6 @@
 import { redirect } from "next/navigation";
 import { DividendPanel } from "@/components/auction/DividendPanel";
 import { getAdminSession, getMemberSession } from "@/lib/auth";
-import { listMembers } from "@/lib/db";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,7 +11,5 @@ export default async function AuctionDividendsPage() {
   if (!member && !admin) {
     redirect("/");
   }
-  return (
-    <DividendPanel members={listMembers()} isAdmin={Boolean(admin)} />
-  );
+  return <DividendPanel />;
 }

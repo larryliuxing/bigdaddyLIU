@@ -49,7 +49,7 @@ export function IdentitySelect({ members }: { members: Member[] }) {
           </div>
           <h1 className="mt-4 text-3xl font-bold tracking-wide">选择身份</h1>
           <p className="mt-3 max-w-[20rem] text-sm leading-6 text-[var(--text-muted)]">
-            首次选择需设置至少 6 位密码；已设密码的身份需验证密码后方可使用。右上角齿轮为管理员后台入口。
+            首次选择需设置至少 6 位密码；已设密码的身份需验证密码后方可使用。成员登录后也可在首页齿轮进入管理员后台。
           </p>
         </header>
 

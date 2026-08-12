@@ -115,7 +115,8 @@ export function AdminPanel({
             <p className="text-sm text-[var(--text-muted)]">后台管理</p>
             <h1 className="mt-1 text-2xl font-bold">成员账户</h1>
             <p className="mt-1 text-sm text-[var(--text-muted)]">
-              管理员：{adminName} · 新增/删除账户、重置密码与拍卖物品仅限此处
+              管理员：{adminName} · 成员账户、拍卖物品、BOSS
+              均仅可在此后台管理
             </p>
           </div>
           <div className="flex gap-2">
@@ -129,7 +130,7 @@ export function AdminPanel({
             <button
               type="button"
               className="btn-ghost text-sm"
-              onClick={() => router.push("/boss")}
+              onClick={() => router.push("/admin/boss")}
             >
               BOSS 设置
             </button>

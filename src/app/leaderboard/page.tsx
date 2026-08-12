@@ -11,5 +11,5 @@ export default async function LeaderboardPage() {
   if (!member && !admin) {
     redirect("/");
   }
-  return <LeaderboardPanel member={member} isAdmin={Boolean(admin)} />;
+  return <LeaderboardPanel member={member} />;
 }

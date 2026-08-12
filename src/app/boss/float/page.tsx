@@ -11,7 +11,5 @@ export default async function BossFloatPage() {
   if (!member && !admin) {
     redirect("/");
   }
-  return (
-    <BossTimerPanel member={member} isAdmin={Boolean(admin)} compact />
-  );
+  return <BossTimerPanel member={member} compact />;
 }

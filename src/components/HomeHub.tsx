@@ -6,9 +6,11 @@ import type { SessionUser } from "@/lib/types";
 import {
   ChevronRightIcon,
   GavelIcon,
+  SettingsIcon,
   TimerIcon,
   TrophyIcon,
 } from "./Icons";
+import { AdminLoginModal } from "./AdminLoginModal";
 import { logoutAndRedirect } from "@/lib/nav";
 
 const FEATURES = [
@@ -37,6 +39,7 @@ const FEATURES = [
 
 export function HomeHub({ user }: { user: Extract<SessionUser, { type: "member" }> }) {
   const router = useRouter();
+  const [showAdmin, setShowAdmin] = useState(false);
   const [toast, setToast] = useState("");
 
   async function logout() {
@@ -71,6 +74,15 @@ export function HomeHub({ user }: { user: Extract<SessionUser, { type: "member" 
             <h1 className="mt-1 text-2xl font-bold tracking-wide">{user.name}</h1>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="rounded-full border border-[var(--border-soft)] bg-[rgba(20,24,36,0.8)] p-2.5 text-[var(--text-muted)] transition hover:text-[var(--text-primary)]"
+              aria-label="管理员入口"
+              title="管理员后台"
+              onClick={() => setShowAdmin(true)}
+            >
+              <SettingsIcon />
+            </button>
             <button type="button" className="btn-ghost text-sm" onClick={logout}>
               退出
             </button>
@@ -105,6 +117,16 @@ export function HomeHub({ user }: { user: Extract<SessionUser, { type: "member" 
           <div className="fixed bottom-8 left-1/2 z-50 -translate-x-1/2 rounded-full border border-[var(--border-soft)] bg-[#1a2030] px-4 py-2 text-sm text-[var(--text-primary)] shadow-lg">
             {toast}
           </div>
+        )}
+
+        {showAdmin && (
+          <AdminLoginModal
+            onClose={() => setShowAdmin(false)}
+            onSuccess={() => {
+              setShowAdmin(false);
+              window.location.assign("/admin");
+            }}
+          />
         )}
       </div>
     </div>

@@ -4,8 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { Boss, BossRoomState, SessionUser } from "@/lib/types";
 import { formatCountdown } from "@/lib/auction/client";
-import { SettingsIcon, TimerIcon } from "@/components/Icons";
-import { hubPath } from "@/lib/nav";
+import { TimerIcon } from "@/components/Icons";
 
 function formatTime(iso: string | null) {
   if (!iso) return "-";
@@ -137,31 +136,20 @@ function BossCard({
   );
 }
 
+/** Member-facing BOSS timer. Admin CRUD lives under /admin/boss. */
 export function BossTimerPanel({
   member,
-  isAdmin,
   compact = false,
 }: {
   member: Extract<SessionUser, { type: "member" }> | null;
-  isAdmin: boolean;
   compact?: boolean;
 }) {
   const router = useRouter();
   const [room, setRoom] = useState<BossRoomState | null>(null);
-  const [allBosses, setAllBosses] = useState<Boss[]>([]);
-  const [showSettings, setShowSettings] = useState(false);
   const [chatInput, setChatInput] = useState("");
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
   const [busy, setBusy] = useState(false);
-
-  const [form, setForm] = useState({
-    name: "",
-    color: "#c084fc",
-    spawnRate: 50,
-    intervalHours: 6,
-    dropsNote: "",
-  });
 
   useEffect(() => {
     let alive = true;
@@ -170,7 +158,6 @@ export function BossTimerPanel({
       const data = await res.json();
       if (!alive || !res.ok) return;
       setRoom(data.room);
-      if (data.allBosses) setAllBosses(data.allBosses);
     };
     const timeout = window.setTimeout(() => {
       void tick();
@@ -230,60 +217,8 @@ export function BossTimerPanel({
     setRoom(data.room);
   }
 
-  async function createBoss(e: React.FormEvent) {
-    e.preventDefault();
-    const res = await fetch("/api/boss", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(form),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      setError(data.error || "添加失败");
-      return;
-    }
-    setRoom(data.room);
-    setAllBosses(data.allBosses || []);
-    setForm({
-      name: "",
-      color: "#c084fc",
-      spawnRate: 50,
-      intervalHours: 6,
-      dropsNote: "",
-    });
-    setToast("BOSS 已添加");
-  }
-
-  async function patchBoss(id: number, patch: Record<string, unknown>) {
-    const res = await fetch("/api/boss", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id, ...patch }),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      setError(data.error || "更新失败");
-      return;
-    }
-    setRoom(data.room);
-    setAllBosses(data.allBosses || []);
-  }
-
-  async function removeBoss(id: number) {
-    if (!window.confirm("确认删除该 BOSS？")) return;
-    const res = await fetch(`/api/boss?id=${id}`, { method: "DELETE" });
-    const data = await res.json();
-    if (!res.ok) {
-      setError(data.error || "删除失败");
-      return;
-    }
-    setRoom(data.room);
-    setAllBosses(data.allBosses || []);
-  }
-
   const bosses = useMemo(() => room?.bosses ?? [], [room?.bosses]);
   const voteNeed = room?.voteNeed ?? 3;
-  const manageList = allBosses.length ? allBosses : bosses;
 
   return (
     <div className="app-shell">
@@ -306,7 +241,7 @@ export function BossTimerPanel({
                 在线 {room?.onlineCount ?? 0} 人
               </span>
               <span className="rounded-full bg-[#1f3d2d] px-2.5 py-1 text-emerald-300">
-                已连接 · {member?.name ?? (isAdmin ? "管理员" : "游客")}
+                已连接 · {member?.name ?? "游客"}
               </span>
             </div>
           </div>
@@ -323,7 +258,7 @@ export function BossTimerPanel({
             <button
               type="button"
               className="btn-ghost text-sm"
-              onClick={() => router.push(hubPath(Boolean(member), isAdmin))}
+              onClick={() => router.push(member ? "/home" : "/admin")}
             >
               返回导航
             </button>
@@ -355,126 +290,13 @@ export function BossTimerPanel({
           ))}
           {bosses.length === 0 && (
             <div className="rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)] px-4 py-10 text-center text-sm text-[var(--text-muted)]">
-              暂无 BOSS，请管理员登录后台后在此页设置中添加
+              暂无 BOSS，请管理员在后台添加
             </div>
           )}
         </section>
 
-        {showSettings && isAdmin && (
-          <section className="relative z-20 mb-24 rounded-2xl border border-[var(--border-soft)] bg-[#121826] p-4">
-            <h2 className="text-sm font-medium text-[var(--text-muted)]">
-              BOSS 管理
-            </h2>
-            <form
-              onSubmit={createBoss}
-              className="mt-3 grid gap-2 sm:grid-cols-2"
-            >
-              <input
-                className="field"
-                placeholder="BOSS 名称"
-                value={form.name}
-                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-              />
-              <input
-                className="field"
-                type="color"
-                value={form.color}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, color: e.target.value }))
-                }
-              />
-              <input
-                className="field"
-                type="number"
-                min={1}
-                max={100}
-                placeholder="刷新概率 %"
-                value={form.spawnRate}
-                onChange={(e) =>
-                  setForm((f) => ({
-                    ...f,
-                    spawnRate: Number(e.target.value),
-                  }))
-                }
-              />
-              <input
-                className="field"
-                type="number"
-                min={0.5}
-                step={0.5}
-                placeholder="间隔小时"
-                value={form.intervalHours}
-                onChange={(e) =>
-                  setForm((f) => ({
-                    ...f,
-                    intervalHours: Number(e.target.value),
-                  }))
-                }
-              />
-              <input
-                className="field sm:col-span-2"
-                placeholder="掉落说明"
-                value={form.dropsNote}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, dropsNote: e.target.value }))
-                }
-              />
-              <button type="submit" className="btn-primary sm:col-span-2">
-                添加 BOSS
-              </button>
-            </form>
-
-            <ul className="mt-4 divide-y divide-[var(--border-soft)]">
-              {manageList.map((boss) => (
-                <li
-                  key={boss.id}
-                  className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between"
-                >
-                  <div>
-                    <p className="font-medium" style={{ color: boss.color }}>
-                      {boss.name}
-                    </p>
-                    <p className="text-xs text-[var(--text-muted)]">
-                      {boss.spawnRate}% / {boss.intervalHours}h ·{" "}
-                      {boss.enabled ? "启用" : "停用"}
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      className="btn-ghost text-xs"
-                      onClick={() =>
-                        patchBoss(boss.id, { enabled: !boss.enabled })
-                      }
-                    >
-                      {boss.enabled ? "停用" : "启用"}
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-ghost text-xs text-[var(--accent-crimson)]"
-                      onClick={() => removeBoss(boss.id)}
-                    >
-                      删除
-                    </button>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </section>
-        )}
-
         <div className="fixed bottom-0 left-0 right-0 z-30 border-t border-[var(--border-soft)] bg-[rgba(10,12,20,0.92)] px-3 py-3 backdrop-blur">
           <div className="mx-auto flex w-full max-w-[960px] items-center gap-2">
-            {isAdmin && (
-              <button
-                type="button"
-                className="rounded-full border border-[var(--border-soft)] p-2.5 text-[var(--text-muted)]"
-                title="BOSS 管理"
-                onClick={() => setShowSettings((v) => !v)}
-              >
-                <SettingsIcon />
-              </button>
-            )}
             <form onSubmit={sendChat} className="flex min-w-0 flex-1 gap-2">
               <input
                 className="field !py-2.5"

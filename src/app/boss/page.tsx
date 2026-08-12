@@ -11,5 +11,5 @@ export default async function BossPage() {
   if (!member && !admin) {
     redirect("/");
   }
-  return <BossTimerPanel member={member} isAdmin={Boolean(admin)} />;
+  return <BossTimerPanel member={member} />;
 }
