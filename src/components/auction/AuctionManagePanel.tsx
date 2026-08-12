@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { AuctionItem, AuctionRoomState, DividendEntry, Member } from "@/lib/types";
-import { formatCountdown, todayAtTime } from "@/lib/auction/client";
+import { formatCountdown, todayAtTime, beijingHmFromIso, formatBeijingDateTime } from "@/lib/auction/client";
 import { qualityMeta } from "@/lib/auction/client";
 import { AddAuctionItemForm } from "./AddAuctionItemForm";
 
@@ -18,6 +18,7 @@ export function AuctionManagePanel({
   const [room, setRoom] = useState<AuctionRoomState | null>(null);
   const [startTime, setStartTime] = useState("15:00");
   const [duration, setDuration] = useState(30);
+  const scheduleHydratedRef = useRef(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -26,19 +27,26 @@ export function AuctionManagePanel({
   const [tempMemberId, setTempMemberId] = useState("");
   const [tempAmount, setTempAmount] = useState(0);
 
+  function applyScheduleFields(nextRoom: AuctionRoomState | null | undefined) {
+    if (!nextRoom) return;
+    const scheduled = nextRoom.session?.scheduledStart;
+    if (scheduled) {
+      setStartTime(beijingHmFromIso(scheduled));
+    } else if (nextRoom.settings?.defaultStartTime) {
+      setStartTime(nextRoom.settings.defaultStartTime);
+    }
+    if (nextRoom.session?.durationMinutes) {
+      setDuration(nextRoom.session.durationMinutes);
+    } else if (nextRoom.settings?.durationMinutes) {
+      setDuration(nextRoom.settings.durationMinutes);
+    }
+  }
+
   const refresh = useCallback(async () => {
     const res = await fetch("/api/auction/session");
     const data = await res.json();
     if (res.ok) {
       setRoom(data.room);
-      if (data.room?.settings?.defaultStartTime) {
-        setStartTime(data.room.settings.defaultStartTime);
-      }
-      if (data.room?.session?.durationMinutes) {
-        setDuration(data.room.session.durationMinutes);
-      } else if (data.room?.settings?.durationMinutes) {
-        setDuration(data.room.settings.durationMinutes);
-      }
     }
   }, []);
 
@@ -49,13 +57,10 @@ export function AuctionManagePanel({
       const data = await res.json();
       if (!alive || !res.ok) return;
       setRoom(data.room);
-      if (data.room?.settings?.defaultStartTime) {
-        setStartTime(data.room.settings.defaultStartTime);
-      }
-      if (data.room?.session?.durationMinutes) {
-        setDuration(data.room.session.durationMinutes);
-      } else if (data.room?.settings?.durationMinutes) {
-        setDuration(data.room.settings.durationMinutes);
+      // Only hydrate the time inputs once so polling won't snap edits back to 15:00
+      if (!scheduleHydratedRef.current) {
+        applyScheduleFields(data.room);
+        scheduleHydratedRef.current = true;
       }
     };
     const timeout = window.setTimeout(() => {
@@ -93,7 +98,10 @@ export function AuctionManagePanel({
         return;
       }
       setRoom(data.room);
-      setMessage(`已设置今日 ${startTime} 开始，时长 ${duration} 分钟`);
+      applyScheduleFields(data.room);
+      setMessage(
+        `已设置今日（北京时间）${startTime} 开始，时长 ${duration} 分钟`,
+      );
     } catch {
       setError("网络错误");
     } finally {
@@ -263,11 +271,13 @@ export function AuctionManagePanel({
 
         <section className="mb-5 rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)] p-4">
           <h2 className="text-sm font-medium text-[var(--text-muted)]">
-            场次时间（默认下午 15:00，时长 30 分钟）
+            场次时间（北京时间，默认 15:00，时长 30 分钟）
           </h2>
           <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-end">
             <label className="block flex-1 space-y-1.5">
-              <span className="text-xs text-[var(--text-muted)]">开始时间</span>
+              <span className="text-xs text-[var(--text-muted)]">
+                开始时间（北京时间）
+              </span>
               <input
                 className="field"
                 type="time"
@@ -346,7 +356,7 @@ export function AuctionManagePanel({
             )}
             {session?.status === "scheduled" && session.scheduledStart && (
               <span className="ml-3">
-                预约 {new Date(session.scheduledStart).toLocaleString()}
+                预约 {formatBeijingDateTime(session.scheduledStart)}（北京时间）
               </span>
             )}
           </div>

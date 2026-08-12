@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { AuctionRoomState, SessionUser } from "@/lib/types";
-import { formatCountdown, qualityMeta } from "@/lib/auction/client";
+import { formatCountdown, qualityMeta, formatBeijingDateTime } from "@/lib/auction/client";
 import { GavelIcon } from "@/components/Icons";
 
 function HourglassIcon() {
@@ -208,7 +208,7 @@ export function AuctionRoom({
               <p className="mt-2 max-w-sm text-sm text-[var(--text-muted)]">
                 请等待管理员开始拍卖，或查看历史记录
                 {session?.status === "scheduled" && session.scheduledStart
-                  ? `（预约 ${new Date(session.scheduledStart).toLocaleString()}）`
+                  ? `（预约 ${formatBeijingDateTime(session.scheduledStart)} 北京时间）`
                   : ""}
               </p>
             </div>
