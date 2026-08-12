@@ -108,14 +108,16 @@ export function AddAuctionItemForm({
           return [...set];
         });
         const extra = (data.unrecognized as string[]) || [];
+        const recognized = (ocr.names || []).slice(0, 10).join("、");
         setOcrStatus(
           matched.length
             ? `已匹配 ${matched.length} 名盟成员加入分红` +
+                (recognized ? `；识别名称：${recognized}` : "") +
                 (extra.length
-                  ? `；截图中另有未入库：${extra.slice(0, 5).join("、")}`
+                  ? `；未入库：${extra.slice(0, 8).join("、")}`
                   : "")
-            : extra.length
-              ? `未匹配到盟成员。识别到：${extra.slice(0, 8).join("、")}。请手动点选补全。`
+            : recognized
+              ? `未匹配到盟成员。识别到：${recognized}。请手动点选补全。`
               : "未识别到名称，请换更清晰的参与者截图或手动点选。",
         );
         setTab("members");

@@ -41,23 +41,40 @@ function loadImage(source: File | Blob | string): Promise<HTMLImageElement> {
 
 type RatioRect = { x: number; y: number; w: number; h: number };
 
-/** Candidate crops for the name column inside a centered participants modal. */
+/**
+ * Crops for already-cropped modal shots AND wider game screenshots.
+ * Name column sits under「名称」, left of「品级」.
+ */
 const NAME_COLUMN_CROPS: RatioRect[] = [
-  { x: 0.18, y: 0.26, w: 0.2, h: 0.55 },
+  // Tight modal paste (most common from clipboard)
+  { x: 0.04, y: 0.2, w: 0.36, h: 0.68 },
+  { x: 0.02, y: 0.18, w: 0.4, h: 0.7 },
+  { x: 0.06, y: 0.22, w: 0.32, h: 0.64 },
+  // Slightly inset (headers / padding)
+  { x: 0.08, y: 0.24, w: 0.3, h: 0.6 },
+  // Older wider-screen guesses
   { x: 0.16, y: 0.24, w: 0.24, h: 0.58 },
-  { x: 0.2, y: 0.28, w: 0.17, h: 0.52 },
-  { x: 0.14, y: 0.22, w: 0.28, h: 0.6 },
+  { x: 0.18, y: 0.26, w: 0.2, h: 0.55 },
 ];
+
+/** Whole table body — used to parse「名字 品级 战盟」rows. */
+const TABLE_BODY_CROPS: RatioRect[] = [
+  { x: 0.02, y: 0.18, w: 0.96, h: 0.72 },
+  { x: 0.04, y: 0.2, w: 0.92, h: 0.68 },
+  { x: 0.1, y: 0.22, w: 0.8, h: 0.62 },
+];
+
+const GRADE_WORDS =
+  /普通|守护|洪门|精英|领袖|成员|品级|战盟|名称|参与者|贡献度|获得|能力值/;
 
 function isNameInk(r: number, g: number, b: number) {
   const max = Math.max(r, g, b);
   const min = Math.min(r, g, b);
   const sat = max - min;
   const brightness = (r + g + b) / 3;
-  // White / light-gray name glyphs on dark rows
-  if (brightness >= 165 && sat <= 45) return true;
-  // Slightly dimmer row text
-  if (brightness >= 140 && sat <= 30) return true;
+  // Light gray / white glyphs on dark rows (game UI)
+  if (brightness >= 150 && sat <= 55) return true;
+  if (brightness >= 125 && sat <= 35) return true;
   return false;
 }
 
@@ -89,17 +106,43 @@ function cropRatio(
   return canvas;
 }
 
-/** Dark panel → white plate with black glyphs for Tesseract. */
+/** Soft contrast plate: keep stroke detail better than hard binary. */
 function enhanceNameColumn(src: HTMLCanvasElement): HTMLCanvasElement {
   const sctx = src.getContext("2d", { willReadFrequently: true });
   if (!sctx) throw new Error("无法创建画布");
   const image = sctx.getImageData(0, 0, src.width, src.height);
   const { data } = image;
+
+  // First pass: collect brightness of likely ink for adaptive cut
+  let inkSum = 0;
+  let inkCount = 0;
   for (let i = 0; i < data.length; i += 4) {
     if (isNameInk(data[i], data[i + 1], data[i + 2])) {
-      data[i] = 15;
-      data[i + 1] = 15;
-      data[i + 2] = 15;
+      inkSum += (data[i] + data[i + 1] + data[i + 2]) / 3;
+      inkCount++;
+    }
+  }
+  const inkMean = inkCount > 0 ? inkSum / inkCount : 170;
+  const cut = Math.max(110, Math.min(175, inkMean - 25));
+
+  for (let i = 0; i < data.length; i += 4) {
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+    const brightness = (r + g + b) / 3;
+    const sat = Math.max(r, g, b) - Math.min(r, g, b);
+    // Reject saturated UI chrome (teal guild icons etc.)
+    const isInk =
+      sat <= 60 &&
+      brightness >= cut &&
+      (isNameInk(r, g, b) || brightness >= cut + 15);
+    // Map to soft gray/black instead of pure binary to keep thin strokes
+    if (isInk) {
+      const t = Math.max(0, Math.min(1, (brightness - cut) / 80));
+      const v = Math.round(40 - t * 30);
+      data[i] = v;
+      data[i + 1] = v;
+      data[i + 2] = v;
     } else {
       data[i] = 255;
       data[i + 1] = 255;
@@ -107,8 +150,9 @@ function enhanceNameColumn(src: HTMLCanvasElement): HTMLCanvasElement {
     }
     data[i + 3] = 255;
   }
+
   const out = document.createElement("canvas");
-  const pad = 12;
+  const pad = 16;
   out.width = src.width + pad * 2;
   out.height = src.height + pad * 2;
   const dctx = out.getContext("2d");
@@ -126,51 +170,85 @@ function enhanceNameColumn(src: HTMLCanvasElement): HTMLCanvasElement {
 function cleanNameToken(raw: string) {
   return raw
     .replace(/\s+/g, "")
-    .replace(/[|｜\[\]【】()（）<>《》·•.,，。:：;；'"“”‘’\-_/\\=+0-9]/g, "")
-    .replace(/^(名称|品级|战盟|贡献度|获得|普通|参与者)+/, "")
-    .replace(/(名称|品级|战盟|贡献度|获得|普通)+$/, "");
+    .replace(/[|｜\[\]【】()（）<>《》·•.,，。:：;；'"“”‘’\-_/\\=+~`!@#$%^&*]/g, "")
+    .replace(/[0-9A-Za-z]/g, "")
+    .replace(GRADE_WORDS, "");
 }
 
-function extractNameCandidates(text: string) {
-  const lines = text
-    .split(/\n+/)
-    .map((l) => cleanNameToken(l))
-    .filter(Boolean);
+function isPlausibleName(name: string) {
+  if (name.length < 2 || name.length > 12) return false;
+  if (!/^[\u4e00-\u9fff]+$/.test(name)) return false;
+  if (GRADE_WORDS.test(name)) return false;
+  // Reject obvious OCR junk fragments that are all the same char etc.
+  if (/^(.)\1+$/.test(name)) return false;
+  // Common guild / header leftovers
+  if (/^(千帆舞|战盟|名称|品级|参与者)$/.test(name)) return false;
+  return true;
+}
 
+/** Parse a table row like「黄岳民之父 普通 千帆舞」→ name. */
+export function parseParticipantRowName(line: string): string | null {
+  const raw = line.replace(/[|｜]/g, " ").replace(/\s+/g, " ").trim();
+  if (!raw) return null;
+
+  // Cut before known grade labels when present
+  const gradeSplit = raw.split(
+    /\s*(?:普通|守护|洪门|精英|领袖)\s*/,
+  );
+  const head = (gradeSplit[0] || "").trim();
+  const fromHead = cleanNameToken(head);
+  if (isPlausibleName(fromHead)) return fromHead;
+
+  // Fallback: first contiguous CJK run on the line
+  const runs = cleanNameToken(raw).match(/[\u4e00-\u9fff]{2,12}/g) || [];
+  for (const run of runs) {
+    if (isPlausibleName(run)) return run;
+  }
+  return null;
+}
+
+function extractNameCandidates(text: string): string[] {
   const names: string[] = [];
-  const skip =
-    /^(名称|品级|战盟|贡献度|获得|普通|参与者|洪门|守护|能力值)$/;
+  const push = (n: string | null) => {
+    if (!n || !isPlausibleName(n)) return;
+    if (!names.includes(n)) names.push(n);
+  };
 
-  for (const line of lines) {
-    if (skip.test(line)) continue;
-    if (line.length < 2 || line.length > 12) continue;
-    if (!/[\u4e00-\u9fff]/.test(line)) continue;
-    if (!names.includes(line)) names.push(line);
-  }
-
-  // Also pull contiguous CJK runs from messy lines
   for (const line of text.split(/\n+/)) {
-    const runs = cleanNameToken(line).match(/[\u4e00-\u9fff]{2,12}/g);
-    if (!runs) continue;
-    for (const run of runs) {
-      if (skip.test(run)) continue;
-      if (!names.includes(run)) names.push(run);
-    }
+    push(parseParticipantRowName(line));
   }
+
+  // Also accept cleaned whole-line tokens (name-column-only OCR)
+  for (const line of text.split(/\n+/)) {
+    const cleaned = cleanNameToken(line);
+    push(cleaned);
+    const runs = cleaned.match(/[\u4e00-\u9fff]{2,12}/g) || [];
+    for (const run of runs) push(run);
+  }
+
   return names;
 }
 
-async function recognizeColumn(worker: Worker, dataUrl: string) {
+function scoreNames(names: string[]) {
+  if (!names.length) return 0;
+  const avgLen =
+    names.reduce((s, n) => s + n.length, 0) / Math.max(1, names.length);
+  // Prefer several mid-length Chinese names (typical character names 2–8)
+  return names.length * 10 + avgLen * 3;
+}
+
+async function recognizePasses(worker: Worker, dataUrl: string) {
   const chunks: string[] = [];
   for (const psm of [
     PSM.SINGLE_COLUMN,
     PSM.SPARSE_TEXT,
     PSM.SINGLE_BLOCK,
+    PSM.AUTO,
   ] as const) {
     try {
       await worker.setParameters({
         tessedit_pageseg_mode: psm,
-        preserve_interword_spaces: "0",
+        preserve_interword_spaces: "1",
       });
       const result = await worker.recognize(dataUrl);
       const text = (result.data.text || "").trim();
@@ -182,6 +260,37 @@ async function recognizeColumn(worker: Worker, dataUrl: string) {
   return chunks;
 }
 
+type Attempt = {
+  names: string[];
+  text: string;
+  preview: string;
+  score: number;
+};
+
+async function runCrops(
+  img: HTMLImageElement,
+  worker: Worker,
+  crops: RatioRect[],
+  scale: number,
+): Promise<Attempt[]> {
+  const attempts: Attempt[] = [];
+  for (const rect of crops) {
+    const crop = cropRatio(img, rect, scale);
+    const enhanced = enhanceNameColumn(crop);
+    const dataUrl = enhanced.toDataURL("image/png");
+    const texts = await recognizePasses(worker, dataUrl);
+    const mergedText = texts.join("\n");
+    const names = extractNameCandidates(mergedText);
+    attempts.push({
+      names,
+      text: mergedText,
+      preview: dataUrl,
+      score: scoreNames(names),
+    });
+  }
+  return attempts;
+}
+
 /**
  * Recognize participant names from the left「名称」column of a modal screenshot.
  */
@@ -191,29 +300,37 @@ export async function recognizeParticipantNames(
   const img = await loadImage(source);
   const worker = await getWorker();
 
-  const allText: string[] = [];
-  const allNames: string[] = [];
-  let previewDataUrl: string | null = null;
+  const attempts = [
+    ...(await runCrops(img, worker, NAME_COLUMN_CROPS, 3)),
+    ...(await runCrops(img, worker, TABLE_BODY_CROPS, 2.4)),
+  ];
 
-  for (const rect of NAME_COLUMN_CROPS) {
-    const crop = cropRatio(img, rect, 2.6);
-    const enhanced = enhanceNameColumn(crop);
-    const dataUrl = enhanced.toDataURL("image/png");
-    if (!previewDataUrl) previewDataUrl = dataUrl;
-    const texts = await recognizeColumn(worker, dataUrl);
-    for (const text of texts) {
-      allText.push(text);
-      for (const name of extractNameCandidates(text)) {
-        if (!allNames.includes(name)) allNames.push(name);
-      }
+  attempts.sort((a, b) => b.score - a.score);
+  const best = attempts[0];
+
+  // Consensus: names that appear in multiple crops/passes are far more reliable.
+  const counts = new Map<string, number>();
+  for (const attempt of attempts) {
+    for (const n of attempt.names) {
+      counts.set(n, (counts.get(n) ?? 0) + 1);
     }
-    // Early exit when we already have a healthy set of name-like tokens
-    if (allNames.length >= 4) break;
   }
 
+  const consensus = [...counts.entries()]
+    .filter(([name, count]) => count >= 2 || name.length >= 3)
+    .sort((a, b) => b[1] - a[1] || b[0].length - a[0].length)
+    .map(([name]) => name);
+
+  const ordered =
+    consensus.length > 0
+      ? consensus
+      : best?.names?.length
+        ? best.names
+        : [];
+
   return {
-    text: allText.join("\n"),
-    names: allNames,
-    previewDataUrl,
+    text: best?.text || "",
+    names: ordered,
+    previewDataUrl: best?.preview || null,
   };
 }

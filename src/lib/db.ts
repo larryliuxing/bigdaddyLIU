@@ -1766,13 +1766,34 @@ export function matchNamesFromText(text: string): {
   matched: Member[];
   unrecognized: string[];
 } {
+  return matchParticipantNames(
+    text
+      .split(/[\s,，、|/\\;；\n\r\t:：]+/)
+      .map((t) => t.trim())
+      .filter(Boolean),
+    text,
+  );
+}
+
+/**
+ * Match OCR participant name candidates against the guild roster.
+ * `names` are structured OCR results (preferred for「未入库」display);
+ * `rawText` is optional extra OCR blob used only to find more roster hits.
+ */
+export function matchParticipantNames(
+  names: string[],
+  rawText = "",
+): {
+  matched: Member[];
+  unrecognized: string[];
+} {
   const members = listMembers();
-  const compactFull = text.replace(/\s+/g, "");
+  const compactFull = `${names.join("")}${rawText}`.replace(/\s+/g, "");
   const compactLower = compactFull.toLowerCase();
 
   const matchedIds = new Set<number>();
 
-  // Primary: each guild member name appearing inside OCR text (most reliable)
+  // Primary: each guild member name appearing inside OCR text / names
   for (const member of members) {
     const name = member.name.replace(/\s+/g, "");
     if (name.length < 2) continue;
@@ -1784,30 +1805,32 @@ export function matchNamesFromText(text: string): {
     }
   }
 
-  // Secondary: OCR tokens / lines compared against roster
-  const tokens = text
-    .split(/[\s,，、|/\\;；\n\r\t:：]+/)
-    .map((t) => t.replace(/\s+/g, "").trim())
-    .filter((t) => t.length >= 2 && t.length <= 12);
-
   const skip =
-    /贡献|获得|品级|战盟|名称|普通|守护|参与|战斗力|能力值|力量|体质|灵巧|敏捷|智力|智慧|洪门/;
+    /贡献|获得|品级|战盟|名称|普通|守护|参与|战斗力|能力值|力量|体质|灵巧|敏捷|智力|智慧|洪门|千帆/;
+
+  const cleanedNames = names
+    .map((n) =>
+      n
+        .replace(/\s+/g, "")
+        .replace(/[0-9A-Za-z|｜]/g, "")
+        .trim(),
+    )
+    .filter((n) => n.length >= 2 && n.length <= 12)
+    .filter((n) => /^[\u4e00-\u9fff]+$/.test(n))
+    .filter((n) => !skip.test(n));
 
   const unrecognized: string[] = [];
 
-  for (const token of tokens) {
-    if (/^[0-9.,%]+$/.test(token)) continue;
-    if (skip.test(token)) continue;
-
+  for (const token of cleanedNames) {
     let hit = false;
     for (const member of members) {
       const name = member.name.replace(/\s+/g, "");
       if (name.length < 2) continue;
       if (
         token === name ||
-        token.toLowerCase() === name.toLowerCase() ||
         (token.length >= 2 && name.includes(token)) ||
-        (name.length >= 2 && token.includes(name))
+        (name.length >= 2 && token.includes(name)) ||
+        isNearName(token, name)
       ) {
         matchedIds.add(member.id);
         hit = true;
@@ -1815,13 +1838,7 @@ export function matchNamesFromText(text: string): {
       }
     }
     if (hit) continue;
-
-    if (
-      /^[\u4e00-\u9fffA-Za-z0-9_·]+$/.test(token) &&
-      /[\u4e00-\u9fff]/.test(token)
-    ) {
-      if (!unrecognized.includes(token)) unrecognized.push(token);
-    }
+    if (!unrecognized.includes(token)) unrecognized.push(token);
   }
 
   return {
@@ -1830,10 +1847,34 @@ export function matchNamesFromText(text: string): {
       return !members.some((m) => {
         if (!matchedIds.has(m.id)) return false;
         const name = m.name.replace(/\s+/g, "");
-        return name.includes(token) || token.includes(name);
+        return (
+          name.includes(token) ||
+          token.includes(name) ||
+          isNearName(token, name)
+        );
       });
     }),
   };
+}
+
+function charOverlapRatio(a: string, b: string) {
+  if (!a || !b) return 0;
+  if (Math.abs(a.length - b.length) > 2) return 0;
+  const setA = new Set(a);
+  let shared = 0;
+  for (const ch of b) {
+    if (setA.has(ch)) shared += 1;
+  }
+  return shared / Math.max(a.length, b.length);
+}
+
+/** Tolerate minor OCR glyph mistakes against roster names. */
+function isNearName(token: string, name: string) {
+  if (!token || !name) return false;
+  if (Math.abs(token.length - name.length) > 1) return false;
+  const ratio = charOverlapRatio(token, name);
+  if (token.length <= 3) return token.length === name.length && ratio >= 0.5;
+  return ratio >= 0.6;
 }
 
 /* -------------------- Leaderboard -------------------- */
