@@ -2,9 +2,12 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ItemQuality, Member } from "@/lib/types";
-import { QUALITY_OPTIONS, qualityMeta } from "@/lib/auction/client";
+import {
+  QUALITY_OPTIONS,
+  qualityMeta,
+  recognizeImageText,
+} from "@/lib/auction/client";
 import { recognizeItemName } from "@/lib/auction/itemOcr";
-import { recognizeImageText } from "@/lib/auction/client";
 import { LockIcon } from "@/components/Icons";
 
 function roleClass(role: Member["role"]) {
