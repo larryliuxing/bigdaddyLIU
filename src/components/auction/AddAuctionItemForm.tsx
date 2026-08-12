@@ -2,11 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ItemQuality, Member } from "@/lib/types";
-import {
-  QUALITY_OPTIONS,
-  qualityMeta,
-  recognizeImageText,
-} from "@/lib/auction/client";
+import { recognizeImageText } from "@/lib/auction/client";
 import { recognizeItemName } from "@/lib/auction/itemOcr";
 import { LockIcon } from "@/components/Icons";
 
@@ -168,8 +164,6 @@ export function AddAuctionItemForm({
     pasteRef.current?.focus();
   }, []);
 
-  const q = qualityMeta(quality);
-
   return (
     <form
       onSubmit={submit}
@@ -181,7 +175,7 @@ export function AddAuctionItemForm({
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
-        <label className="block space-y-1.5">
+        <label className="block space-y-1.5 sm:col-span-2">
           <span className="text-xs text-[var(--text-muted)]">拍品名称</span>
           <input
             className="field"
@@ -189,26 +183,6 @@ export function AddAuctionItemForm({
             onChange={(e) => setName(e.target.value)}
             placeholder="粘贴装备图后自动识别顶部名称"
           />
-        </label>
-        <label className="block space-y-1.5">
-          <span className="text-xs text-[var(--text-muted)]">品质</span>
-          <div className="relative">
-            <select
-              className="field appearance-none pr-8"
-              value={quality}
-              onChange={(e) => setQuality(e.target.value as ItemQuality)}
-            >
-              {QUALITY_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-            <span
-              className="pointer-events-none absolute right-3 top-1/2 h-3 w-3 -translate-y-1/2 rounded-full"
-              style={{ background: q.color }}
-            />
-          </div>
         </label>
         <label className="block space-y-1.5">
           <span className="text-xs text-[var(--text-muted)]">起拍价 ¥</span>
