@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-label="›*þÆ+:ß:">
+  <defs>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e2433" stroke-width="1"/>
+    </pattern>
+  </defs>
+  <rect width="1280" height="720" fill="#0b0f18"/>
+  <rect width="1280" height="720" fill="url(#grid)"/>
+  <text x="40" y="48" fill="#9aa3b5" font-size="22" font-family="sans-serif">*þÆ+:ß:÷b`„ž8*þ	</text>
+  <text x="40" y="78" fill="#6b7385" font-size="16" font-family="sans-serif">	ŒtLbøùMn`ÝrÒr aæ
+› b-›a=b	</text>
+
+  <!-- soft stage -->
+  <rect x="80" y="110" width="1120" height="540" rx="18" fill="#121826" stroke="#2a3348" stroke-width="2"/>
+
+  <!-- ` name - upper center -->
+  <rect x="470" y="150" width="340" height="70" fill="rgba(56,189,248,0.12)" stroke="#38bdf8" stroke-width="3" stroke-dasharray="8 6" rx="8"/>
+  <text x="490" y="178" fill="#7dd3fc" font-size="22" font-family="sans-serif" font-weight="700">` ÝrÒr</text>
+  <text x="490" y="206" fill="#a5f3fc" font-size="18" font-family="sans-serif">‹N¹ÙÌÆ+	</text>
+
+  <!-- a top-left power -->
+  <rect x="110" y="200" width="250" height="70" fill="rgba(251,191,36,0.10)" stroke="#fbbf24" stroke-width="3" stroke-dasharray="8 6" rx="8"/>
+  <text x="130" y="230" fill="#fcd34d" font-size="20" font-family="sans-serif" font-weight="700">a æ
+›</text>
+  <text x="130" y="256" fill="#fde68a" font-size="18" font-family="sans-serif">” pW</text>
+
+  <!-- b center-bottom power -->
+  <rect x="430" y="470" width="420" height="80" fill="rgba(251,191,36,0.10)" stroke="#fbbf24" stroke-width="3" stroke-dasharray="8 6" rx="8"/>
+  <text x="450" y="505" fill="#fcd34d" font-size="20" font-family="sans-serif" font-weight="700">b -›</text>
+  <text x="450" y="532" fill="#fde68a" font-size="18" font-family="sans-serif">—› ” pW{aø	</text>
+
+  <text x="110" y="620" fill="#6b7385" font-size="15" font-family="sans-serif">Šž*þÝX: public/leaderboard-ocr-example.png sïÿb,:þ</text>
+</svg>
