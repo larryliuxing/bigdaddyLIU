@@ -2,8 +2,12 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { AuctionRoomState, SessionUser } from "@/lib/types";
-import { formatCountdown, qualityMeta, formatBeijingDateTime } from "@/lib/auction/client";
+import type { AuctionItem, AuctionRoomState, SessionUser } from "@/lib/types";
+import {
+  formatCountdown,
+  qualityMeta,
+  formatBeijingDateTime,
+} from "@/lib/auction/client";
 import { GavelIcon } from "@/components/Icons";
 
 function HourglassIcon() {
@@ -19,6 +23,14 @@ function HourglassIcon() {
   );
 }
 
+function itemStatusLabel(status: AuctionItem["status"]) {
+  if (status === "active") return "竞拍中";
+  if (status === "sold") return "已成交";
+  if (status === "unsold") return "流拍";
+  if (status === "cancelled") return "已取消";
+  return "待开拍";
+}
+
 export function AuctionRoom({
   member,
 }: {
@@ -31,6 +43,10 @@ export function AuctionRoom({
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
   const [remaining, setRemaining] = useState<number | null>(null);
+  const [bidDrafts, setBidDrafts] = useState<
+    Record<number, { value: string; touched: boolean }>
+  >({});
+  const [biddingId, setBiddingId] = useState<number | null>(null);
   const remainingActive = remaining != null;
 
   useEffect(() => {
@@ -63,63 +79,64 @@ export function AuctionRoom({
     return () => window.clearInterval(timer);
   }, [remainingActive]);
 
-  const minBid = room?.minNextBid ?? 0;
+  const session = room?.session;
+  const live = session?.status === "live";
+  const waiting =
+    !session || session.status === "draft" || session.status === "scheduled";
+  const activeItems = room?.activeItems ?? [];
 
-  const activeItemId = room?.activeItem?.id ?? null;
-  const [bidDraft, setBidDraft] = useState({
-    itemId: null as number | null,
-    value: "",
-    touched: false,
-  });
-  const draftForItem =
-    bidDraft.itemId === activeItemId
-      ? bidDraft
-      : { itemId: activeItemId, value: "", touched: false };
-  const bidAmountValue = draftForItem.touched
-    ? draftForItem.value
-    : minBid
-      ? String(minBid)
-      : "";
-
-  async function placeBid() {
-    setError("");
-    const amount = Number(bidAmountValue);
-    const res = await fetch("/api/auction/bid", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ amount, isAnonymous: anonymous }),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      setError(data.error || "出价失败");
-      return;
-    }
-    setRoom(data.room);
-    setRemaining(data.room.remainingSeconds);
-    setBidDraft({ itemId: activeItemId, value: "", touched: false });
-    setToast("出价成功");
-    if (soundOn) {
-      try {
-        const ctx = new AudioContext();
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.frequency.value = 880;
-        gain.gain.value = 0.04;
-        osc.start();
-        osc.stop(ctx.currentTime + 0.08);
-      } catch {
-        /* ignore */
-      }
-    }
-    window.setTimeout(() => setToast(""), 1600);
+  function draftValue(item: AuctionItem) {
+    const min = room?.minNextBids?.[item.id] ?? item.startPrice;
+    const draft = bidDrafts[item.id];
+    if (draft?.touched) return draft.value;
+    return String(min);
   }
 
-  const session = room?.session;
-  const active = room?.activeItem;
-  const live = session?.status === "live";
-  const waiting = !session || session.status === "draft" || session.status === "scheduled";
+  async function placeBid(itemId: number) {
+    setError("");
+    setBiddingId(itemId);
+    const target =
+      activeItems.find((i) => i.id === itemId) ||
+      ({ id: itemId, startPrice: 0 } as AuctionItem);
+    const amount = Number(draftValue(target));
+    try {
+      const res = await fetch("/api/auction/bid", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ itemId, amount, isAnonymous: anonymous }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "出价失败");
+        return;
+      }
+      setRoom(data.room);
+      setRemaining(data.room.remainingSeconds);
+      setBidDrafts((prev) => ({
+        ...prev,
+        [itemId]: { value: "", touched: false },
+      }));
+      setToast("出价成功");
+      if (soundOn) {
+        try {
+          const ctx = new AudioContext();
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.frequency.value = 880;
+          gain.gain.value = 0.04;
+          osc.start();
+          osc.stop(ctx.currentTime + 0.08);
+        } catch {
+          /* ignore */
+        }
+      }
+      window.setTimeout(() => setToast(""), 1600);
+    } finally {
+      setBiddingId(null);
+    }
+  }
 
   return (
     <div className="app-shell">
@@ -128,7 +145,10 @@ export function AuctionRoom({
 
         <header className="relative z-10 mb-5 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">
-            <span className="feature-icon !h-9 !w-9" style={{ background: "#3a1f1f" }}>
+            <span
+              className="feature-icon !h-9 !w-9"
+              style={{ background: "#3a1f1f" }}
+            >
               <GavelIcon />
             </span>
             <h1 className="text-xl font-bold">拍卖</h1>
@@ -172,20 +192,25 @@ export function AuctionRoom({
         <section className="relative z-10 mb-4 rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.92)] p-4">
           <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-sm font-medium">动态</h2>
-            <label className="flex items-center gap-1.5 text-xs text-[var(--text-muted)]">
-              <input
-                type="checkbox"
-                checked={soundOn}
-                onChange={(e) => setSoundOn(e.target.checked)}
-              />
-              出价提示音
-              <span className="ml-2 opacity-70">最近最多 8 条</span>
-            </label>
+            <div className="flex flex-wrap items-center gap-3">
+              {(live || session?.status === "scheduled") && (
+                <span className="rounded-lg border border-[var(--border-soft)] px-2.5 py-1 text-sm tabular-nums">
+                  {live ? "本场剩余" : "距开始"}{" "}
+                  <strong>{formatCountdown(remaining)}</strong>
+                </span>
+              )}
+              <label className="flex items-center gap-1.5 text-xs text-[var(--text-muted)]">
+                <input
+                  type="checkbox"
+                  checked={soundOn}
+                  onChange={(e) => setSoundOn(e.target.checked)}
+                />
+                出价提示音
+              </label>
+            </div>
           </div>
           <ul className="space-y-1.5 text-sm text-[var(--text-muted)]">
-            {(room?.recentEvents ?? []).length === 0 && (
-              <li>暂无动态</li>
-            )}
+            {(room?.recentEvents ?? []).length === 0 && <li>暂无动态</li>}
             {(room?.recentEvents ?? []).map((ev) => (
               <li key={ev.id}>
                 <span className="mr-2 text-xs opacity-70">
@@ -200,9 +225,15 @@ export function AuctionRoom({
           </ul>
         </section>
 
-        <section className="relative z-10 rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)] p-5">
-          {waiting && !active && (
-            <div className="flex flex-col items-center justify-center py-16 text-center">
+        {error && (
+          <p className="relative z-10 mb-3 text-sm text-[var(--accent-crimson)]">
+            {error}
+          </p>
+        )}
+
+        <section className="relative z-10 space-y-3">
+          {waiting && (
+            <div className="flex flex-col items-center justify-center rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)] py-16 text-center">
               <HourglassIcon />
               <p className="mt-4 text-lg font-medium">暂无进行中的拍卖</p>
               <p className="mt-2 max-w-sm text-sm text-[var(--text-muted)]">
@@ -211,109 +242,146 @@ export function AuctionRoom({
                   ? `（预约 ${formatBeijingDateTime(session.scheduledStart)} 北京时间）`
                   : ""}
               </p>
+              {(room?.items?.length ?? 0) > 0 && (
+                <p className="mt-3 text-xs text-[var(--text-muted)]">
+                  本场已备拍品 {room!.items.length} 件，开拍后将同时竞拍
+                </p>
+              )}
             </div>
           )}
 
-          {live && active && (
-            <div className="space-y-4">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <p className="text-xs text-[var(--text-muted)]">当前拍品</p>
-                  <h3 className="mt-1 text-2xl font-bold">
-                    <span
-                      className="mr-2 inline-block h-3 w-3 rounded-full"
-                      style={{ background: qualityMeta(active.quality).color }}
-                    />
-                    {active.name}
-                  </h3>
-                  <p className="mt-1 text-sm text-[var(--text-muted)]">
-                    起拍 ¥{active.startPrice} · 加价 ¥{active.bidIncrement}
-                  </p>
-                </div>
-                <div className="rounded-xl border border-[var(--border-soft)] px-4 py-2 text-center">
-                  <p className="text-xs text-[var(--text-muted)]">本场剩余</p>
-                  <p className="text-xl font-semibold tabular-nums">
-                    {formatCountdown(remaining)}
-                  </p>
-                </div>
-              </div>
-
-              {active.imageData && (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={active.imageData}
-                  alt={active.name}
-                  className="mx-auto max-h-56 rounded-xl object-contain"
-                />
-              )}
-
-              <div className="rounded-xl bg-[#121826] px-4 py-3">
-                <p className="text-sm text-[var(--text-muted)]">当前价</p>
-                <p className="text-3xl font-bold text-[var(--accent-gold)]">
-                  ¥{active.currentPrice}
-                </p>
-              </div>
-
-              {member ? (
-                <div className="flex flex-col gap-2 sm:flex-row">
-                  <input
-                    className="field"
-                    type="number"
-                    min={minBid}
-                    step={active.bidIncrement}
-                    value={bidAmountValue}
-                    onChange={(e) =>
-                      setBidDraft({
-                        itemId: activeItemId,
-                        value: e.target.value,
-                        touched: true,
-                      })
-                    }
-                  />
-                  <button
-                    type="button"
-                    className="rounded-xl bg-[#e23d4a] px-5 py-3 text-sm font-semibold sm:min-w-[120px]"
-                    onClick={placeBid}
-                  >
-                    出价
-                  </button>
-                </div>
-              ) : (
-                <p className="text-sm text-[var(--text-muted)]">
-                  请以成员身份登录后出价
-                </p>
-              )}
-              {error && (
-                <p className="text-sm text-[var(--accent-crimson)]">{error}</p>
-              )}
+          {live && activeItems.length === 0 && (
+            <div className="rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)] py-10 text-center text-[var(--text-muted)]">
+              本场暂无竞拍中的拍品
             </div>
           )}
+
+          {live &&
+            activeItems.map((item) => {
+              const q = qualityMeta(item.quality);
+              const min = room?.minNextBids?.[item.id] ?? item.startPrice;
+              return (
+                <article
+                  key={item.id}
+                  className="rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)] p-4"
+                >
+                  <div className="flex flex-col gap-4 sm:flex-row">
+                    {item.imageData ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={item.imageData}
+                        alt={item.name}
+                        className="mx-auto h-28 w-28 rounded-xl object-contain sm:mx-0"
+                      />
+                    ) : (
+                      <div className="mx-auto flex h-28 w-28 items-center justify-center rounded-xl bg-[#121826] text-xs text-[var(--text-muted)] sm:mx-0">
+                        无图
+                      </div>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <h3 className="text-lg font-bold">
+                            <span
+                              className="mr-2 inline-block h-2.5 w-2.5 rounded-full"
+                              style={{ background: q.color }}
+                            />
+                            {item.name}
+                          </h3>
+                          <p className="mt-1 text-xs text-[var(--text-muted)]">
+                            起拍 ¥{item.startPrice} · 加价 ¥{item.bidIncrement}
+                          </p>
+                        </div>
+                        <span className="rounded-full bg-emerald-500/15 px-2.5 py-1 text-xs text-emerald-300">
+                          竞拍中
+                        </span>
+                      </div>
+                      <p className="mt-3 text-2xl font-bold text-[var(--accent-gold)]">
+                        ¥{item.currentPrice}
+                      </p>
+                      {member ? (
+                        <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                          <input
+                            className="field"
+                            type="number"
+                            min={min}
+                            step={item.bidIncrement}
+                            value={draftValue(item)}
+                            onChange={(e) =>
+                              setBidDrafts((prev) => ({
+                                ...prev,
+                                [item.id]: {
+                                  value: e.target.value,
+                                  touched: true,
+                                },
+                              }))
+                            }
+                          />
+                          <button
+                            type="button"
+                            className="rounded-xl bg-[#e23d4a] px-5 py-3 text-sm font-semibold sm:min-w-[120px] disabled:opacity-50"
+                            disabled={biddingId === item.id}
+                            onClick={() => placeBid(item.id)}
+                          >
+                            {biddingId === item.id ? "出价中…" : "出价"}
+                          </button>
+                        </div>
+                      ) : (
+                        <p className="mt-3 text-sm text-[var(--text-muted)]">
+                          请以成员身份登录后出价
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </article>
+              );
+            })}
 
           {session?.status === "ended" && (
-            <div className="py-10 text-center">
-              <p className="text-lg font-medium">本场拍卖已结束</p>
-              <p className="mt-2 text-sm text-[var(--text-muted)]">
-                可前往分红统计查看结果
-              </p>
-              <button
-                type="button"
-                className="btn-primary mt-4 max-w-xs"
-                onClick={() => router.push("/auction/dividends")}
-              >
-                查看分红
-              </button>
-            </div>
-          )}
-
-          {live && !active && (
-            <div className="py-10 text-center text-[var(--text-muted)]">
-              等待管理员切换下一件拍品…
+            <div className="rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)] p-5">
+              <div className="text-center">
+                <p className="text-lg font-medium">本场拍卖已结束</p>
+                <p className="mt-2 text-sm text-[var(--text-muted)]">
+                  可前往分红统计查看结果
+                </p>
+                <button
+                  type="button"
+                  className="btn-primary mt-4 max-w-xs"
+                  onClick={() => router.push("/auction/dividends")}
+                >
+                  查看分红
+                </button>
+              </div>
+              {(room?.items?.length ?? 0) > 0 && (
+                <ul className="mt-6 divide-y divide-[var(--border-soft)] border-t border-[var(--border-soft)]">
+                  {room!.items.map((item) => (
+                    <li
+                      key={item.id}
+                      className="flex items-center justify-between gap-3 py-3 text-sm"
+                    >
+                      <span>
+                        <span
+                          className="mr-2 inline-block h-2 w-2 rounded-full"
+                          style={{
+                            background: qualityMeta(item.quality).color,
+                          }}
+                        />
+                        {item.name}
+                      </span>
+                      <span className="text-[var(--text-muted)]">
+                        {itemStatusLabel(item.status)}
+                        {item.soldPrice != null ? ` · ¥${item.soldPrice}` : ""}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
           )}
         </section>
 
         <p className="relative z-10 mt-6 text-center text-xs text-[var(--text-muted)]">
-          不提倡倒爷。
+          不提倡倒爷。本场拍品同时竞拍。
         </p>
 
         {toast && (

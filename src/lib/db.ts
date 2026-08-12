@@ -865,44 +865,59 @@ function nowIso() {
   return new Date().toISOString();
 }
 
-export function activateNextItem(sessionId: number): AuctionItem | null {
+export function activateAllPendingItems(sessionId: number): AuctionItem[] {
   const database = ensureDb();
-  const next = database
+  const pending = database
     .prepare(
       `SELECT * FROM auction_items
        WHERE session_id = ? AND status = 'pending'
-       ORDER BY sort_order ASC, id ASC LIMIT 1`,
+       ORDER BY sort_order ASC, id ASC`,
     )
-    .get(sessionId) as ItemRow | undefined;
+    .all(sessionId) as ItemRow[];
 
-  if (!next) {
+  if (pending.length === 0) {
     database
       .prepare(
         `UPDATE auction_sessions SET current_item_id = NULL WHERE id = ?`,
       )
       .run(sessionId);
-    return null;
+    return [];
   }
 
-  database
-    .prepare(
-      `UPDATE auction_items SET status = 'active', activated_at = ?, current_price = start_price WHERE id = ?`,
-    )
-    .run(nowIso(), next.id);
-  database
-    .prepare(
-      `UPDATE auction_sessions SET current_item_id = ? WHERE id = ?`,
-    )
-    .run(next.id, sessionId);
+  const activatedAt = nowIso();
+  const update = database.prepare(
+    `UPDATE auction_items
+     SET status = 'active', activated_at = ?, current_price = start_price
+     WHERE id = ?`,
+  );
+  const tx = database.transaction(() => {
+    for (const row of pending) {
+      update.run(activatedAt, row.id);
+    }
+    database
+      .prepare(
+        `UPDATE auction_sessions SET current_item_id = ? WHERE id = ?`,
+      )
+      .run(pending[0].id, sessionId);
+  });
+  tx();
 
-  addEvent(sessionId, "item", `开始拍卖：${next.name}`);
-  return getItemById(next.id);
+  addEvent(
+    sessionId,
+    "item",
+    `本场 ${pending.length} 件拍品同时开拍`,
+  );
+  return pending.map((row) => getItemById(row.id)!).filter(Boolean);
 }
 
-export function closeCurrentItem(sessionId: number): AuctionItem | null {
-  const session = getSessionById(sessionId);
-  if (!session?.currentItemId) return null;
-  const item = getItemById(session.currentItemId);
+/** @deprecated sequential mode; prefer activateAllPendingItems */
+export function activateNextItem(sessionId: number): AuctionItem | null {
+  const activated = activateAllPendingItems(sessionId);
+  return activated[0] ?? null;
+}
+
+export function closeItem(itemId: number): AuctionItem | null {
+  const item = getItemById(itemId);
   if (!item || item.status !== "active") return null;
 
   const topBid = ensureDb()
@@ -922,7 +937,7 @@ export function closeCurrentItem(sessionId: number): AuctionItem | null {
       .run(topBid.member_id, topBid.amount, topBid.amount, nowIso(), item.id);
     const winner = getMemberById(topBid.member_id);
     addEvent(
-      sessionId,
+      item.sessionId,
       "sold",
       `${item.name} 成交 ¥${topBid.amount}，得主 ${winner?.name ?? "未知"}`,
     );
@@ -932,10 +947,27 @@ export function closeCurrentItem(sessionId: number): AuctionItem | null {
         `UPDATE auction_items SET status = 'unsold', closed_at = ? WHERE id = ?`,
       )
       .run(nowIso(), item.id);
-    addEvent(sessionId, "unsold", `${item.name} 流拍`);
+    addEvent(item.sessionId, "unsold", `${item.name} 流拍`);
   }
 
   return getItemById(item.id);
+}
+
+export function closeAllActiveItems(sessionId: number): void {
+  const active = ensureDb()
+    .prepare(
+      `SELECT id FROM auction_items WHERE session_id = ? AND status = 'active'`,
+    )
+    .all(sessionId) as Array<{ id: number }>;
+  for (const row of active) {
+    closeItem(row.id);
+  }
+}
+
+export function closeCurrentItem(sessionId: number): AuctionItem | null {
+  const session = getSessionById(sessionId);
+  if (!session?.currentItemId) return null;
+  return closeItem(session.currentItemId);
 }
 
 export function startAuctionSession(
@@ -977,8 +1009,12 @@ export function startAuctionSession(
       sessionId,
     );
 
-  addEvent(sessionId, "system", `拍卖开始，时长 ${session.durationMinutes} 分钟`);
-  activateNextItem(sessionId);
+  addEvent(
+    sessionId,
+    "system",
+    `拍卖开始，${items.length} 件拍品同时竞拍，时长 ${session.durationMinutes} 分钟`,
+  );
+  activateAllPendingItems(sessionId);
   return getSessionById(sessionId)!;
 }
 
@@ -986,9 +1022,7 @@ export function endAuctionSession(sessionId: number): AuctionSession {
   const session = getSessionById(sessionId);
   if (!session) throw new Error("拍卖场次不存在");
 
-  if (session.currentItemId) {
-    closeCurrentItem(sessionId);
-  }
+  closeAllActiveItems(sessionId);
 
   // mark remaining pending as cancelled
   ensureDb()
@@ -1012,6 +1046,7 @@ export function endAuctionSession(sessionId: number): AuctionSession {
 
 export function placeBid(input: {
   sessionId: number;
+  itemId: number;
   memberId: number;
   amount: number;
   isAnonymous?: boolean;
@@ -1024,13 +1059,13 @@ export function placeBid(input: {
     endAuctionSession(input.sessionId);
     throw new Error("拍卖时间已结束");
   }
-  if (!session.currentItemId) {
-    throw new Error("当前没有可竞拍的拍品");
-  }
 
-  const item = getItemById(session.currentItemId);
-  if (!item || item.status !== "active") {
-    throw new Error("当前拍品不可出价");
+  const item = getItemById(input.itemId);
+  if (!item || item.sessionId !== input.sessionId) {
+    throw new Error("拍品不存在");
+  }
+  if (item.status !== "active") {
+    throw new Error("该拍品当前不可出价");
   }
 
   const minAmount =
@@ -1115,21 +1150,8 @@ export function placeBid(input: {
 }
 
 export function advanceAuction(sessionId: number): AuctionSession {
-  const session = getSessionById(sessionId);
-  if (!session || session.status !== "live") {
-    throw new Error("当前没有进行中的拍卖");
-  }
-
-  if (session.endsAt && new Date(session.endsAt).getTime() <= Date.now()) {
-    return endAuctionSession(sessionId);
-  }
-
-  closeCurrentItem(sessionId);
-  const next = activateNextItem(sessionId);
-  if (!next) {
-    return endAuctionSession(sessionId);
-  }
-  return getSessionById(sessionId)!;
+  // Simultaneous mode: "next" is no longer used; ending closes all items.
+  return endAuctionSession(sessionId);
 }
 
 export function maybeAutoProgress(sessionId: number): AuctionSession | null {

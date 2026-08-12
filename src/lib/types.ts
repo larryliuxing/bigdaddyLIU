@@ -118,7 +118,13 @@ export interface AuctionRoomState {
   settings: AuctionSettings;
   session: AuctionSession | null;
   items: AuctionItem[];
+  /** All items currently open for bidding. */
+  activeItems: AuctionItem[];
+  /** @deprecated use activeItems; kept as first active for compatibility */
   activeItem: AuctionItem | null;
+  /** Minimum next bid keyed by item id */
+  minNextBids: Record<number, number>;
+  /** @deprecated use minNextBids */
   minNextBid: number | null;
   recentEvents: AuctionEvent[];
   recentBids: AuctionBid[];

@@ -23,16 +23,15 @@ export function buildRoomState(sessionId?: number): AuctionRoomState {
   }
 
   const items = session ? listItems(session.id) : [];
-  const activeItem =
-    items.find((i) => i.id === session?.currentItemId && i.status === "active") ??
-    null;
+  const activeItems = items.filter((i) => i.status === "active");
+  const activeItem = activeItems[0] ?? null;
 
-  let minNextBid: number | null = null;
-  if (activeItem) {
-    const hasBids = countBidsForItem(activeItem.id) > 0;
-    minNextBid = hasBids
-      ? activeItem.currentPrice + activeItem.bidIncrement
-      : activeItem.startPrice;
+  const minNextBids: Record<number, number> = {};
+  for (const item of activeItems) {
+    const hasBids = countBidsForItem(item.id) > 0;
+    minNextBids[item.id] = hasBids
+      ? item.currentPrice + item.bidIncrement
+      : item.startPrice;
   }
 
   let remainingSeconds: number | null = null;
@@ -54,8 +53,10 @@ export function buildRoomState(sessionId?: number): AuctionRoomState {
     settings,
     session,
     items,
+    activeItems,
     activeItem,
-    minNextBid,
+    minNextBids,
+    minNextBid: activeItem ? (minNextBids[activeItem.id] ?? null) : null,
     recentEvents: session ? listEvents(session.id, 8) : [],
     recentBids: session ? listBids(session.id, 20) : [],
     serverNow: new Date().toISOString(),

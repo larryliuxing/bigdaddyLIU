@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireAdminSession } from "@/lib/auth";
 import {
-  advanceAuction,
   createDraftSession,
   deleteAuctionSession,
   endAuctionSession,
@@ -148,11 +147,6 @@ export async function POST(request: Request) {
         });
       }
       session = startAuctionSession(session.id, { forceNow: true });
-    } else if (action === "next") {
-      if (!session || session.status !== "live") {
-        return NextResponse.json({ error: "没有进行中的拍卖" }, { status: 400 });
-      }
-      session = advanceAuction(session.id);
     } else if (action === "end") {
       if (!session) {
         return NextResponse.json({ error: "没有可结束的场次" }, { status: 400 });

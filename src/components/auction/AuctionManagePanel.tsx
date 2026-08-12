@@ -235,8 +235,7 @@ export function AuctionManagePanel({
       setSessions(data.sessions || []);
       setRoom(data.room);
       const labels: Record<string, string> = {
-        start: "拍卖已开始",
-        next: "已进入下一件拍品",
+        start: "拍卖已开始，全部拍品同时竞拍",
         end: "拍卖已结束",
       };
       setMessage(labels[action] || "完成");
@@ -618,24 +617,14 @@ export function AuctionManagePanel({
                   </>
                 )}
                 {session?.status === "live" && (
-                  <>
-                    <button
-                      type="button"
-                      className="btn-ghost text-sm"
-                      disabled={busy}
-                      onClick={() => sessionAction("next")}
-                    >
-                      下一件拍品
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-ghost text-sm"
-                      disabled={busy}
-                      onClick={() => sessionAction("end")}
-                    >
-                      结束拍卖
-                    </button>
-                  </>
+                  <button
+                    type="button"
+                    className="btn-ghost text-sm"
+                    disabled={busy}
+                    onClick={() => sessionAction("end")}
+                  >
+                    结束拍卖
+                  </button>
                 )}
               </div>
             </section>
