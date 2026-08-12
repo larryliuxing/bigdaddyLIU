@@ -9,6 +9,7 @@ import type {
   AuctionItemStatus,
   AuctionSession,
   AuctionSessionStatus,
+  AuctionSessionSummary,
   AuctionSettings,
   DividendEntry,
   ItemQuality,
@@ -546,6 +547,55 @@ export function listSessions(): AuctionSession[] {
   return rows.map(toSession);
 }
 
+export function listSessionSummaries(): AuctionSessionSummary[] {
+  const rows = ensureDb()
+    .prepare(
+      `SELECT s.*,
+        (SELECT COUNT(*) FROM auction_items i WHERE i.session_id = s.id) AS item_count
+       FROM auction_sessions s
+       ORDER BY
+         CASE s.status
+           WHEN 'live' THEN 0
+           WHEN 'scheduled' THEN 1
+           WHEN 'draft' THEN 2
+           ELSE 3
+         END,
+         COALESCE(s.scheduled_start, s.created_at) DESC,
+         s.id DESC`,
+    )
+    .all() as Array<SessionRow & { item_count: number }>;
+  return rows.map((row) => ({
+    ...toSession(row),
+    itemCount: Number(row.item_count) || 0,
+  }));
+}
+
+/** Prefer live session, else nearest upcoming scheduled/draft, else latest. */
+export function getPublicAuctionSession(): AuctionSession | null {
+  const database = ensureDb();
+  const live = database
+    .prepare(
+      `SELECT * FROM auction_sessions WHERE status = 'live' ORDER BY id DESC LIMIT 1`,
+    )
+    .get() as SessionRow | undefined;
+  if (live) return maybeAutoProgress(live.id) ?? toSession(live);
+
+  const upcoming = database
+    .prepare(
+      `SELECT * FROM auction_sessions
+       WHERE status IN ('scheduled', 'draft')
+       ORDER BY
+         CASE WHEN scheduled_start IS NULL THEN 1 ELSE 0 END,
+         scheduled_start ASC,
+         id ASC
+       LIMIT 1`,
+    )
+    .get() as SessionRow | undefined;
+  if (upcoming) return maybeAutoProgress(upcoming.id) ?? toSession(upcoming);
+
+  return getLatestSession();
+}
+
 export function isDividendsCalculated(sessionId: number): boolean {
   const row = ensureDb()
     .prepare(
@@ -562,12 +612,24 @@ export function createDraftSession(input?: {
 }): AuctionSession {
   const settings = getAuctionSettings();
   const duration = input?.durationMinutes ?? settings.durationMinutes;
+  let status: AuctionSessionStatus = "draft";
+  if (input?.scheduledStart) {
+    const startMs = new Date(input.scheduledStart).getTime();
+    if (Number.isFinite(startMs) && startMs > Date.now() + 5000) {
+      status = "scheduled";
+    }
+  }
   const result = ensureDb()
     .prepare(
       `INSERT INTO auction_sessions (status, scheduled_start, duration_minutes, note)
-       VALUES ('draft', ?, ?, ?)`,
+       VALUES (?, ?, ?, ?)`,
     )
-    .run(input?.scheduledStart ?? null, duration, input?.note ?? null);
+    .run(
+      status,
+      input?.scheduledStart ?? null,
+      duration,
+      input?.note ?? null,
+    );
   return getSessionById(Number(result.lastInsertRowid))!;
 }
 
@@ -615,6 +677,37 @@ export function updateSessionSchedule(
       sessionId,
     );
   return getSessionById(sessionId);
+}
+
+/** Delete a not-started session and all related records. Irreversible. */
+export function deleteAuctionSession(sessionId: number): boolean {
+  const session = getSessionById(sessionId);
+  if (!session) return false;
+  if (session.status === "live" || session.status === "ended") return false;
+
+  const database = ensureDb();
+  const tx = database.transaction(() => {
+    const itemIds = (
+      database
+        .prepare(`SELECT id FROM auction_items WHERE session_id = ?`)
+        .all(sessionId) as Array<{ id: number }>
+    ).map((r) => r.id);
+
+    for (const itemId of itemIds) {
+      database
+        .prepare(`DELETE FROM auction_item_dividends WHERE item_id = ?`)
+        .run(itemId);
+    }
+    database.prepare(`DELETE FROM auction_bids WHERE session_id = ?`).run(sessionId);
+    database.prepare(`DELETE FROM auction_events WHERE session_id = ?`).run(sessionId);
+    database
+      .prepare(`DELETE FROM auction_dividend_entries WHERE session_id = ?`)
+      .run(sessionId);
+    database.prepare(`DELETE FROM auction_items WHERE session_id = ?`).run(sessionId);
+    database.prepare(`DELETE FROM auction_sessions WHERE id = ?`).run(sessionId);
+  });
+  tx();
+  return true;
 }
 
 export function listItems(sessionId: number): AuctionItem[] {
@@ -853,6 +946,15 @@ export function startAuctionSession(
   if (!session) throw new Error("拍卖场次不存在");
   if (session.status === "live") return session;
   if (session.status === "ended") throw new Error("场次已结束");
+
+  const otherLive = ensureDb()
+    .prepare(
+      `SELECT id FROM auction_sessions WHERE status = 'live' AND id != ? LIMIT 1`,
+    )
+    .get(sessionId) as { id: number } | undefined;
+  if (otherLive) {
+    throw new Error("已有进行中的拍卖，请先结束再开始本场");
+  }
 
   const items = listItems(sessionId);
   if (items.length === 0) throw new Error("请先添加拍品");

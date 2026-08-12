@@ -61,6 +61,10 @@ export interface AuctionSession {
   createdAt: string;
 }
 
+export interface AuctionSessionSummary extends AuctionSession {
+  itemCount: number;
+}
+
 export interface AuctionItem {
   id: number;
   sessionId: number;

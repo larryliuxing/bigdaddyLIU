@@ -1,7 +1,8 @@
 import {
   countBidsForItem,
   getAuctionSettings,
-  getLatestSession,
+  getPublicAuctionSession,
+  getSessionById,
   isDividendsCalculated,
   listBids,
   listDividends,
@@ -14,8 +15,8 @@ import type { AuctionRoomState } from "@/lib/types";
 export function buildRoomState(sessionId?: number): AuctionRoomState {
   const settings = getAuctionSettings();
   let session = sessionId
-    ? maybeAutoProgress(sessionId) ?? getLatestSession()
-    : getLatestSession();
+    ? getSessionById(sessionId)
+    : getPublicAuctionSession();
 
   if (session) {
     session = maybeAutoProgress(session.id) ?? session;
