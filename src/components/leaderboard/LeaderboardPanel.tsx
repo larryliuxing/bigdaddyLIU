@@ -365,18 +365,23 @@ export function LeaderboardPanel({
                 查看识别位置示意
               </summary>
               <div className="mt-3 space-y-2">
+                {/* Prefer real screenshot if present; fall back to schematic SVG */}
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
-                  src="/leaderboard-ocr-example.svg"
-                  alt="战力截图识别区域示意：①蓝色名字 ②左上战力 ③中下战力"
+                  src="/leaderboard-ocr-example.png"
+                  alt="战力截图识别示例"
                   className="w-full max-w-xl rounded-lg border border-[var(--border-soft)] bg-[#0b0f18]"
+                  onError={(e) => {
+                    e.currentTarget.onerror = null;
+                    e.currentTarget.src = "/leaderboard-ocr-example.svg";
+                  }}
                 />
                 <p className="text-xs leading-5 text-[var(--text-muted)]">
-                  上图仅为位置示意。要用你的真实游戏截图做示例时，把图片放到服务器
+                  若仍是示意图：把你的真实截图传到服务器
                   <code className="mx-1 text-[var(--text-primary)]">
-                    public/leaderboard-ocr-example.png
+                    /var/www/guild/public/leaderboard-ocr-example.png
                   </code>
-                  ，并把上面地址改成该 png（当前先用示意图）。
+                  后刷新即可。
                 </p>
                 <p className="text-xs leading-5 text-[var(--text-muted)]">
                   上传后请<strong className="text-[var(--text-primary)]">点击角色头顶的蓝色名字</strong>
