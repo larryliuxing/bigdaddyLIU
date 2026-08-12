@@ -179,3 +179,10 @@ export function buildFanfareMessage(
   }
   return `${memberName}出价：¥${amount}，势必拿下这件物品`;
 }
+
+/** Second danmaku line: which track is playing now. */
+export function buildNowPlayingDanmaku(tier: BidFanfareTier) {
+  if (tier === 1000) return "正在播放 少帅进行曲！！！~";
+  if (tier === 600) return "正在播放 祁厅长的小曲";
+  return "正在播放 大哥你好吗音乐";
+}

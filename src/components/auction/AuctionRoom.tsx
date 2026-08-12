@@ -21,6 +21,7 @@ import {
 } from "./AuctionItemImage";
 import { ItemPriceStatsLine } from "./ItemPriceStatsLine";
 import {
+  buildNowPlayingDanmaku,
   parseFanfareKind,
   playBidFanfare,
   unlockBidFanfare,
@@ -93,20 +94,28 @@ export function AuctionRoom({
     detail?: string | null;
   } | null>(null);
   const [danmaku, setDanmaku] = useState<
-    Array<{ id: number; text: string; top: number }>
+    Array<{ id: string; text: string; top: number; variant: "bid" | "track" }>
   >([]);
   const hasImagesRef = useRef(false);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const lastEventIdRef = useRef(0);
   const eventsBootstrapped = useRef(false);
   const remainingActive = remaining != null;
+  const DANMAKU_MS = 12000;
 
-  function pushDanmaku(text: string, eventId: number) {
-    const top = 18 + Math.floor(Math.random() * 42);
-    setDanmaku((prev) => [...prev.slice(-6), { id: eventId, text, top }]);
+  function pushDanmaku(
+    text: string,
+    key: string,
+    variant: "bid" | "track",
+    top: number,
+  ) {
+    setDanmaku((prev) => [
+      ...prev.filter((d) => d.id !== key).slice(-10),
+      { id: key, text, top, variant },
+    ]);
     window.setTimeout(() => {
-      setDanmaku((prev) => prev.filter((d) => d.id !== eventId));
-    }, 5200);
+      setDanmaku((prev) => prev.filter((d) => d.id !== key));
+    }, DANMAKU_MS);
   }
 
   useEffect(() => {
@@ -117,7 +126,7 @@ export function AuctionRoom({
     return () => window.removeEventListener("pointerdown", unlock);
   }, []);
 
-  // Play fanfare + danmaku for everyone when a high bid lands
+  // Play fanfare + dual danmaku for everyone when a high bid lands
   useEffect(() => {
     const events = room?.recentEvents ?? [];
     if (!events.length) return;
@@ -135,7 +144,14 @@ export function AuctionRoom({
     for (const ev of fresh) {
       const tier = parseFanfareKind(ev.kind);
       if (!tier) continue;
-      pushDanmaku(ev.message, ev.id);
+      const lane = 12 + Math.floor(Math.random() * 28);
+      pushDanmaku(ev.message, `bid-${ev.id}`, "bid", lane);
+      pushDanmaku(
+        buildNowPlayingDanmaku(tier),
+        `track-${ev.id}`,
+        "track",
+        Math.min(70, lane + 18),
+      );
       if (soundOn) void playBidFanfare(tier);
     }
   }, [room?.recentEvents, soundOn]);
@@ -602,11 +618,15 @@ export function AuctionRoom({
           </div>
         )}
 
-        <div className="pointer-events-none fixed inset-x-0 top-16 z-[60] h-40 overflow-hidden">
+        <div className="pointer-events-none fixed inset-x-0 top-14 z-[60] h-56 overflow-hidden">
           {danmaku.map((d) => (
             <div
               key={d.id}
-              className="auction-danmaku absolute whitespace-nowrap rounded-full border border-[rgba(255,255,255,0.12)] bg-[rgba(12,14,22,0.72)] px-3 py-1 text-sm font-semibold text-[var(--accent-gold)] shadow-lg"
+              className={`auction-danmaku absolute whitespace-nowrap rounded-full border px-4 py-2 font-bold shadow-lg ${
+                d.variant === "track"
+                  ? "border-[rgba(123,108,255,0.45)] bg-[rgba(30,24,55,0.88)] text-[var(--accent-violet)]"
+                  : "border-[rgba(232,168,74,0.45)] bg-[rgba(28,22,12,0.88)] text-[var(--accent-gold)]"
+              }`}
               style={{ top: `${d.top}%` }}
             >
               {d.text}
