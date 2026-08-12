@@ -17,11 +17,13 @@ function roleClass(role: Member["role"]) {
 
 interface AddAuctionItemFormProps {
   members: Member[];
+  sessionId: number;
   onCreated: () => void;
 }
 
 export function AddAuctionItemForm({
   members,
+  sessionId,
   onCreated,
 }: AddAuctionItemFormProps) {
   const [name, setName] = useState("");
@@ -126,6 +128,7 @@ export function AddAuctionItemForm({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          sessionId,
           name,
           quality,
           startPrice,

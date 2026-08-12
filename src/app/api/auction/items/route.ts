@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { requireAdminSession } from "@/lib/auth";
 import {
   createAuctionItem,
-  createDraftSession,
   deleteAuctionItem,
   getLatestSession,
   getOrCreateEditableSession,
@@ -52,6 +51,7 @@ export async function POST(request: Request) {
   const dividendMemberIds = Array.isArray(body?.dividendMemberIds)
     ? body.dividendMemberIds.map(Number).filter(Boolean)
     : [];
+  const requestedSessionId = Number(body?.sessionId);
 
   if (!name) {
     return NextResponse.json({ error: "请填写拍品名称" }, { status: 400 });
@@ -66,15 +66,23 @@ export async function POST(request: Request) {
     );
   }
 
-  let session = getOrCreateEditableSession();
+  let session =
+    Number.isFinite(requestedSessionId) && requestedSessionId > 0
+      ? getSessionById(requestedSessionId)
+      : getOrCreateEditableSession();
+
+  if (!session) {
+    return NextResponse.json({ error: "场次不存在" }, { status: 404 });
+  }
   if (session.status === "ended") {
-    session = createDraftSession();
+    return NextResponse.json(
+      { error: "已完成场次不可添加拍品" },
+      { status: 400 },
+    );
   }
   if (session.status === "live") {
-    // Allow adding only before/during draft; during live usually not
-    // For flexibility, block during live
     return NextResponse.json(
-      { error: "拍卖进行中，请结束后再添加拍品到新场次" },
+      { error: "进行中的场次不可添加拍品" },
       { status: 400 },
     );
   }
@@ -89,7 +97,10 @@ export async function POST(request: Request) {
     dividendMemberIds,
   });
 
-  return NextResponse.json({ item, room: buildRoomState() }, { status: 201 });
+  return NextResponse.json(
+    { item, room: buildRoomState(session.id) },
+    { status: 201 },
+  );
 }
 
 export async function DELETE(request: Request) {
@@ -111,5 +122,13 @@ export async function DELETE(request: Request) {
       { status: 400 },
     );
   }
-  return NextResponse.json({ ok: true, room: buildRoomState() });
+  const itemSessionId = Number(searchParams.get("sessionId"));
+  return NextResponse.json({
+    ok: true,
+    room: buildRoomState(
+      Number.isFinite(itemSessionId) && itemSessionId > 0
+        ? itemSessionId
+        : undefined,
+    ),
+  });
 }

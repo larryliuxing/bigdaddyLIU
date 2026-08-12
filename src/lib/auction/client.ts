@@ -84,18 +84,71 @@ export function formatBeijingDateTime(iso: string | null | undefined) {
 }
 
 /**
- * Build an ISO timestamp for today (Beijing) at HH:MM Beijing time.
+ * Build an ISO timestamp for a Beijing calendar date + HH:MM.
  * Always uses Asia/Shanghai regardless of the browser/server local zone.
  */
-export function todayAtTime(hhmm: string) {
+export function fromBeijingDateAndTime(dateYmd: string, hhmm: string) {
   const parts = hhmm.split(":").map(Number);
   const hh = Number.isFinite(parts[0]) ? parts[0] : 15;
   const mm = Number.isFinite(parts[1]) ? parts[1] : 0;
-  const datePart = beijingTodayDate();
+  const datePart = /^\d{4}-\d{2}-\d{2}$/.test(dateYmd)
+    ? dateYmd
+    : beijingTodayDate();
   const local = `${datePart}T${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}:00+08:00`;
   const d = new Date(local);
   if (Number.isNaN(d.getTime())) {
     return new Date().toISOString();
   }
   return d.toISOString();
+}
+
+/** YYYY-MM-DD from an ISO timestamp in Beijing time. */
+export function beijingDateFromIso(iso: string) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: BEIJING_TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(iso));
+}
+
+/** e.g. 2026年8月12日 15:00 */
+export function formatBeijingSessionLabel(iso: string | null | undefined) {
+  if (!iso) return "未设置时间";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "未设置时间";
+  const parts = new Intl.DateTimeFormat("zh-CN", {
+    timeZone: BEIJING_TZ,
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(d);
+  const get = (type: string) =>
+    parts.find((p) => p.type === type)?.value ?? "";
+  return `${get("year")}年${get("month")}月${get("day")}日 ${get("hour")}:${get("minute")}`;
+}
+
+export function sessionLifecycleLabel(
+  status: "draft" | "scheduled" | "live" | "ended",
+) {
+  if (status === "live") return "进行中";
+  if (status === "ended") return "已完成";
+  return "未开始";
+}
+
+export function isSessionEditable(
+  status: "draft" | "scheduled" | "live" | "ended",
+) {
+  return status === "draft" || status === "scheduled";
+}
+
+/**
+ * Build an ISO timestamp for today (Beijing) at HH:MM Beijing time.
+ * Always uses Asia/Shanghai regardless of the browser/server local zone.
+ */
+export function todayAtTime(hhmm: string) {
+  return fromBeijingDateAndTime(beijingTodayDate(), hhmm);
 }
