@@ -10,8 +10,8 @@ const notoSansSC = Noto_Sans_SC({
 });
 
 export const metadata: Metadata = {
-  title: "公会助手",
-  description: "游戏公会身份登录与功能入口",
+  title: "天堂2盟约 · 费沙服务器专用盟助手",
+  description: "天堂2盟约费沙服务器公会助手：拍卖、BOSS计时、排行榜",
 };
 
 export default function RootLayout({
@@ -20,8 +20,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="zh-CN" className={`${notoSansSC.variable} h-full antialiased`}>
-      <body className="min-h-full font-sans">{children}</body>
+    <html lang="zh-CN">
+      <body className={`${notoSansSC.variable} antialiased`}>{children}</body>
     </html>
   );
 }
