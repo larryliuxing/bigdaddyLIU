@@ -360,19 +360,27 @@ export function LeaderboardPanel({
               <li>名字与战力都通过后，再点「提交上榜」</li>
             </ol>
 
-            <details className="mt-3 rounded-xl border border-[var(--border-soft)] bg-[#0f1320] p-3">
+            <details className="mt-3 rounded-xl border border-[var(--border-soft)] bg-[#0f1320] p-3" open>
               <summary className="cursor-pointer text-sm text-[var(--text-muted)]">
-                查看截图示例（点击展开）
+                查看识别位置示意
               </summary>
               <div className="mt-3 space-y-2">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
-                  src="/leaderboard-ocr-example.png"
-                  alt="战力截图识别示例"
-                  className="w-full max-w-xl rounded-lg border border-[var(--border-soft)]"
+                  src="/leaderboard-ocr-example.svg"
+                  alt="战力截图识别区域示意：①蓝色名字 ②左上战力 ③中下战力"
+                  className="w-full max-w-xl rounded-lg border border-[var(--border-soft)] bg-[#0b0f18]"
                 />
-                <p className="text-xs text-[var(--text-muted)]">
-                  战力看左上与中下两处数字；名字请在上传后用鼠标/手指点蓝色字。
+                <p className="text-xs leading-5 text-[var(--text-muted)]">
+                  上图仅为位置示意。要用你的真实游戏截图做示例时，把图片放到服务器
+                  <code className="mx-1 text-[var(--text-primary)]">
+                    public/leaderboard-ocr-example.png
+                  </code>
+                  ，并把上面地址改成该 png（当前先用示意图）。
+                </p>
+                <p className="text-xs leading-5 text-[var(--text-muted)]">
+                  上传后请<strong className="text-[var(--text-primary)]">点击角色头顶的蓝色名字</strong>
+                  ；左上与中下两处战力数字须一致。
                 </p>
               </div>
             </details>
