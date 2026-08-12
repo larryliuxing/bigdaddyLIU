@@ -2,11 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ItemQuality, Member } from "@/lib/types";
-import {
-  QUALITY_OPTIONS,
-  qualityMeta,
-  recognizeImageText,
-} from "@/lib/auction/client";
+import { recognizeItemName } from "@/lib/auction/itemOcr";
+import { recognizeParticipantNames } from "@/lib/auction/participantOcr";
 import { LockIcon } from "@/components/Icons";
 
 function roleClass(role: Member["role"]) {
@@ -31,7 +28,7 @@ export function AddAuctionItemForm({
   const [startPrice, setStartPrice] = useState(5);
   const [bidIncrement, setBidIncrement] = useState(5);
   const [imageData, setImageData] = useState<string | null>(null);
-  const [ocrTokens, setOcrTokens] = useState<string[]>([]);
+  const [namePreview, setNamePreview] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [tab, setTab] = useState<"members" | "ocr">("members");
   const [ocrStatus, setOcrStatus] = useState("");
@@ -68,15 +65,20 @@ export function AddAuctionItemForm({
         reader.onload = async () => {
           const dataUrl = String(reader.result || "");
           setImageData(dataUrl);
-          setOcrStatus("正在识别拍品文字…");
+          setNamePreview(null);
+          setOcrStatus("正在识别顶部装备名称…");
           try {
-            const text = await recognizeImageText(file);
-            const lines = text
-              .split(/\n+/)
-              .map((l) => l.trim())
-              .filter(Boolean);
-            setOcrTokens(lines.slice(0, 12));
-            setOcrStatus(lines.length ? "点选识别文字填入名称" : "未识别到文字");
+            const result = await recognizeItemName(file);
+            setNamePreview(result.previewDataUrl);
+            if (result.name) {
+              setName(result.name);
+              setOcrStatus(`已识别名称：${result.name}`);
+            } else {
+              setOcrStatus("未识别到顶部名称，请手动填写");
+            }
+            if (result.quality) {
+              setQuality(result.quality);
+            }
           } catch {
             setOcrStatus("识别失败，可手动填写名称");
           }
@@ -85,14 +87,14 @@ export function AddAuctionItemForm({
         return;
       }
 
-      // members OCR
-      setOcrStatus("正在识别参与者名单…");
+      // members OCR — crop「名称」column, match against guild roster
+      setOcrStatus("正在识别参与者名称列…");
       try {
-        const text = await recognizeImageText(file);
+        const ocr = await recognizeParticipantNames(file);
         const res = await fetch("/api/auction/ocr-match", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text }),
+          body: JSON.stringify({ text: ocr.text, names: ocr.names }),
         });
         const data = await res.json();
         if (!res.ok) {
@@ -107,9 +109,14 @@ export function AddAuctionItemForm({
         });
         const extra = (data.unrecognized as string[]) || [];
         setOcrStatus(
-          `识别到 ${matched.length} 名成员` +
-            (extra.length ? `，未入库：${extra.slice(0, 5).join("、")}` : "") +
-            "。其余请从左侧手动点选补全。",
+          matched.length
+            ? `已匹配 ${matched.length} 名盟成员加入分红` +
+                (extra.length
+                  ? `；截图中另有未入库：${extra.slice(0, 5).join("、")}`
+                  : "")
+            : extra.length
+              ? `未匹配到盟成员。识别到：${extra.slice(0, 8).join("、")}。请手动点选补全。`
+              : "未识别到名称，请换更清晰的参与者截图或手动点选。",
         );
         setTab("members");
       } catch {
@@ -147,8 +154,8 @@ export function AddAuctionItemForm({
       setStartPrice(5);
       setBidIncrement(5);
       setImageData(null);
+      setNamePreview(null);
       setSelectedIds([]);
-      setOcrTokens([]);
       setOcrStatus("");
       onCreated();
     } catch {
@@ -162,8 +169,6 @@ export function AddAuctionItemForm({
     pasteRef.current?.focus();
   }, []);
 
-  const q = qualityMeta(quality);
-
   return (
     <form
       onSubmit={submit}
@@ -175,34 +180,14 @@ export function AddAuctionItemForm({
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
-        <label className="block space-y-1.5">
+        <label className="block space-y-1.5 sm:col-span-2">
           <span className="text-xs text-[var(--text-muted)]">拍品名称</span>
           <input
             className="field"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="粘贴图片后点选识别文字填入名称"
+            placeholder="粘贴装备图后自动识别顶部名称"
           />
-        </label>
-        <label className="block space-y-1.5">
-          <span className="text-xs text-[var(--text-muted)]">品质</span>
-          <div className="relative">
-            <select
-              className="field appearance-none pr-8"
-              value={quality}
-              onChange={(e) => setQuality(e.target.value as ItemQuality)}
-            >
-              {QUALITY_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-            <span
-              className="pointer-events-none absolute right-3 top-1/2 h-3 w-3 -translate-y-1/2 rounded-full"
-              style={{ background: q.color }}
-            />
-          </div>
         </label>
         <label className="block space-y-1.5">
           <span className="text-xs text-[var(--text-muted)]">起拍价 ¥</span>
@@ -237,32 +222,33 @@ export function AddAuctionItemForm({
           className="flex min-h-[140px] cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-[rgba(255,255,255,0.18)] bg-[#0f1320] px-4 text-center outline-none focus:border-[rgba(123,108,255,0.5)]"
         >
           {imageData ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={imageData}
-              alt="拍品"
-              className="max-h-40 rounded-lg object-contain"
-            />
+            <div className="flex w-full flex-col items-center gap-2 py-2">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={imageData}
+                alt="拍品"
+                className="max-h-40 rounded-lg object-contain"
+              />
+              {namePreview && (
+                <div className="w-full rounded-lg bg-white px-2 py-1">
+                  <p className="mb-1 text-[10px] text-slate-500">
+                    名称识别区域
+                  </p>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={namePreview}
+                    alt="名称裁切"
+                    className="mx-auto max-h-10 object-contain"
+                  />
+                </div>
+              )}
+            </div>
           ) : (
             <p className="text-sm text-[var(--text-muted)]">
-              点击此区域后 Ctrl+V 粘贴图片
+              点击此区域后 Ctrl+V 粘贴装备详情图（自动识别顶部彩色名称）
             </p>
           )}
         </div>
-        {ocrTokens.length > 0 && (
-          <div className="flex flex-wrap gap-2">
-            {ocrTokens.map((token) => (
-              <button
-                key={token}
-                type="button"
-                className="rounded-lg border border-[var(--border-soft)] bg-[#1c2230] px-2.5 py-1 text-xs hover:border-[rgba(123,108,255,0.45)]"
-                onClick={() => setName(token)}
-              >
-                {token}
-              </button>
-            ))}
-          </div>
-        )}
         {ocrStatus && (
           <p className="text-xs text-[var(--text-muted)]">{ocrStatus}</p>
         )}
@@ -320,9 +306,9 @@ export function AddAuctionItemForm({
                 onPaste={(e) => handleImagePaste(e, "members")}
                 className="flex min-h-40 items-center justify-center rounded-lg border border-dashed border-[rgba(255,255,255,0.15)] px-3 text-center text-sm text-[var(--text-muted)] outline-none focus:border-[rgba(123,108,255,0.5)]"
               >
-                粘贴游戏「参与者」截图，自动识别名字并勾选；
+                粘贴游戏「参与者」截图，自动识别左侧名称列，
                 <br />
-                未识别到的请切回成员名单手动补选
+                与盟成员同名的会加入分红名单；其余请手动补选
               </div>
             )}
           </div>
