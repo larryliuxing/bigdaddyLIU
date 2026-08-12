@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { Boss } from "@/lib/types";
 import {
@@ -114,6 +114,35 @@ export function AdminBossPanel({ adminName }: { adminName: string }) {
     image: string | null;
     note: string | null;
   } | null>(null);
+  const [timerBusy, setTimerBusy] = useState<{
+    bossId: number;
+    action: "kill" | "next";
+  } | null>(null);
+  const [timerFlash, setTimerFlash] = useState<{
+    bossId: number;
+    action: "kill" | "next";
+    text: string;
+  } | null>(null);
+  const timerFlashTimer = useRef<number | null>(null);
+
+  function flashTimerOk(
+    bossId: number,
+    action: "kill" | "next",
+    text: string,
+  ) {
+    if (timerFlashTimer.current) window.clearTimeout(timerFlashTimer.current);
+    setTimerFlash({ bossId, action, text });
+    timerFlashTimer.current = window.setTimeout(() => {
+      setTimerFlash(null);
+      timerFlashTimer.current = null;
+    }, 2200);
+  }
+
+  useEffect(() => {
+    return () => {
+      if (timerFlashTimer.current) window.clearTimeout(timerFlashTimer.current);
+    };
+  }, []);
 
   function draftFromBoss(boss: Boss) {
     return {
@@ -233,28 +262,40 @@ export function AdminBossPanel({ adminName }: { adminName: string }) {
     const nextSpawnAt = new Date(
       new Date(lastKillAt).getTime() + boss.intervalHours * 60 * 60 * 1000,
     ).toISOString();
-    const ok = await patchBoss(boss.id, { lastKillAt, nextSpawnAt });
-    if (ok) {
-      setTimerDrafts((prev) => ({
-        ...prev,
-        [boss.id]: {
-          ...draft,
-          nextDate: beijingDateFromIso(nextSpawnAt),
-          nextTime: beijingHmFromIso(nextSpawnAt),
-        },
-      }));
-      setMessage(
-        `已按击杀时间更新：下次刷新 = 击杀 + ${boss.intervalHours} 小时`,
-      );
+    setTimerBusy({ bossId: boss.id, action: "kill" });
+    try {
+      const ok = await patchBoss(boss.id, { lastKillAt, nextSpawnAt });
+      if (ok) {
+        setTimerDrafts((prev) => ({
+          ...prev,
+          [boss.id]: {
+            ...draft,
+            nextDate: beijingDateFromIso(nextSpawnAt),
+            nextTime: beijingHmFromIso(nextSpawnAt),
+          },
+        }));
+        const tip = `已按击杀时间计时 · 下次刷新 ${formatBeijingDateTime(nextSpawnAt)}`;
+        setMessage(tip);
+        flashTimerOk(boss.id, "kill", tip);
+      }
+    } finally {
+      setTimerBusy(null);
     }
   }
 
   async function applyNextSpawn(boss: Boss) {
     const draft = timerDrafts[boss.id] || draftFromBoss(boss);
     const nextSpawnAt = fromBeijingDateAndTime(draft.nextDate, draft.nextTime);
-    const ok = await patchBoss(boss.id, { nextSpawnAt });
-    if (ok) {
-      setMessage("已设置下次刷新时间，盟员端倒计时已同步");
+    setTimerBusy({ bossId: boss.id, action: "next" });
+    try {
+      const ok = await patchBoss(boss.id, { nextSpawnAt });
+      if (ok) {
+        const tip = `已设置下次刷新 · ${formatBeijingDateTime(nextSpawnAt)}`;
+        setMessage(tip);
+        flashTimerOk(boss.id, "next", tip);
+      }
+    } finally {
+      setTimerBusy(null);
     }
   }
 
@@ -479,7 +520,13 @@ export function AdminBossPanel({ adminName }: { adminName: string }) {
                     </div>
                   </div>
 
-                  <div className="mt-3 space-y-3 rounded-xl border border-[var(--border-soft)] bg-[#0f1320] p-3">
+                  <div
+                    className={`mt-3 space-y-3 rounded-xl border bg-[#0f1320] p-3 transition ${
+                      timerFlash?.bossId === boss.id
+                        ? "border-emerald-400/50 shadow-[0_0_0_1px_rgba(52,211,153,0.25)]"
+                        : "border-[var(--border-soft)]"
+                    }`}
+                  >
                     <p className="text-xs font-medium text-[var(--text-muted)]">
                       手动调倒计时（北京时间）· 间隔 {boss.intervalHours} 小时
                     </p>
@@ -517,10 +564,22 @@ export function AdminBossPanel({ adminName }: { adminName: string }) {
                       <div className="flex items-end">
                         <button
                           type="button"
-                          className="btn-primary w-full"
+                          className={`w-full rounded-xl px-3 py-2.5 text-sm font-semibold transition disabled:opacity-60 ${
+                            timerFlash?.bossId === boss.id &&
+                            timerFlash.action === "kill"
+                              ? "bg-emerald-500 text-white"
+                              : "btn-primary"
+                          }`}
+                          disabled={Boolean(timerBusy)}
                           onClick={() => applyKillTime(boss)}
                         >
-                          按击杀时间计时
+                          {timerBusy?.bossId === boss.id &&
+                          timerBusy.action === "kill"
+                            ? "设置中…"
+                            : timerFlash?.bossId === boss.id &&
+                                timerFlash.action === "kill"
+                              ? "已设置 ✓"
+                              : "按击杀时间计时"}
                         </button>
                       </div>
                     </div>
@@ -558,13 +617,30 @@ export function AdminBossPanel({ adminName }: { adminName: string }) {
                       <div className="flex items-end">
                         <button
                           type="button"
-                          className="btn-ghost w-full"
+                          className={`w-full rounded-xl px-3 py-2.5 text-sm font-semibold transition disabled:opacity-60 ${
+                            timerFlash?.bossId === boss.id &&
+                            timerFlash.action === "next"
+                              ? "bg-emerald-500 text-white"
+                              : "btn-ghost"
+                          }`}
+                          disabled={Boolean(timerBusy)}
                           onClick={() => applyNextSpawn(boss)}
                         >
-                          直接设下次刷新
+                          {timerBusy?.bossId === boss.id &&
+                          timerBusy.action === "next"
+                            ? "设置中…"
+                            : timerFlash?.bossId === boss.id &&
+                                timerFlash.action === "next"
+                              ? "已设置 ✓"
+                              : "直接设下次刷新"}
                         </button>
                       </div>
                     </div>
+                    {timerFlash?.bossId === boss.id && (
+                      <p className="rounded-lg bg-emerald-500/15 px-3 py-2 text-xs text-emerald-300">
+                        {timerFlash.text} · 盟员端倒计时已同步
+                      </p>
+                    )}
                   </div>
 
                   {editing && (
