@@ -1,9 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAdminSession } from "@/lib/auth";
 import {
-  addTemporaryDividend,
   calculateDividends,
-  deleteDividendEntry,
   getAuctionSettings,
   getDividendReport,
   getLatestSession,
@@ -12,7 +10,6 @@ import {
   listSessions,
   setItemDividendMembers,
   updateAuctionSettings,
-  updateDividendAmount,
 } from "@/lib/db";
 import { buildRoomState } from "@/lib/auction/room";
 
@@ -79,7 +76,8 @@ export async function POST(request: Request) {
     }
 
     if (action === "calculate") {
-      const taxPercent = body?.taxPercent != null ? Number(body.taxPercent) : null;
+      const taxPercent =
+        body?.taxPercent != null ? Number(body.taxPercent) : null;
       const taxRate =
         taxPercent != null && Number.isFinite(taxPercent)
           ? taxPercent / 100
@@ -109,58 +107,16 @@ export async function POST(request: Request) {
       });
     }
 
-    if (action === "addTemporary") {
-      const amount = Number(body?.amount ?? 0);
-      if (!(amount > 0)) {
-        return NextResponse.json({ error: "金额必须大于 0" }, { status: 400 });
-      }
-      const entry = addTemporaryDividend({
-        sessionId: session.id,
-        memberId: body?.memberId ? Number(body.memberId) : null,
-        memberName: String(body?.memberName ?? ""),
-        amount,
-        note: body?.note,
-      });
-      return NextResponse.json({
-        entry,
-        report: getDividendReport(session.id),
-        dividends: listDividends(session.id),
-        room: buildRoomState(session.id),
-      });
-    }
-
-    if (action === "deleteTemporary") {
-      const ok = deleteDividendEntry(Number(body?.id), session.id);
-      if (!ok) {
-        return NextResponse.json({ error: "记录不存在" }, { status: 404 });
-      }
-      return NextResponse.json({
-        ok: true,
-        report: getDividendReport(session.id),
-        dividends: listDividends(session.id),
-        room: buildRoomState(session.id),
-      });
-    }
-
-    if (action === "updateAmount") {
-      const amount = Number(body?.amount ?? 0);
-      if (!(amount >= 0) || Number.isNaN(amount)) {
-        return NextResponse.json({ error: "金额无效" }, { status: 400 });
-      }
-      const entry = updateDividendAmount(
-        Number(body?.id),
-        amount,
-        session.id,
+    // Total-table temporary add/remove is intentionally unsupported.
+    if (
+      action === "addTemporary" ||
+      action === "deleteTemporary" ||
+      action === "updateAmount"
+    ) {
+      return NextResponse.json(
+        { error: "综合总表不支持临时加人，请在单件拍品中增删分红成员" },
+        { status: 400 },
       );
-      if (!entry) {
-        return NextResponse.json({ error: "记录不存在" }, { status: 404 });
-      }
-      return NextResponse.json({
-        entry,
-        report: getDividendReport(session.id),
-        dividends: listDividends(session.id),
-        room: buildRoomState(session.id),
-      });
     }
 
     return NextResponse.json({ error: "未知操作" }, { status: 400 });

@@ -323,6 +323,10 @@ function seedIfEmpty(database: Database.Database) {
   }
 
   backfillSaleHistory(database);
+  // Legacy: wipe leftover total-table temporary rows (feature removed).
+  database
+    .prepare(`DELETE FROM auction_dividend_entries WHERE is_temporary = 1`)
+    .run();
 }
 
 function ensureColumn(
@@ -1894,7 +1898,9 @@ export function setItemDividendMembers(
 export function listDividends(sessionId: number): DividendEntry[] {
   const rows = ensureDb()
     .prepare(
-      `SELECT * FROM auction_dividend_entries WHERE session_id = ? ORDER BY amount DESC, id ASC`,
+      `SELECT * FROM auction_dividend_entries
+       WHERE session_id = ? AND is_temporary = 0
+       ORDER BY amount DESC, id ASC`,
     )
     .all(sessionId) as Array<{
     id: number;
@@ -1913,138 +1919,10 @@ export function listDividends(sessionId: number): DividendEntry[] {
     memberId: r.member_id,
     memberName: r.member_name,
     amount: r.amount,
-    isTemporary: Boolean(r.is_temporary),
+    isTemporary: false,
     note: r.note,
     belowThreshold: r.member_id != null ? below.has(r.member_id) : false,
   }));
-}
-
-export function addTemporaryDividend(input: {
-  sessionId: number;
-  memberId?: number | null;
-  memberName: string;
-  amount: number;
-  note?: string;
-}): DividendEntry {
-  if (!isDividendsCalculated(input.sessionId)) {
-    throw new Error("请先完成自动分红计算");
-  }
-
-  const memberId = input.memberId ?? null;
-  let memberName = input.memberName.trim();
-  if (memberId) {
-    const member = getMemberById(memberId);
-    if (!member) throw new Error("成员不存在");
-    memberName = member.name;
-  }
-
-  const result = ensureDb()
-    .prepare(
-      `INSERT INTO auction_dividend_entries
-       (session_id, member_id, member_name, amount, is_temporary, note)
-       VALUES (?, ?, ?, ?, 1, ?)`,
-    )
-    .run(
-      input.sessionId,
-      memberId,
-      memberName,
-      roundMoney(input.amount),
-      input.note ?? "临时加人调整",
-    );
-
-  addEvent(
-    input.sessionId,
-    "dividend",
-    `临时调整：${memberName} +¥${roundMoney(input.amount)}`,
-  );
-
-  const row = ensureDb()
-    .prepare(`SELECT * FROM auction_dividend_entries WHERE id = ?`)
-    .get(Number(result.lastInsertRowid)) as {
-    id: number;
-    session_id: number;
-    member_id: number | null;
-    member_name: string;
-    amount: number;
-    is_temporary: number;
-    note: string | null;
-  };
-
-  return {
-    id: row.id,
-    sessionId: row.session_id,
-    memberId: row.member_id,
-    memberName: row.member_name,
-    amount: row.amount,
-    isTemporary: Boolean(row.is_temporary),
-    note: row.note,
-  };
-}
-
-export function deleteDividendEntry(
-  entryId: number,
-  sessionId?: number,
-): boolean {
-  const existing = ensureDb()
-    .prepare(`SELECT * FROM auction_dividend_entries WHERE id = ?`)
-    .get(entryId) as
-    | {
-        id: number;
-        session_id: number;
-        member_name: string;
-        is_temporary: number;
-      }
-    | undefined;
-  if (!existing) return false;
-  if (sessionId && existing.session_id !== sessionId) return false;
-  if (!existing.is_temporary) {
-    throw new Error("自动分红请通过调整拍品名单修改，仅可删除临时加人");
-  }
-  ensureDb()
-    .prepare(`DELETE FROM auction_dividend_entries WHERE id = ?`)
-    .run(entryId);
-  addEvent(
-    existing.session_id,
-    "dividend",
-    `已删除临时分红：${existing.member_name}`,
-  );
-  return true;
-}
-
-export function updateDividendAmount(
-  entryId: number,
-  amount: number,
-  sessionId?: number,
-): DividendEntry | null {
-  const existing = ensureDb()
-    .prepare(`SELECT * FROM auction_dividend_entries WHERE id = ?`)
-    .get(entryId) as
-    | {
-        id: number;
-        session_id: number;
-        member_id: number | null;
-        member_name: string;
-        amount: number;
-        is_temporary: number;
-        note: string | null;
-      }
-    | undefined;
-  if (!existing) return null;
-  if (sessionId && existing.session_id !== sessionId) return null;
-
-  ensureDb()
-    .prepare(`UPDATE auction_dividend_entries SET amount = ? WHERE id = ?`)
-    .run(roundMoney(amount), entryId);
-
-  return {
-    id: existing.id,
-    sessionId: existing.session_id,
-    memberId: existing.member_id,
-    memberName: existing.member_name,
-    amount: roundMoney(amount),
-    isTemporary: Boolean(existing.is_temporary),
-    note: existing.note,
-  };
 }
 
 export function matchNamesFromText(text: string): {

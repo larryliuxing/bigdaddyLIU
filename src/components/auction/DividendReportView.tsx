@@ -249,6 +249,9 @@ export function DividendReportView({
             合计 {money(summary.payoutTotal)}
           </span>
         </div>
+        <p className="border-b border-[var(--border-soft)] px-4 py-2 text-xs text-[var(--text-muted)]">
+          总表由各拍品分红自动汇总，仅可在上方单件拍品中增删成员。
+        </p>
         <ul className="divide-y divide-[var(--border-soft)]">
           {report.totals.length === 0 && (
             <li className="px-4 py-6 text-sm text-[var(--text-muted)]">
