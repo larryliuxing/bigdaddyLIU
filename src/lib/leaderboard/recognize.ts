@@ -1,16 +1,28 @@
 "use client";
 
 import { createWorker, PSM, type Worker } from "tesseract.js";
-import { buildCombatPowerOcrVariants } from "./preprocess";
+import {
+  buildNameClickCrops,
+  buildNameClickPreview,
+  buildPowerCropSets,
+} from "./preprocess";
+import { extractCombatPower } from "./parse";
 
-export type CombatPowerOcrResult = {
-  nameText: string;
+export type PowerOcrResult = {
+  ok: boolean;
+  combatPower: number | null;
+  powerTop: number | null;
+  powerBottom: number | null;
+  layoutId: string | null;
   powerTopText: string;
   powerBottomText: string;
-  /** Combined for debug / legacy */
   text: string;
-  /** Convenience merge of both power crops */
-  powerText: string;
+  error?: string;
+};
+
+export type NameOcrResult = {
+  nameText: string;
+  previewDataUrl: string;
 };
 
 let mixedWorkerPromise: Promise<Worker> | null = null;
@@ -30,11 +42,18 @@ async function getNameWorker() {
   return nameWorkerPromise;
 }
 
-const NAME_PSMS = [PSM.SINGLE_LINE, PSM.SPARSE_TEXT, PSM.SINGLE_BLOCK] as const;
+async function recognizeBlock(worker: Worker, dataUrl: string) {
+  await worker.setParameters({
+    tessedit_pageseg_mode: PSM.SINGLE_BLOCK,
+    preserve_interword_spaces: "1",
+  });
+  const result = await worker.recognize(dataUrl);
+  return (result.data.text || "").trim();
+}
 
 async function recognizeNameCrop(worker: Worker, dataUrl: string) {
   const chunks: string[] = [];
-  for (const psm of NAME_PSMS) {
+  for (const psm of [PSM.SINGLE_LINE, PSM.SPARSE_TEXT, PSM.SINGLE_WORD] as const) {
     try {
       await worker.setParameters({
         tessedit_pageseg_mode: psm,
@@ -50,15 +69,6 @@ async function recognizeNameCrop(worker: Worker, dataUrl: string) {
   return chunks;
 }
 
-async function recognizeBlock(worker: Worker, dataUrl: string) {
-  await worker.setParameters({
-    tessedit_pageseg_mode: PSM.SINGLE_BLOCK,
-    preserve_interword_spaces: "1",
-  });
-  const result = await worker.recognize(dataUrl);
-  return (result.data.text || "").trim();
-}
-
 function uniqueJoin(chunks: string[]) {
   const seen = new Set<string>();
   const merged: string[] = [];
@@ -72,56 +82,159 @@ function uniqueJoin(chunks: string[]) {
 }
 
 /**
- * Ratio-template OCR:
- * - nameText from top-left blue name box
- * - powerTopText from top-left 能力值 box
- * - powerBottomText from center-bottom combat power box
+ * Auto-detect combat power from multiple HUD / panel layouts.
+ * Succeeds only when a top-box number equals a bottom-box number.
  */
-export async function recognizeCombatPowerScreenshot(
+export async function recognizeCombatPowers(
   image: File | Blob | string,
-): Promise<CombatPowerOcrResult> {
-  const [nameWorker, mixedWorker] = await Promise.all([
-    getNameWorker(),
-    getMixedWorker(),
-  ]);
-  const variants = await buildCombatPowerOcrVariants(image);
-  const nameChunks: string[] = [];
-  const powerTopChunks: string[] = [];
-  const powerBottomChunks: string[] = [];
+): Promise<PowerOcrResult> {
+  const worker = await getMixedWorker();
+  const sets = await buildPowerCropSets(image);
 
-  for (const variant of variants) {
-    try {
-      if (variant.mode === "name") {
-        nameChunks.push(...(await recognizeNameCrop(nameWorker, variant.dataUrl)));
-      } else if (variant.mode === "powerTop") {
-        const text = await recognizeBlock(mixedWorker, variant.dataUrl);
-        if (text) powerTopChunks.push(text);
-      } else {
-        const text = await recognizeBlock(mixedWorker, variant.dataUrl);
-        if (text) powerBottomChunks.push(text);
+  let fallbackTop: number | null = null;
+  let fallbackBottom: number | null = null;
+  let fallbackTopText = "";
+  let fallbackBottomText = "";
+
+  for (const set of sets) {
+    const topChunks: string[] = [];
+    const bottomChunks: string[] = [];
+
+    for (const url of set.topDataUrls) {
+      try {
+        const text = await recognizeBlock(worker, url);
+        if (text) topChunks.push(text);
+      } catch {
+        // continue
       }
+    }
+    for (const url of set.bottomDataUrls) {
+      try {
+        const text = await recognizeBlock(worker, url);
+        if (text) bottomChunks.push(text);
+      } catch {
+        // continue
+      }
+    }
+
+    const powerTopText = uniqueJoin(topChunks);
+    const powerBottomText = uniqueJoin(bottomChunks);
+    const powerTop = extractCombatPower(powerTopText);
+    const powerBottom = extractCombatPower(powerBottomText);
+
+    if (powerTop != null && fallbackTop == null) {
+      fallbackTop = powerTop;
+      fallbackTopText = powerTopText;
+    }
+    if (powerBottom != null && fallbackBottom == null) {
+      fallbackBottom = powerBottom;
+      fallbackBottomText = powerBottomText;
+    }
+
+    if (powerTop != null && powerBottom != null && powerTop === powerBottom) {
+      try {
+        await worker.setParameters({ tessedit_pageseg_mode: PSM.AUTO });
+      } catch {
+        // ignore
+      }
+      return {
+        ok: true,
+        combatPower: powerTop,
+        powerTop,
+        powerBottom,
+        layoutId: set.layoutId,
+        powerTopText,
+        powerBottomText,
+        text: uniqueJoin([powerTopText, powerBottomText]),
+      };
+    }
+  }
+
+  try {
+    await worker.setParameters({ tessedit_pageseg_mode: PSM.AUTO });
+  } catch {
+    // ignore
+  }
+
+  if (fallbackTop == null && fallbackBottom == null) {
+    return {
+      ok: false,
+      combatPower: null,
+      powerTop: null,
+      powerBottom: null,
+      layoutId: null,
+      powerTopText: "",
+      powerBottomText: "",
+      text: "",
+      error: "未识别到战力数字，请截取包含左上与中下战力的完整界面",
+    };
+  }
+
+  if (
+    fallbackTop != null &&
+    fallbackBottom != null &&
+    fallbackTop !== fallbackBottom
+  ) {
+    return {
+      ok: false,
+      combatPower: null,
+      powerTop: fallbackTop,
+      powerBottom: fallbackBottom,
+      layoutId: null,
+      powerTopText: fallbackTopText,
+      powerBottomText: fallbackBottomText,
+      text: uniqueJoin([fallbackTopText, fallbackBottomText]),
+      error: `左上战力（${fallbackTop}）与中下战力（${fallbackBottom}）不一致`,
+    };
+  }
+
+  return {
+    ok: false,
+    combatPower: fallbackTop ?? fallbackBottom,
+    powerTop: fallbackTop,
+    powerBottom: fallbackBottom,
+    layoutId: null,
+    powerTopText: fallbackTopText,
+    powerBottomText: fallbackBottomText,
+    text: uniqueJoin([fallbackTopText, fallbackBottomText]),
+    error:
+      fallbackTop == null
+        ? "未识别到左上战力"
+        : "未识别到中下战力",
+  };
+}
+
+/**
+ * OCR the blue character name from a user click on the screenshot.
+ */
+export async function recognizeNameAtClick(
+  image: File | Blob | string,
+  xRatio: number,
+  yRatio: number,
+): Promise<NameOcrResult> {
+  const [worker, crops, previewDataUrl] = await Promise.all([
+    getNameWorker(),
+    buildNameClickCrops(image, xRatio, yRatio),
+    buildNameClickPreview(image, xRatio, yRatio),
+  ]);
+
+  const chunks: string[] = [];
+  for (const url of crops) {
+    try {
+      chunks.push(...(await recognizeNameCrop(worker, url)));
     } catch {
       // continue
     }
   }
 
   try {
-    await nameWorker.setParameters({ tessedit_pageseg_mode: PSM.AUTO });
-    await mixedWorker.setParameters({ tessedit_pageseg_mode: PSM.AUTO });
+    await worker.setParameters({ tessedit_pageseg_mode: PSM.AUTO });
   } catch {
     // ignore
   }
 
-  const nameText = uniqueJoin(nameChunks);
-  const powerTopText = uniqueJoin(powerTopChunks);
-  const powerBottomText = uniqueJoin(powerBottomChunks);
-  const powerText = uniqueJoin([powerTopText, powerBottomText].filter(Boolean));
-
   return {
-    nameText,
-    powerTopText,
-    powerBottomText,
-    powerText,
-    text: uniqueJoin([nameText, powerTopText, powerBottomText].filter(Boolean)),
+    nameText: uniqueJoin(chunks),
+    previewDataUrl,
   };
 }

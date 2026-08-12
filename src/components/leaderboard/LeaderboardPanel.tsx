@@ -7,10 +7,30 @@ import type {
   LeaderboardStats,
   SessionUser,
 } from "@/lib/types";
-import { parseCombatPowerScreenshot } from "@/lib/leaderboard/parse";
-import { recognizeCombatPowerScreenshot } from "@/lib/leaderboard/recognize";
+import { extractDetectedName } from "@/lib/leaderboard/parse";
+import {
+  recognizeCombatPowers,
+  recognizeNameAtClick,
+} from "@/lib/leaderboard/recognize";
 import { TrophyIcon } from "@/components/Icons";
 import { hubPath } from "@/lib/nav";
+
+/** Map a click on an object-contain <img> to natural-image ratios. */
+function clickToImageRatio(e: React.MouseEvent<HTMLImageElement>) {
+  const img = e.currentTarget;
+  const rect = img.getBoundingClientRect();
+  const nw = img.naturalWidth || 1;
+  const nh = img.naturalHeight || 1;
+  const scale = Math.min(rect.width / nw, rect.height / nh);
+  const dispW = nw * scale;
+  const dispH = nh * scale;
+  const offsetX = (rect.width - dispW) / 2;
+  const offsetY = (rect.height - dispH) / 2;
+  const x = (e.clientX - rect.left - offsetX) / dispW;
+  const y = (e.clientY - rect.top - offsetY) / dispH;
+  if (x < 0 || y < 0 || x > 1 || y > 1) return null;
+  return { x, y };
+}
 
 export function LeaderboardPanel({
   member,
@@ -21,6 +41,7 @@ export function LeaderboardPanel({
 }) {
   const router = useRouter();
   const pasteRef = useRef<HTMLDivElement>(null);
+  const shotRef = useRef<HTMLImageElement>(null);
   const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
   const [stats, setStats] = useState<LeaderboardStats>({
     count: 0,
@@ -29,20 +50,25 @@ export function LeaderboardPanel({
     thresholdRatio: 0.85,
   });
   const [imageData, setImageData] = useState<string | null>(null);
-  const [ocrText, setOcrText] = useState("");
+  const [imageSource, setImageSource] = useState<File | string | null>(null);
   const [ocrNameText, setOcrNameText] = useState("");
-  const [ocrPowerTopText, setOcrPowerTopText] = useState("");
-  const [ocrPowerBottomText, setOcrPowerBottomText] = useState("");
-  const [previewPower, setPreviewPower] = useState<number | null>(null);
-  const [previewPowerTop, setPreviewPowerTop] = useState<number | null>(null);
-  const [previewPowerBottom, setPreviewPowerBottom] = useState<number | null>(
+  const [namePreview, setNamePreview] = useState<string | null>(null);
+  const [clickMark, setClickMark] = useState<{ x: number; y: number } | null>(
     null,
   );
+  const [powerTop, setPowerTop] = useState<number | null>(null);
+  const [powerBottom, setPowerBottom] = useState<number | null>(null);
+  const [combatPower, setCombatPower] = useState<number | null>(null);
+  const [ocrPowerTopText, setOcrPowerTopText] = useState("");
+  const [ocrPowerBottomText, setOcrPowerBottomText] = useState("");
+  const [ocrText, setOcrText] = useState("");
   const [previewNameOk, setPreviewNameOk] = useState<boolean | null>(null);
+  const [powersOk, setPowersOk] = useState<boolean | null>(null);
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [recognizingName, setRecognizingName] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -62,58 +88,111 @@ export function LeaderboardPanel({
     };
   }, []);
 
+  function resetNameState() {
+    setOcrNameText("");
+    setNamePreview(null);
+    setClickMark(null);
+    setPreviewNameOk(null);
+  }
+
   async function handleImage(file: File) {
     setError("");
     setMessage("");
-    setStatus("正在按示例位置识别…");
-    setPreviewPower(null);
-    setPreviewPowerTop(null);
-    setPreviewPowerBottom(null);
-    setPreviewNameOk(null);
+    setStatus("正在识别战力数字…");
+    setPowerTop(null);
+    setPowerBottom(null);
+    setCombatPower(null);
+    setPowersOk(null);
+    resetNameState();
+    setOcrPowerTopText("");
+    setOcrPowerBottomText("");
+    setOcrText("");
 
     const reader = new FileReader();
     reader.onload = async () => {
       const dataUrl = String(reader.result || "");
       setImageData(dataUrl);
+      setImageSource(file);
       try {
-        const ocr = await recognizeCombatPowerScreenshot(file);
-        setOcrText(ocr.text);
-        setOcrNameText(ocr.nameText);
-        setOcrPowerTopText(ocr.powerTopText);
-        setOcrPowerBottomText(ocr.powerBottomText);
+        const powers = await recognizeCombatPowers(file);
+        setPowerTop(powers.powerTop);
+        setPowerBottom(powers.powerBottom);
+        setCombatPower(powers.ok ? powers.combatPower : null);
+        setPowersOk(powers.ok);
+        setOcrPowerTopText(powers.powerTopText);
+        setOcrPowerBottomText(powers.powerBottomText);
+        setOcrText(powers.text);
 
-        if (!member) {
-          setStatus("已识别，请以成员身份登录后提交");
-          setPreviewNameOk(null);
-          setPreviewPower(null);
-        } else {
-          const parsed = parseCombatPowerScreenshot(
-            {
-              nameText: ocr.nameText,
-              powerTopText: ocr.powerTopText,
-              powerBottomText: ocr.powerBottomText,
-              powerText: ocr.powerText,
-              text: ocr.text,
-            },
-            member.name,
+        if (!powers.ok) {
+          setStatus(
+            `${powers.error || "战力识别未通过"}。仍可点击蓝色角色名，但需战力一致才能提交。`,
           );
-          setPreviewNameOk(parsed.detectedName === member.name || parsed.ok);
-          setPreviewPower(parsed.combatPower);
-          setPreviewPowerTop(parsed.powerTop);
-          setPreviewPowerBottom(parsed.powerBottom);
-          if (!parsed.ok) {
-            setStatus(parsed.error || "识别未通过");
-          } else {
-            setStatus(
-              `识别成功：${member.name} · 战力 ${parsed.combatPower}（左上=中下），可提交上榜`,
-            );
-          }
+        } else if (!member) {
+          setStatus(
+            `战力已识别：${powers.combatPower}。请登录成员身份后点击蓝色角色名。`,
+          );
+        } else {
+          setStatus(
+            `战力已识别：${powers.combatPower}（两处一致）。请点击截图中的蓝色角色名「${member.name}」。`,
+          );
         }
       } catch {
-        setStatus("识别失败，请重试或更换截图");
+        setStatus("战力识别失败，请重试或更换截图");
+        setPowersOk(false);
       }
     };
     reader.readAsDataURL(file);
+  }
+
+  async function onImageClick(e: React.MouseEvent<HTMLImageElement>) {
+    if (!member || !imageSource || !imageData) return;
+    const ratio = clickToImageRatio(e);
+    if (!ratio) {
+      setStatus("请点在截图画面内");
+      return;
+    }
+
+    setRecognizingName(true);
+    setError("");
+    setClickMark(ratio);
+    setStatus("正在识别你点击的蓝色名字…");
+    try {
+      const nameOcr = await recognizeNameAtClick(
+        imageSource,
+        ratio.x,
+        ratio.y,
+      );
+      setOcrNameText(nameOcr.nameText);
+      setNamePreview(nameOcr.previewDataUrl);
+
+      const nameHit = extractDetectedName(nameOcr.nameText, member.name);
+      setPreviewNameOk(nameHit.matched);
+
+      if (!nameHit.matched) {
+        setStatus(
+          nameHit.detectedName
+            ? `点击区域识别为「${nameHit.detectedName}」，与账号「${member.name}」不一致，请点准蓝色名字`
+            : `未识别到「${member.name}」，请对准蓝色角色名再点一次`,
+        );
+        return;
+      }
+
+      if (powersOk && powerTop != null && powerBottom === powerTop) {
+        setCombatPower(powerTop);
+        setStatus(
+          `校验通过：${member.name} · 战力 ${powerTop}，可以提交上榜`,
+        );
+      } else {
+        setStatus(
+          `名字已确认是「${member.name}」，但战力双校验未通过（左上 ${powerTop ?? "-"} / 中下 ${powerBottom ?? "-"}）`,
+        );
+      }
+    } catch {
+      setStatus("名字识别失败，请再对准蓝色字点击一次");
+      setPreviewNameOk(false);
+    } finally {
+      setRecognizingName(false);
+    }
   }
 
   function onPaste(e: React.ClipboardEvent) {
@@ -134,9 +213,20 @@ export function LeaderboardPanel({
     e.target.value = "";
   }
 
+  const canSubmit =
+    Boolean(member) &&
+    previewNameOk === true &&
+    powersOk === true &&
+    combatPower != null &&
+    Boolean(ocrNameText);
+
   async function submit() {
     if (!member) {
       setError("请先选择身份登录");
+      return;
+    }
+    if (!canSubmit) {
+      setError("请先完成战力识别，并点击蓝色角色名通过校验");
       return;
     }
     setBusy(true);
@@ -151,6 +241,8 @@ export function LeaderboardPanel({
           ocrNameText,
           ocrPowerTopText,
           ocrPowerBottomText,
+          powerTop,
+          powerBottom,
           imageData,
         }),
       });
@@ -259,11 +351,14 @@ export function LeaderboardPanel({
             <h2 className="text-sm font-medium text-[var(--text-muted)]">
               上传本人战力截图
             </h2>
-            <p className="mt-1 text-xs leading-5 text-[var(--text-muted)]">
-              请按下方示例截取<strong className="text-[var(--text-primary)]">完整游戏界面</strong>
-              ：① 左上蓝色名字须为「{member.name}」；② 左上能力值/战力与 ③ 中下战力数字须一致。
-              图片大小不限，按相对位置识别。
-            </p>
+            <ol className="mt-2 list-decimal space-y-1 pl-5 text-xs leading-5 text-[var(--text-muted)]">
+              <li>上传完整游戏界面截图（系统自动识别左上与中下两处战力，须一致）</li>
+              <li>
+                在预览图上<strong className="text-[var(--text-primary)]">点击蓝色角色名「{member.name}」</strong>
+                （点名字本身，不要点别处）
+              </li>
+              <li>名字与战力都通过后，再点「提交上榜」</li>
+            </ol>
 
             <details className="mt-3 rounded-xl border border-[var(--border-soft)] bg-[#0f1320] p-3">
               <summary className="cursor-pointer text-sm text-[var(--text-muted)]">
@@ -273,14 +368,12 @@ export function LeaderboardPanel({
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src="/leaderboard-ocr-example.png"
-                  alt="战力截图识别示例：①蓝色名字 ②左上战力 ③中下战力"
+                  alt="战力截图识别示例"
                   className="w-full max-w-xl rounded-lg border border-[var(--border-soft)]"
                 />
-                <ol className="list-decimal space-y-1 pl-5 text-xs leading-5 text-[var(--text-muted)]">
-                  <li>左上角蓝色角色名</li>
-                  <li>左上角能力值/战力数字</li>
-                  <li>界面中下方战力大数字（须与②相同）</li>
-                </ol>
+                <p className="text-xs text-[var(--text-muted)]">
+                  战力看左上与中下两处数字；名字请在上传后用鼠标/手指点蓝色字。
+                </p>
               </div>
             </details>
 
@@ -288,21 +381,61 @@ export function LeaderboardPanel({
               ref={pasteRef}
               tabIndex={0}
               onPaste={onPaste}
-              className="mt-3 flex min-h-[150px] cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-[rgba(255,255,255,0.18)] bg-[#0f1320] px-4 text-center outline-none focus:border-[rgba(123,108,255,0.5)]"
+              className="mt-3 rounded-xl border border-dashed border-[rgba(255,255,255,0.18)] bg-[#0f1320] px-4 py-4 text-center outline-none focus:border-[rgba(123,108,255,0.5)]"
             >
               {imageData ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={imageData}
-                  alt="战力截图"
-                  className="max-h-52 rounded-lg object-contain"
-                />
+                <div className="relative mx-auto inline-block max-w-full">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    ref={shotRef}
+                    src={imageData}
+                    alt="战力截图，点击蓝色角色名"
+                    className={`max-h-72 max-w-full rounded-lg object-contain ${
+                      recognizingName ? "opacity-70" : "cursor-crosshair"
+                    }`}
+                    onClick={onImageClick}
+                  />
+                  {clickMark && shotRef.current && (
+                    <span
+                      className="pointer-events-none absolute h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-[#5eead4] bg-[rgba(94,234,212,0.35)]"
+                      style={(() => {
+                        const img = shotRef.current!;
+                        const nw = img.naturalWidth || 1;
+                        const nh = img.naturalHeight || 1;
+                        const scale = Math.min(
+                          img.clientWidth / nw,
+                          img.clientHeight / nh,
+                        );
+                        const dispW = nw * scale;
+                        const dispH = nh * scale;
+                        const ox = (img.clientWidth - dispW) / 2;
+                        const oy = (img.clientHeight - dispH) / 2;
+                        return {
+                          left: ox + clickMark.x * dispW,
+                          top: oy + clickMark.y * dispH,
+                        };
+                      })()}
+                    />
+                  )}
+                </div>
               ) : (
-                <p className="text-sm text-[var(--text-muted)]">
+                <p className="min-h-[120px] py-10 text-sm text-[var(--text-muted)]">
                   点击此处后 Ctrl+V 粘贴截图，或选择文件上传
                 </p>
               )}
             </div>
+
+            {namePreview && (
+              <div className="mt-3 flex items-center gap-3 text-xs text-[var(--text-muted)]">
+                <span>名字截取预览：</span>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={namePreview}
+                  alt="名字区域预览"
+                  className="h-10 rounded border border-[var(--border-soft)] bg-black object-contain"
+                />
+              </div>
+            )}
 
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <label className="btn-ghost cursor-pointer text-sm">
@@ -317,7 +450,7 @@ export function LeaderboardPanel({
               <button
                 type="button"
                 className="rounded-xl bg-[#e23d4a] px-4 py-2 text-sm font-semibold disabled:opacity-50"
-                disabled={busy || !ocrText}
+                disabled={busy || !canSubmit}
                 onClick={submit}
               >
                 {busy ? "提交中…" : "提交上榜"}
@@ -337,28 +470,27 @@ export function LeaderboardPanel({
               <p className="mt-2 text-sm text-[var(--text-muted)]">{status}</p>
             )}
             <div className="mt-2 flex flex-wrap gap-3 text-xs">
+              {powersOk != null && (
+                <span
+                  className={
+                    powersOk ? "text-emerald-400" : "text-[var(--accent-crimson)]"
+                  }
+                >
+                  战力双校验：
+                  {powersOk
+                    ? `一致（${combatPower}）`
+                    : `未通过（左上 ${powerTop ?? "-"} / 中下 ${powerBottom ?? "-"}）`}
+                </span>
+              )}
               {previewNameOk != null && (
                 <span
                   className={
-                    previewNameOk ? "text-emerald-400" : "text-[var(--accent-crimson)]"
+                    previewNameOk
+                      ? "text-emerald-400"
+                      : "text-[var(--accent-crimson)]"
                   }
                 >
                   名字校验：{previewNameOk ? "一致" : "不一致"}
-                </span>
-              )}
-              {previewPowerTop != null && (
-                <span className="text-[var(--text-muted)]">
-                  左上战力：{previewPowerTop}
-                </span>
-              )}
-              {previewPowerBottom != null && (
-                <span className="text-[var(--text-muted)]">
-                  中下战力：{previewPowerBottom}
-                </span>
-              )}
-              {previewPower != null && (
-                <span className="text-[var(--accent-gold)]">
-                  校验战力：{previewPower}
                 </span>
               )}
             </div>

@@ -1,6 +1,6 @@
 /**
- * Parse HUD combat-power screenshots using ratio-region OCR texts.
- * Requires: blue name match + top-left power == center-bottom power.
+ * Validate OCR texts for leaderboard upload.
+ * Name comes from a user click crop; powers from dual-layout OCR.
  */
 
 const UI_SKIP =
@@ -14,16 +14,7 @@ function isUiPhrase(token: string) {
   if (token.includes("战斗力") || token.includes("能力值") || token.includes("经验")) {
     return true;
   }
-  if (token.length >= 6 && /[\u4e00-\u9fff]{6,}/.test(token)) {
-    if (/自动|进行|日程|系统|提示|已完成|已击杀/.test(token)) return true;
-  }
   return false;
-}
-
-function isMostlyLatin(token: string) {
-  const latin = token.match(/[A-Za-z]/g)?.length ?? 0;
-  const cjk = token.match(/[\u4e00-\u9fff]/g)?.length ?? 0;
-  return latin > 0 && cjk === 0;
 }
 
 function expectedIsChinese(expected: string) {
@@ -37,7 +28,6 @@ export function isPlausibleNameCandidate(token: string, expected: string) {
   if (expectedIsChinese(expected)) {
     const cjk = token.match(/[\u4e00-\u9fff]/g)?.length ?? 0;
     if (cjk < 2) return false;
-    if (isMostlyLatin(token)) return false;
   }
   return true;
 }
@@ -88,7 +78,6 @@ export function extractCombatPower(text: string): number | null {
     if (candidates.length) return Math.max(...candidates);
   }
 
-  // Bottom crop often has a lone large number next to the sword icon
   const all = [...normalized.matchAll(/([0-9]{3,7})/g)]
     .map((m) => Number(m[1]))
     .filter((n) => n >= 100 && n <= 9_999_999);
@@ -104,16 +93,12 @@ function tokenize(text: string) {
     .filter(Boolean);
 }
 
-function collapseCjk(text: string) {
-  return text.replace(/[^\u4e00-\u9fffA-Za-z0-9_·]/g, "");
-}
-
 function collapseForMatch(text: string, expected: string) {
   const normalized = normalizeOcrText(text);
   if (expectedIsChinese(expected)) {
     return normalized.replace(/[^\u4e00-\u9fff·]/g, "");
   }
-  return collapseCjk(normalized);
+  return normalized.replace(/[^\u4e00-\u9fffA-Za-z0-9_·]/g, "");
 }
 
 function charsInOrder(haystack: string, needle: string) {
@@ -166,8 +151,8 @@ function fuzzyMatchExpected(text: string, expected: string): boolean {
   const compact = collapseForMatch(text, expected);
   const exp = expectedIsChinese(expected)
     ? expected.replace(/[^\u4e00-\u9fff·]/g, "")
-    : collapseCjk(expected);
-  if (!exp) return false;
+    : expected.replace(/[^\u4e00-\u9fffA-Za-z0-9_·]/g, "");
+  if (!exp || !compact) return false;
 
   if (compact.includes(exp)) return true;
   if (exp.length >= 2 && charsInOrder(compact, exp)) return true;
@@ -191,16 +176,8 @@ function fuzzyMatchExpected(text: string, expected: string): boolean {
         len <= Math.min(exp.length + 1, compact.length - i);
         len += 1
       ) {
-        const slice = compact.slice(i, i + len);
-        if (levenshtein(slice, exp) <= 1) return true;
+        if (levenshtein(compact.slice(i, i + len), exp) <= 1) return true;
       }
-    }
-  }
-
-  if (exp.length === 2) {
-    const [a, b] = exp;
-    if (compact.includes(a) && compact.includes(b) && charsInOrder(compact, exp)) {
-      return true;
     }
   }
 
@@ -213,25 +190,16 @@ export function extractDetectedName(
 ): { matched: boolean; detectedName: string | null } {
   const normalized = normalizeOcrText(nameText);
   const expected = expectedName.trim();
-
-  if (!expected) {
-    return { matched: false, detectedName: null };
-  }
+  if (!expected) return { matched: false, detectedName: null };
 
   const compact = collapseForMatch(normalized, expected);
-  if (!compact) {
-    return { matched: false, detectedName: null };
-  }
+  if (!compact) return { matched: false, detectedName: null };
 
   const tokens = tokenize(normalized).filter((t) =>
     isPlausibleNameCandidate(t, expected),
   );
-  const expectedLower = expected.toLowerCase();
 
-  const exact = tokens.find(
-    (t) => t === expected || t.toLowerCase() === expectedLower,
-  );
-  if (exact) {
+  if (tokens.some((t) => t === expected || t.toLowerCase() === expected.toLowerCase())) {
     return { matched: true, detectedName: expected };
   }
 
@@ -248,23 +216,19 @@ export function extractDetectedName(
   }
 
   const candidate =
-    tokens.find((t) => t.toLowerCase() !== expectedLower) ?? null;
-
+    tokens.find((t) => t.toLowerCase() !== expected.toLowerCase()) ?? null;
   return { matched: false, detectedName: candidate };
 }
 
-export type ParseCombatPowerInput =
-  | string
-  | {
-      nameText?: string;
-      powerTopText?: string;
-      powerBottomText?: string;
-      powerText?: string;
-      text?: string;
-    };
-
 export function parseCombatPowerScreenshot(
-  input: ParseCombatPowerInput,
+  input: {
+    nameText?: string;
+    powerTop?: number | null;
+    powerBottom?: number | null;
+    powerTopText?: string;
+    powerBottomText?: string;
+    nameConfirmed?: boolean;
+  },
   expectedName: string,
 ): {
   ok: boolean;
@@ -274,20 +238,26 @@ export function parseCombatPowerScreenshot(
   detectedName: string | null;
   error?: string;
 } {
-  const nameText =
-    typeof input === "string" ? input : (input.nameText ?? input.text ?? "");
-  const powerTopText =
-    typeof input === "string"
-      ? input
-      : (input.powerTopText ?? input.powerText ?? input.text ?? "");
-  const powerBottomText =
-    typeof input === "string"
-      ? input
-      : (input.powerBottomText ?? input.powerText ?? input.text ?? "");
+  const nameText = input.nameText ?? "";
+  const powerTop =
+    input.powerTop ??
+    (input.powerTopText ? extractCombatPower(input.powerTopText) : null);
+  const powerBottom =
+    input.powerBottom ??
+    (input.powerBottomText ? extractCombatPower(input.powerBottomText) : null);
 
   const nameResult = extractDetectedName(nameText, expectedName);
-  const powerTop = extractCombatPower(powerTopText);
-  const powerBottom = extractCombatPower(powerBottomText);
+
+  if (!nameText.trim()) {
+    return {
+      ok: false,
+      combatPower: powerTop ?? powerBottom,
+      powerTop,
+      powerBottom,
+      detectedName: null,
+      error: "请先在截图上点击蓝色角色名",
+    };
+  }
 
   if (!nameResult.matched) {
     return {
@@ -297,30 +267,19 @@ export function parseCombatPowerScreenshot(
       powerBottom,
       detectedName: nameResult.detectedName,
       error: nameResult.detectedName
-        ? `截图角色名「${nameResult.detectedName}」与当前账号「${expectedName}」不一致，无法上榜（请上传本人截图）`
-        : `左上角蓝色角色名未识别到「${expectedName}」，请按示例图截取完整界面`,
+        ? `点击区域识别为「${nameResult.detectedName}」，与账号「${expectedName}」不一致，请点准本人蓝色名字`
+        : `点击区域未识别到「${expectedName}」，请对准蓝色角色名再点一次`,
     };
   }
 
-  if (powerTop == null) {
+  if (powerTop == null || powerBottom == null) {
     return {
       ok: false,
       combatPower: null,
       powerTop,
       powerBottom,
       detectedName: nameResult.detectedName,
-      error: "未识别到左上角能力值/战力，请按示例图截取",
-    };
-  }
-
-  if (powerBottom == null) {
-    return {
-      ok: false,
-      combatPower: null,
-      powerTop,
-      powerBottom,
-      detectedName: nameResult.detectedName,
-      error: "未识别到中下方战力数字，请按示例图截取",
+      error: "战力识别不完整，请截取同时包含左上与中下战力的界面",
     };
   }
 
@@ -331,7 +290,7 @@ export function parseCombatPowerScreenshot(
       powerTop,
       powerBottom,
       detectedName: nameResult.detectedName,
-      error: `左上角战力（${powerTop}）与中下战力（${powerBottom}）不一致，请重新截图`,
+      error: `左上战力（${powerTop}）与中下战力（${powerBottom}）不一致`,
     };
   }
 

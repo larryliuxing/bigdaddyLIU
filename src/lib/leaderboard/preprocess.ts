@@ -1,17 +1,15 @@
 /**
- * Ratio-based crops for the HUD screenshot template.
- * Name = blue top-left; power = top-left 能力值 + center-bottom number.
+ * Browser image crops for leaderboard OCR.
+ * Powers: multi-layout ratio boxes.
+ * Name: tight crop around a user click (blue ink preferred).
  */
 
-import {
-  LEADERBOARD_OCR_REGIONS,
-  type RatioRect,
-} from "./regions";
+import { NAME_CLICK_CROP, POWER_LAYOUTS, type RatioRect } from "./regions";
 
-export type PreprocessVariant = {
-  label: string;
-  dataUrl: string;
-  mode: "name" | "powerTop" | "powerBottom";
+export type PowerCropSet = {
+  layoutId: string;
+  topDataUrls: string[];
+  bottomDataUrls: string[];
 };
 
 function loadImageElement(source: File | Blob | string): Promise<HTMLImageElement> {
@@ -88,7 +86,6 @@ function dilateMask(mask: Uint8Array, width: number, height: number, radius = 1)
   return out;
 }
 
-/** Blue name ink → black strokes on white. */
 export function enhanceNameBlue(canvas: HTMLCanvasElement): HTMLCanvasElement {
   const ctx = canvas.getContext("2d");
   if (!ctx) return canvas;
@@ -111,7 +108,6 @@ export function enhanceNameBlue(canvas: HTMLCanvasElement): HTMLCanvasElement {
   return canvas;
 }
 
-/** White UI numbers → black on white for power crops. */
 export function enhanceLightText(canvas: HTMLCanvasElement): HTMLCanvasElement {
   const ctx = canvas.getContext("2d");
   if (!ctx) return canvas;
@@ -134,69 +130,79 @@ function toDataUrl(canvas: HTMLCanvasElement) {
   return canvas.toDataURL("image/png");
 }
 
-/**
- * Build fixed-ratio OCR crops from the HUD template.
- */
-export async function buildCombatPowerOcrVariants(
+function clamp01(n: number) {
+  return Math.min(1, Math.max(0, n));
+}
+
+export function nameRectAroundClick(xRatio: number, yRatio: number): RatioRect {
+  const w = NAME_CLICK_CROP.w;
+  const h = NAME_CLICK_CROP.h;
+  return {
+    x: clamp01(xRatio - w / 2),
+    y: clamp01(yRatio - h / 2),
+    w,
+    h,
+  };
+}
+
+/** Build power crop variants for every layout template. */
+export async function buildPowerCropSets(
   source: File | Blob | string,
-): Promise<PreprocessVariant[]> {
+): Promise<PowerCropSet[]> {
   const img = await loadImageElement(source);
-  const variants: PreprocessVariant[] = [];
-  const { name, nameWide, powerTop, powerBottom } = LEADERBOARD_OCR_REGIONS;
+  return POWER_LAYOUTS.map((layout) => {
+    const topRaw = cropRatio(img, layout.top, 2.8);
+    const topLight = cropRatio(img, layout.top, 2.8);
+    enhanceLightText(topLight);
+    const bottomRaw = cropRatio(img, layout.bottom, 2.6);
+    const bottomLight = cropRatio(img, layout.bottom, 2.6);
+    enhanceLightText(bottomLight);
+    return {
+      layoutId: layout.id,
+      topDataUrls: [toDataUrl(topRaw), toDataUrl(topLight)],
+      bottomDataUrls: [toDataUrl(bottomRaw), toDataUrl(bottomLight)],
+    };
+  });
+}
 
-  // ① Name — raw + blue-only, two ratio boxes
-  for (const [label, rect, scale] of [
-    ["name", name, 3.5],
-    ["name-wide", nameWide, 3.2],
-  ] as const) {
-    const raw = cropRatio(img, rect, scale);
-    variants.push({
-      label: `${label}-raw`,
-      dataUrl: toDataUrl(raw),
-      mode: "name",
-    });
-    const blue = cropRatio(img, rect, scale);
-    enhanceNameBlue(blue);
-    variants.push({
-      label: `${label}-blue`,
-      dataUrl: toDataUrl(blue),
-      mode: "name",
-    });
-  }
+/** Tight crops around a click for blue name OCR. */
+export async function buildNameClickCrops(
+  source: File | Blob | string,
+  xRatio: number,
+  yRatio: number,
+): Promise<string[]> {
+  const img = await loadImageElement(source);
+  const rect = nameRectAroundClick(xRatio, yRatio);
+  const urls: string[] = [];
 
-  // ② Top-left power (能力值)
-  {
-    const raw = cropRatio(img, powerTop, 2.8);
-    variants.push({
-      label: "power-top-raw",
-      dataUrl: toDataUrl(raw),
-      mode: "powerTop",
-    });
-    const light = cropRatio(img, powerTop, 2.8);
-    enhanceLightText(light);
-    variants.push({
-      label: "power-top",
-      dataUrl: toDataUrl(light),
-      mode: "powerTop",
-    });
-  }
+  const raw = cropRatio(img, rect, 4);
+  urls.push(toDataUrl(raw));
 
-  // ③ Center-bottom power
-  {
-    const raw = cropRatio(img, powerBottom, 2.6);
-    variants.push({
-      label: "power-bottom-raw",
-      dataUrl: toDataUrl(raw),
-      mode: "powerBottom",
-    });
-    const light = cropRatio(img, powerBottom, 2.6);
-    enhanceLightText(light);
-    variants.push({
-      label: "power-bottom",
-      dataUrl: toDataUrl(light),
-      mode: "powerBottom",
-    });
-  }
+  const blue = cropRatio(img, rect, 4);
+  enhanceNameBlue(blue);
+  urls.push(toDataUrl(blue));
 
-  return variants;
+  // Slightly taller crop in case the click is a bit low/high
+  const tall = {
+    x: rect.x,
+    y: clamp01(rect.y - 0.02),
+    w: rect.w,
+    h: Math.min(0.14, rect.h + 0.04),
+  };
+  const tallBlue = cropRatio(img, tall, 3.6);
+  enhanceNameBlue(tallBlue);
+  urls.push(toDataUrl(tallBlue));
+
+  return urls;
+}
+
+/** Preview thumbnail of the name crop (for UI feedback). */
+export async function buildNameClickPreview(
+  source: File | Blob | string,
+  xRatio: number,
+  yRatio: number,
+): Promise<string> {
+  const img = await loadImageElement(source);
+  const rect = nameRectAroundClick(xRatio, yRatio);
+  return toDataUrl(cropRatio(img, rect, 2));
 }
