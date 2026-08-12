@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import type {
   LeaderboardEntry,
   LeaderboardStats,
-  MemberRole,
   SessionUser,
 } from "@/lib/types";
 import { extractDetectedName } from "@/lib/leaderboard/parse";
@@ -16,12 +15,6 @@ import {
 
 function formatPower(n: number) {
   return Math.round(n).toLocaleString("en-US");
-}
-
-function roleLabel(role: MemberRole) {
-  if (role === "leader") return "队长";
-  if (role === "officer") return "干部";
-  return null;
 }
 
 function clickToImageRatio(e: React.MouseEvent<HTMLImageElement>) {
@@ -54,24 +47,20 @@ function NameButton({
   entry: LeaderboardEntry;
   onOpen: (entry: LeaderboardEntry) => void;
 }) {
-  const label = roleLabel(entry.role);
   return (
-    <span className="inline-flex flex-wrap items-center gap-y-1">
-      <button
-        type="button"
-        className={`lb-name-link ${entry.belowThreshold ? "danger" : ""}`}
-        disabled={!entry.hasImage}
-        title={
-          entry.hasImage ? "点击查看上传截图" : "该成员暂无上传截图"
-        }
-        onClick={() => {
-          if (entry.hasImage) onOpen(entry);
-        }}
-      >
-        {entry.memberName}
-      </button>
-      {label && <span className="lb-role-pill">{label}</span>}
-    </span>
+    <button
+      type="button"
+      className={`lb-name-link ${entry.belowThreshold ? "danger" : ""}`}
+      disabled={!entry.hasImage}
+      title={
+        entry.hasImage ? "点击查看上传截图" : "该成员暂无上传截图"
+      }
+      onClick={() => {
+        if (entry.hasImage) onOpen(entry);
+      }}
+    >
+      {entry.memberName}
+    </button>
   );
 }
 

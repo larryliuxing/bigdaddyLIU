@@ -2,14 +2,8 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import type { Member, MemberRole } from "@/lib/types";
+import type { Member } from "@/lib/types";
 import { logoutAndRedirect } from "@/lib/nav";
-
-const ROLE_LABEL: Record<MemberRole, string> = {
-  normal: "普通",
-  officer: "干部",
-  leader: "会长",
-};
 
 export function AdminPanel({
   initialMembers,
@@ -21,10 +15,12 @@ export function AdminPanel({
   const router = useRouter();
   const [members, setMembers] = useState(initialMembers);
   const [name, setName] = useState("");
-  const [role, setRole] = useState<MemberRole>("normal");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
+
+  const activeCount = members.filter((m) => m.status !== "exited").length;
+  const clearedCount = members.length - activeCount;
 
   async function refresh() {
     const res = await fetch("/api/admin/members");
@@ -46,7 +42,7 @@ export function AdminPanel({
       const res = await fetch("/api/admin/members", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, role }),
+        body: JSON.stringify({ name }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -54,7 +50,6 @@ export function AdminPanel({
         return;
       }
       setName("");
-      setRole("normal");
       setMessage("成员已添加");
       await refresh();
     } catch {
@@ -62,21 +57,6 @@ export function AdminPanel({
     } finally {
       setLoading(false);
     }
-  }
-
-  async function changeRole(id: number, nextRole: MemberRole) {
-    setError("");
-    const res = await fetch("/api/admin/members", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id, role: nextRole }),
-    });
-    if (!res.ok) {
-      const data = await res.json();
-      setError(data.error || "更新失败");
-      return;
-    }
-    await refresh();
   }
 
   async function resetPassword(id: number) {
@@ -95,15 +75,48 @@ export function AdminPanel({
     await refresh();
   }
 
-  async function removeMember(id: number, memberName: string) {
-    if (!window.confirm(`确认删除成员「${memberName}」？`)) return;
-    const res = await fetch(`/api/admin/members?id=${id}`, { method: "DELETE" });
-    if (!res.ok) {
-      const data = await res.json();
-      setError(data.error || "删除失败");
+  async function clearMember(id: number, memberName: string) {
+    if (
+      !window.confirm(
+        `确认清退「${memberName}」？仅保留历史拍卖/分红记录；账号、登录、排行榜等都会去掉。`,
+      )
+    ) {
       return;
     }
-    setMessage("成员已删除");
+    setError("");
+    setMessage("");
+    try {
+      const res = await fetch(`/api/admin/members?id=${id}`, {
+        method: "DELETE",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(
+          typeof data.error === "string" ? data.error : "标记清退失败",
+        );
+        return;
+      }
+      setMessage(`成员「${memberName}」已清退`);
+      await refresh();
+    } catch {
+      setError("网络错误，标记清退失败");
+    }
+  }
+
+  async function restoreMember(id: number, memberName: string) {
+    setError("");
+    setMessage("");
+    const res = await fetch("/api/admin/members", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, action: "restore" }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setError(typeof data.error === "string" ? data.error : "恢复失败");
+      return;
+    }
+    setMessage(`成员「${memberName}」已恢复在盟`);
     await refresh();
   }
 
@@ -168,15 +181,6 @@ export function AdminPanel({
               value={name}
               onChange={(e) => setName(e.target.value)}
             />
-            <select
-              className="field sm:max-w-[140px]"
-              value={role}
-              onChange={(e) => setRole(e.target.value as MemberRole)}
-            >
-              <option value="normal">普通</option>
-              <option value="officer">干部</option>
-              <option value="leader">会长</option>
-            </select>
             <button
               type="submit"
               className="btn-primary sm:max-w-[120px]"
@@ -191,52 +195,84 @@ export function AdminPanel({
 
         <section className="animate-fade-up-delay-2 mt-6 overflow-hidden rounded-2xl border border-[var(--border-soft)] bg-[rgba(21,25,37,0.9)]">
           <div className="border-b border-[var(--border-soft)] px-4 py-3 text-sm text-[var(--text-muted)]">
-            共 {members.length} 名成员
+            在盟 {activeCount} 人
           </div>
           <ul className="divide-y divide-[var(--border-soft)]">
-            {members.map((member) => (
-              <li
-                key={member.id}
-                className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
-              >
-                <div>
-                  <p className="font-medium">{member.name}</p>
-                  <p className="mt-0.5 text-xs text-[var(--text-muted)]">
-                    {ROLE_LABEL[member.role]} ·{" "}
-                    {member.hasPassword ? "已设密码" : "未设密码"}
-                  </p>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <select
-                    className="field !w-auto !py-2 text-sm"
-                    value={member.role}
-                    onChange={(e) =>
-                      changeRole(member.id, e.target.value as MemberRole)
-                    }
-                  >
-                    <option value="normal">普通</option>
-                    <option value="officer">干部</option>
-                    <option value="leader">会长</option>
-                  </select>
-                  <button
-                    type="button"
-                    className="btn-ghost text-sm"
-                    onClick={() => resetPassword(member.id)}
-                  >
-                    重置密码
-                  </button>
-                  <button
-                    type="button"
-                    className="btn-ghost text-sm text-[var(--accent-crimson)]"
-                    onClick={() => removeMember(member.id, member.name)}
-                  >
-                    删除
-                  </button>
-                </div>
+            {members
+              .filter((m) => m.status !== "exited")
+              .map((member) => (
+                <li
+                  key={member.id}
+                  className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <div>
+                    <p className="font-medium">{member.name}</p>
+                    <p className="mt-0.5 text-xs text-[var(--text-muted)]">
+                      {member.hasPassword ? "已设密码" : "未设密码"}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      className="btn-ghost text-sm"
+                      onClick={() => resetPassword(member.id)}
+                    >
+                      重置密码
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-ghost text-sm text-[var(--accent-crimson)]"
+                      onClick={() => clearMember(member.id, member.name)}
+                    >
+                      清退
+                    </button>
+                  </div>
+                </li>
+              ))}
+            {activeCount === 0 && (
+              <li className="px-4 py-6 text-sm text-[var(--text-muted)]">
+                暂无在盟成员
               </li>
-            ))}
+            )}
           </ul>
         </section>
+
+        {clearedCount > 0 && (
+          <section className="animate-fade-up-delay-2 mt-4 overflow-hidden rounded-2xl border border-[var(--border-soft)] bg-[rgba(21,25,37,0.9)]">
+            <div className="border-b border-[var(--border-soft)] px-4 py-3 text-sm text-[var(--text-muted)]">
+              已清退 {clearedCount} 人 · 仅保留历史记录，无账号
+            </div>
+            <ul className="divide-y divide-[var(--border-soft)]">
+              {members
+                .filter((m) => m.status === "exited")
+                .map((member) => (
+                  <li
+                    key={member.id}
+                    className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+                  >
+                    <div>
+                      <p className="font-medium text-[var(--text-muted)]">
+                        {member.name}
+                      </p>
+                      <p className="mt-0.5 text-xs text-[var(--text-muted)]">
+                        已清退
+                        {member.exitedAt
+                          ? ` · ${member.exitedAt.slice(0, 10)}`
+                          : ""}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn-ghost text-sm"
+                      onClick={() => restoreMember(member.id, member.name)}
+                    >
+                      恢复在盟
+                    </button>
+                  </li>
+                ))}
+            </ul>
+          </section>
+        )}
       </div>
     </div>
   );

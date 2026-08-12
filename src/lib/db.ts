@@ -28,26 +28,6 @@ const dbPath = path.join(dataDir, "guild.db");
 
 let db: Database.Database | null = null;
 
-const DEFAULT_MEMBERS: Array<{ name: string; role: MemberRole }> = [
-  { name: "辜饱饱", role: "leader" },
-  { name: "清风", role: "normal" },
-  { name: "毛毛", role: "normal" },
-  { name: "阿胜", role: "officer" },
-  { name: "大风起兮", role: "normal" },
-  { name: "宇宙大魔王", role: "normal" },
-  { name: "Hira", role: "normal" },
-  { name: "马飞", role: "officer" },
-  { name: "匿名的食铁兽战士", role: "normal" },
-  { name: "小鱼", role: "normal" },
-  { name: "夜行者", role: "normal" },
-  { name: "星辰", role: "normal" },
-  { name: "小龙龙", role: "normal" },
-  { name: "丹", role: "normal" },
-  { name: "安格斯牛堡", role: "normal" },
-  { name: "熠珠", role: "normal" },
-  { name: "唐小虎", role: "normal" },
-];
-
 export function ensureDb(): Database.Database {
   if (db) return db;
 
@@ -62,8 +42,10 @@ export function ensureDb(): Database.Database {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL UNIQUE,
       role TEXT NOT NULL DEFAULT 'normal',
+      status TEXT NOT NULL DEFAULT 'active',
       password_hash TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      exited_at TEXT
     );
 
     CREATE TABLE IF NOT EXISTS admins (
@@ -248,30 +230,16 @@ export function ensureDb(): Database.Database {
 }
 
 function seedIfEmpty(database: Database.Database) {
-  const memberCount = database
-    .prepare("SELECT COUNT(*) as count FROM members")
-    .get() as { count: number };
+  // Members are managed only via admin — do not auto-seed roster names.
 
-  if (memberCount.count === 0) {
-    const insert = database.prepare(
-      "INSERT INTO members (name, role) VALUES (?, ?)",
-    );
-    const insertMany = database.transaction(
-      (rows: Array<{ name: string; role: MemberRole }>) => {
-        for (const row of rows) {
-          insert.run(row.name, row.role);
-        }
-      },
-    );
-    insertMany(DEFAULT_MEMBERS);
-  } else {
-    const insertIgnore = database.prepare(
-      "INSERT OR IGNORE INTO members (name, role) VALUES (?, ?)",
-    );
-    for (const row of DEFAULT_MEMBERS) {
-      insertIgnore.run(row.name, row.role);
-    }
-  }
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS app_meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    )
+  `);
+
+  wipeRosterAndAuctionsOnce(database);
 
   const adminCount = database
     .prepare("SELECT COUNT(*) as count FROM admins")
@@ -284,6 +252,12 @@ function seedIfEmpty(database: Database.Database) {
     database
       .prepare("INSERT INTO admins (username, password_hash) VALUES (?, ?)")
       .run(username, hash);
+  } else if (adminCount.count > 1) {
+    // Keep a single admin account (lowest id).
+    const keep = database
+      .prepare("SELECT id FROM admins ORDER BY id ASC LIMIT 1")
+      .get() as { id: number };
+    database.prepare("DELETE FROM admins WHERE id != ?").run(keep.id);
   }
 
   const settings = database
@@ -304,6 +278,14 @@ function seedIfEmpty(database: Database.Database) {
     "tax_rate",
     "REAL NOT NULL DEFAULT 0.05",
   );
+
+  ensureColumn(
+    database,
+    "members",
+    "status",
+    "TEXT NOT NULL DEFAULT 'active'",
+  );
+  ensureColumn(database, "members", "exited_at", "TEXT");
 
   ensureColumn(database, "bosses", "drops_image", "TEXT");
 
@@ -343,6 +325,57 @@ function ensureColumn(
   }>;
   if (cols.some((c) => c.name === column)) return;
   database.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+}
+
+/** One-shot: clear all members + auction data; keep admin + bosses. */
+function wipeRosterAndAuctionsOnce(database: Database.Database) {
+  const done = database
+    .prepare(`SELECT value FROM app_meta WHERE key = ?`)
+    .get("wipe_roster_auctions_v1") as { value: string } | undefined;
+  if (done) return;
+
+  const wipe = database.transaction(() => {
+    database.pragma("foreign_keys = OFF");
+    database.exec(`
+      DELETE FROM auction_item_dividends;
+      DELETE FROM auction_item_dividend_lines;
+      DELETE FROM auction_dividend_entries;
+      DELETE FROM auction_bids;
+      DELETE FROM auction_events;
+      DELETE FROM auction_item_sale_history;
+      DELETE FROM auction_items;
+      DELETE FROM auction_sessions;
+      DELETE FROM leaderboard_entries;
+      DELETE FROM boss_votes;
+      DELETE FROM boss_vote_rounds;
+      DELETE FROM boss_presence;
+      DELETE FROM boss_chat;
+      DELETE FROM members;
+    `);
+    database.pragma("foreign_keys = ON");
+
+    // Keep a single admin row if any exist
+    const admins = database
+      .prepare(`SELECT id FROM admins ORDER BY id ASC`)
+      .all() as Array<{ id: number }>;
+    if (admins.length > 1) {
+      database
+        .prepare(`DELETE FROM admins WHERE id != ?`)
+        .run(admins[0].id);
+    }
+
+    database
+      .prepare(
+        `INSERT INTO app_meta (key, value) VALUES (?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      )
+      .run("wipe_roster_auctions_v1", new Date().toISOString());
+  });
+
+  wipe();
+  console.info(
+    "[db] wiped members + auction data (kept admins + bosses)",
+  );
 }
 
 /** Normalize item names so「祝福的生命之石」matches across spaces / case. */
@@ -405,15 +438,25 @@ function toMember(row: MemberRow): Member {
     id: row.id,
     name: row.name,
     role: row.role,
+    status: row.status === "exited" ? "exited" : "active",
     hasPassword: Boolean(row.password_hash),
     createdAt: row.created_at,
+    exitedAt: row.exited_at ?? null,
   };
 }
 
-export function listMembers(): Member[] {
+const MEMBER_SELECT =
+  "SELECT id, name, role, COALESCE(status, 'active') as status, password_hash, created_at, exited_at FROM members";
+
+export function listMembers(options?: {
+  includeExited?: boolean;
+}): Member[] {
+  const includeExited = options?.includeExited === true;
   const rows = ensureDb()
     .prepare(
-      "SELECT id, name, role, password_hash, created_at FROM members ORDER BY id ASC",
+      includeExited
+        ? `${MEMBER_SELECT} ORDER BY CASE WHEN COALESCE(status, 'active') = 'exited' THEN 1 ELSE 0 END, id ASC`
+        : `${MEMBER_SELECT} WHERE COALESCE(status, 'active') = 'active' ORDER BY id ASC`,
     )
     .all() as MemberRow[];
   return rows.map(toMember);
@@ -421,28 +464,34 @@ export function listMembers(): Member[] {
 
 export function getMemberById(id: number): MemberRow | null {
   const row = ensureDb()
-    .prepare(
-      "SELECT id, name, role, password_hash, created_at FROM members WHERE id = ?",
-    )
+    .prepare(`${MEMBER_SELECT} WHERE id = ?`)
     .get(id) as MemberRow | undefined;
-  return row ?? null;
+  if (!row) return null;
+  return {
+    ...row,
+    status: row.status === "exited" ? "exited" : "active",
+  };
 }
 
 export function getMemberByName(name: string): MemberRow | null {
   const row = ensureDb()
-    .prepare(
-      "SELECT id, name, role, password_hash, created_at FROM members WHERE name = ?",
-    )
+    .prepare(`${MEMBER_SELECT} WHERE name = ?`)
     .get(name.trim()) as MemberRow | undefined;
-  return row ?? null;
+  if (!row) return null;
+  return {
+    ...row,
+    status: row.status === "exited" ? "exited" : "active",
+  };
 }
 
 export function createMember(name: string, role: MemberRole = "normal"): Member {
   const result = ensureDb()
-    .prepare("INSERT INTO members (name, role) VALUES (?, ?)")
+    .prepare(
+      "INSERT INTO members (name, role, status) VALUES (?, ?, 'active')",
+    )
     .run(name.trim(), role);
   const row = getMemberById(Number(result.lastInsertRowid));
-  if (!row) throw new Error("创建 member failed");
+  if (!row) throw new Error("Create member failed");
   return toMember(row);
 }
 
@@ -464,9 +513,52 @@ export function updateMember(
   return row ? toMember(row) : null;
 }
 
-export function deleteMember(id: number): boolean {
-  const result = ensureDb().prepare("DELETE FROM members WHERE id = ?").run(id);
+/** 清退：只保留历史记录，去掉账号与实时数据。 */
+export function markMemberExited(id: number): boolean {
+  const database = ensureDb();
+  const existing = database
+    .prepare(
+      `SELECT id FROM members
+       WHERE id = ? AND COALESCE(status, 'active') != 'exited'`,
+    )
+    .get(id);
+  if (!existing) return false;
+
+  const tx = database.transaction(() => {
+    database
+      .prepare(
+        `UPDATE members
+         SET status = 'exited',
+             exited_at = COALESCE(exited_at, datetime('now')),
+             password_hash = NULL
+         WHERE id = ?`,
+      )
+      .run(id);
+
+    // Live / account state only — auction bids, dividends, sale history stay
+    database
+      .prepare("DELETE FROM leaderboard_entries WHERE member_id = ?")
+      .run(id);
+    database.prepare("DELETE FROM boss_presence WHERE member_id = ?").run(id);
+  });
+  tx();
+  return true;
+}
+
+export function restoreMember(id: number): boolean {
+  const result = ensureDb()
+    .prepare(
+      `UPDATE members
+       SET status = 'active', exited_at = NULL
+       WHERE id = ? AND status = 'exited'`,
+    )
+    .run(id);
   return result.changes > 0;
+}
+
+/** Soft-delete alias used by admin DELETE API. */
+export function deleteMember(id: number): boolean {
+  return markMemberExited(id);
 }
 
 export function resetMemberPassword(id: number): boolean {
@@ -1443,6 +1535,7 @@ export function placeBid(input: {
 
   const member = getMemberById(input.memberId);
   if (!member) throw new Error("成员不存在");
+  if (member.status === "exited") throw new Error("该成员已清退，无法出价");
 
   const result = ensureDb()
     .prepare(
@@ -2097,6 +2190,10 @@ export function upsertLeaderboardEntry(input: {
   ocrName: string;
   imageData?: string | null;
 }) {
+  const member = getMemberById(input.memberId);
+  if (!member || member.status === "exited") {
+    throw new Error("该成员已清退，无法更新排行榜");
+  }
   ensureDb()
     .prepare(
       `INSERT INTO leaderboard_entries
@@ -2131,6 +2228,7 @@ export function getLeaderboardBoard(thresholdRatio = 0.85) {
       `SELECT le.*, m.role as member_role
        FROM leaderboard_entries le
        LEFT JOIN members m ON m.id = le.member_id
+       WHERE m.id IS NULL OR COALESCE(m.status, 'active') = 'active'
        ORDER BY le.combat_power DESC, le.updated_at ASC, le.id ASC`,
     )
     .all() as Array<

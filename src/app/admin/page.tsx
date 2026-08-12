@@ -12,6 +12,6 @@ export default async function AdminPage() {
     redirect("/");
   }
 
-  const members = listMembers();
+  const members = listMembers({ includeExited: true });
   return <AdminPanel initialMembers={members} adminName={session.username} />;
 }

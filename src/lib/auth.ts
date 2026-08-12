@@ -144,9 +144,9 @@ export async function getMemberSession() {
   const session = await verifySessionToken(token);
   if (!session || session.type !== "member") return null;
 
-  // Re-validate against DB so deleted/renamed members cannot keep stale access
+  // Re-validate against DB so deleted/renamed/exited members cannot keep stale access
   const row = getMemberById(session.id);
-  if (!row) {
+  if (!row || row.status === "exited") {
     jar.delete(MEMBER_COOKIE);
     return null;
   }
