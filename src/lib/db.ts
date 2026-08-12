@@ -2270,7 +2270,11 @@ function getOpenRoundForBoss(bossId: number) {
   return row ? toRound(row) : null;
 }
 
-function toBoss(row: BossRow): import("./types").Boss {
+function toBoss(
+  row: BossRow,
+  opts?: { includeImage?: boolean },
+): import("./types").Boss {
+  const includeImage = opts?.includeImage !== false;
   return {
     id: row.id,
     name: row.name,
@@ -2280,7 +2284,8 @@ function toBoss(row: BossRow): import("./types").Boss {
     lastKillAt: row.last_kill_at,
     nextSpawnAt: row.next_spawn_at,
     dropsNote: row.drops_note,
-    dropsImage: row.drops_image ?? null,
+    dropsImage: includeImage ? (row.drops_image ?? null) : null,
+    hasDropsImage: Boolean(row.drops_image),
     sortOrder: row.sort_order,
     enabled: Boolean(row.enabled),
     remainingSeconds: remainingFrom(row.next_spawn_at),
@@ -2288,7 +2293,10 @@ function toBoss(row: BossRow): import("./types").Boss {
   };
 }
 
-export function listBosses(includeDisabled = false) {
+export function listBosses(
+  includeDisabled = false,
+  opts?: { includeImages?: boolean },
+) {
   expireOpenRounds();
   const rows = ensureDb()
     .prepare(
@@ -2297,7 +2305,9 @@ export function listBosses(includeDisabled = false) {
         : `SELECT * FROM bosses WHERE enabled = 1 ORDER BY sort_order ASC, id ASC`,
     )
     .all() as BossRow[];
-  return rows.map(toBoss);
+  return rows.map((row) =>
+    toBoss(row, { includeImage: opts?.includeImages !== false }),
+  );
 }
 
 export function getBossById(id: number) {
@@ -2622,15 +2632,40 @@ function addBossChatSystem(message: string) {
     .run(message);
 }
 
-export function getBossRoomState() {
+export function getBossRoomState(opts?: { includeImages?: boolean }) {
   expireOpenRounds();
   return {
-    bosses: listBosses(false),
+    bosses: listBosses(false, {
+      includeImages: opts?.includeImages === true,
+    }),
     onlineCount: getBossOnlineCount(),
     chat: listBossChat(40),
     serverNow: new Date().toISOString(),
     voteNeed: BOSS_VOTE_NEED,
     voteWindowSeconds: BOSS_VOTE_WINDOW_SECONDS,
+  };
+}
+
+/** Drops payload for on-demand lightbox (avoids shipping images on every poll). */
+export function getBossDrops(id: number) {
+  const row = ensureDb()
+    .prepare(
+      `SELECT id, name, drops_note, drops_image FROM bosses WHERE id = ?`,
+    )
+    .get(id) as
+    | {
+        id: number;
+        name: string;
+        drops_note: string | null;
+        drops_image: string | null;
+      }
+    | undefined;
+  if (!row) return null;
+  return {
+    id: row.id,
+    name: row.name,
+    dropsNote: row.drops_note,
+    dropsImage: row.drops_image,
   };
 }
 

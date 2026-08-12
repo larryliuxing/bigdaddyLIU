@@ -7,6 +7,7 @@ import {
 import {
   createBoss,
   deleteBoss,
+  getBossDrops,
   getBossRoomState,
   listBosses,
   touchBossPresence,
@@ -15,14 +16,37 @@ import {
 
 export const runtime = "nodejs";
 
-export async function GET() {
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const dropsId = Number(searchParams.get("dropsId"));
+  const full = searchParams.get("full") === "1";
+
+  // On-demand drops image — keeps live polls light
+  if (Number.isFinite(dropsId) && dropsId > 0) {
+    const member = await getMemberSession();
+    const admin = await getAdminSession();
+    if (!member && !admin) {
+      return NextResponse.json({ error: "请先登录" }, { status: 401 });
+    }
+    const drops = getBossDrops(dropsId);
+    if (!drops) {
+      return NextResponse.json({ error: "BOSS 不存在" }, { status: 404 });
+    }
+    return NextResponse.json(drops);
+  }
+
   const member = await getMemberSession();
   if (member) {
     touchBossPresence(member.id, member.name);
   }
+
+  const admin = await getAdminSession();
+  // Default lite room (no base64 images). Admin settings page uses ?full=1.
   return NextResponse.json({
-    room: getBossRoomState(),
-    allBosses: (await getAdminSession()) ? listBosses(true) : undefined,
+    room: getBossRoomState({ includeImages: full }),
+    allBosses: admin
+      ? listBosses(true, { includeImages: full })
+      : undefined,
   });
 }
 
@@ -64,7 +88,11 @@ export async function POST(request: Request) {
         typeof body?.dropsImage === "string" ? body.dropsImage : null,
     });
     return NextResponse.json(
-      { boss, room: getBossRoomState(), allBosses: listBosses(true) },
+      {
+        boss,
+        room: getBossRoomState({ includeImages: false }),
+        allBosses: listBosses(true, { includeImages: true }),
+      },
       { status: 201 },
     );
   } catch {
@@ -110,8 +138,8 @@ export async function PATCH(request: Request) {
     }
     return NextResponse.json({
       boss,
-      room: getBossRoomState(),
-      allBosses: listBosses(true),
+      room: getBossRoomState({ includeImages: false }),
+      allBosses: listBosses(true, { includeImages: true }),
     });
   } catch {
     return NextResponse.json({ error: "更新失败（名称可能重复）" }, { status: 400 });
@@ -133,7 +161,7 @@ export async function DELETE(request: Request) {
   }
   return NextResponse.json({
     ok: true,
-    room: getBossRoomState(),
-    allBosses: listBosses(true),
+    room: getBossRoomState({ includeImages: false }),
+    allBosses: listBosses(true, { includeImages: true }),
   });
 }

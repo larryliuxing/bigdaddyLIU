@@ -627,9 +627,14 @@ select {
     linear-gradient(#000 0 0) content-box,
     linear-gradient(#000 0 0);
   mask-composite: exclude;
-  animation: boss-border-spin 4.5s linear infinite;
-  opacity: 0.85;
+  opacity: 0.55;
   pointer-events: none;
+}
+
+.boss-card.is-urgent::before,
+.boss-card.is-ready::before {
+  animation: boss-border-spin 2.2s linear infinite;
+  opacity: 1;
 }
 
 .boss-card::after {
@@ -645,10 +650,15 @@ select {
     color-mix(in srgb, var(--boss-fx) 28%, white),
     transparent
   );
-  opacity: 0.22;
-  animation: boss-shimmer 3.8s ease-in-out infinite;
+  opacity: 0;
   pointer-events: none;
   z-index: 0;
+}
+
+.boss-card.is-urgent::after,
+.boss-card.is-ready::after {
+  opacity: 0.22;
+  animation: boss-shimmer 2.4s ease-in-out infinite;
 }
 
 .boss-card > * {
@@ -668,18 +678,13 @@ select {
     0 0 40px color-mix(in srgb, var(--boss-fx) 45%, transparent);
 }
 
-.boss-card.is-ready::before {
-  animation-duration: 1.4s;
-  opacity: 1;
-}
-
 .boss-countdown {
-  animation: boss-countdown-glow 2.4s ease-in-out infinite;
+  animation: none;
 }
 
 .boss-card.is-urgent .boss-countdown,
 .boss-card.is-ready .boss-countdown {
-  animation-duration: 0.9s;
+  animation: boss-countdown-glow 0.9s ease-in-out infinite;
   color: color-mix(in srgb, var(--boss-fx) 40%, white);
 }
 

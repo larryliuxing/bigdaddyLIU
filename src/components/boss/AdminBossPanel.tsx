@@ -152,7 +152,7 @@ export function AdminBossPanel({ adminName }: { adminName: string }) {
   }
 
   async function refresh() {
-    const res = await fetch("/api/boss");
+    const res = await fetch("/api/boss?full=1");
     const data = await res.json();
     if (!res.ok) return;
     const list = (data.allBosses || data.room?.bosses || []) as Boss[];

@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import type { Boss, BossRoomState, SessionUser } from "@/lib/types";
 import {
   formatBeijingDateTime,
@@ -14,8 +13,8 @@ import {
   unlockBossSpawnSound,
 } from "@/lib/boss/spawnSound";
 
-const POLL_MS = 900;
-const TICK_MS = 900;
+const POLL_MS = 1500;
+const TICK_MS = 1000;
 const POPUP_MS = 2000;
 const URGENT_SECONDS = 60;
 
@@ -24,8 +23,6 @@ const SPARKS = [
   { sx: "52px", sy: "-28px", left: "52%", top: "38%", delay: "40ms" },
   { sx: "-36px", sy: "44px", left: "46%", top: "48%", delay: "80ms" },
   { sx: "44px", sy: "40px", left: "54%", top: "50%", delay: "120ms" },
-  { sx: "0px", sy: "-56px", left: "50%", top: "36%", delay: "60ms" },
-  { sx: "-60px", sy: "8px", left: "42%", top: "44%", delay: "100ms" },
 ];
 
 function BossCard({
@@ -37,6 +34,7 @@ function BossCard({
   onOpenDrops,
   soundOn,
   onSpawnReady,
+  now,
 }: {
   boss: Boss;
   member: Extract<SessionUser, { type: "member" }> | null;
@@ -46,22 +44,18 @@ function BossCard({
   onOpenDrops: (boss: Boss) => void;
   soundOn: boolean;
   onSpawnReady: (boss: Boss) => void;
+  now: number;
 }) {
-  const [now, setNow] = useState(() => Date.now());
   const [burstKey, setBurstKey] = useState(0);
   const prevRemain = useRef<number | null>(null);
   const armed = useRef(false);
+  const lastSpawnAt = useRef(boss.nextSpawnAt);
 
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), TICK_MS);
-    return () => window.clearInterval(timer);
-  }, []);
-
-  // Arm once we have observed a positive countdown (avoid firing on first paint at 0)
-  useEffect(() => {
+  if (lastSpawnAt.current !== boss.nextSpawnAt) {
+    lastSpawnAt.current = boss.nextSpawnAt;
     armed.current = false;
     prevRemain.current = null;
-  }, [boss.nextSpawnAt]);
+  }
 
   const remain = boss.nextSpawnAt
     ? Math.max(
@@ -88,7 +82,6 @@ function BossCard({
       prevRemain.current = remain;
       return;
     }
-    // remain === 0
     if (
       armed.current &&
       prevRemain.current != null &&
@@ -102,11 +95,17 @@ function BossCard({
     prevRemain.current = 0;
   }, [remain, boss, soundOn, onSpawnReady]);
 
+  // Clear burst DOM after animation to avoid lingering overlays
+  useEffect(() => {
+    if (!burstKey) return;
+    const t = window.setTimeout(() => setBurstKey(0), 2300);
+    return () => window.clearTimeout(t);
+  }, [burstKey]);
+
   const round = boss.activeRound;
-  const hasDrops = Boolean(boss.dropsImage || boss.dropsNote);
+  const hasDrops = Boolean(boss.hasDropsImage || boss.dropsImage || boss.dropsNote);
   const isReady = remain === 0 && Boolean(boss.nextSpawnAt);
-  const isUrgent =
-    remain != null && remain > 0 && remain <= URGENT_SECONDS;
+  const isUrgent = remain != null && remain > 0 && remain <= URGENT_SECONDS;
 
   return (
     <article
@@ -154,25 +153,6 @@ function BossCard({
           查询掉落物
         </button>
       </div>
-
-      {boss.dropsImage && (
-        <button
-          type="button"
-          className="mt-3 block w-full overflow-hidden rounded-xl border border-[var(--border-soft)] bg-black/40"
-          onClick={() => onOpenDrops(boss)}
-          title="点击放大查看掉落说明"
-        >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={boss.dropsImage}
-            alt={`${boss.name} 掉落`}
-            className="mx-auto max-h-28 object-contain"
-          />
-          <span className="block bg-black/50 px-2 py-1 text-center text-[10px] text-white/80">
-            点击放大掉落说明
-          </span>
-        </button>
-      )}
 
       <div className="mt-3 space-y-1 text-xs text-[var(--text-muted)]">
         <p>最后击杀 {formatBeijingDateTime(boss.lastKillAt)}</p>
@@ -237,6 +217,10 @@ function BossCard({
   );
 }
 
+function isTerminalVoteLog(message: string) {
+  return /成功生效|超时未通过|投票失败/.test(message);
+}
+
 /** Member-facing BOSS timer. Admin CRUD lives under /admin/boss. */
 export function BossTimerPanel({
   member,
@@ -245,8 +229,8 @@ export function BossTimerPanel({
   member: Extract<SessionUser, { type: "member" }> | null;
   compact?: boolean;
 }) {
-  const router = useRouter();
   const [room, setRoom] = useState<BossRoomState | null>(null);
+  const [now, setNow] = useState(() => Date.now());
   const [chatInput, setChatInput] = useState("");
   const [error, setError] = useState("");
   const [popup, setPopup] = useState<{
@@ -255,13 +239,15 @@ export function BossTimerPanel({
   } | null>(null);
   const [busy, setBusy] = useState(false);
   const [dropsBoss, setDropsBoss] = useState<Boss | null>(null);
+  const [dropsLoading, setDropsLoading] = useState(false);
   const [soundOn, setSoundOn] = useState(true);
   const popupTimer = useRef<number | null>(null);
   const lastSystemId = useRef(0);
   const systemBootstrapped = useRef(false);
-  const showPopupRef = useRef<(text: string, tone?: "ok" | "fail" | "info") => void>(
-    () => {},
-  );
+  const showPopupRef = useRef<
+    (text: string, tone?: "ok" | "fail" | "info") => void
+  >(() => {});
+  const aliveRef = useRef(true);
 
   function showPopup(text: string, tone: "ok" | "fail" | "info" = "info") {
     if (popupTimer.current) window.clearTimeout(popupTimer.current);
@@ -278,46 +264,59 @@ export function BossTimerPanel({
   }).current;
 
   useEffect(() => {
+    aliveRef.current = true;
     const unlock = () => unlockBossSpawnSound();
     window.addEventListener("pointerdown", unlock, { once: true });
-    window.addEventListener("keydown", unlock, { once: true });
     return () => {
+      aliveRef.current = false;
       window.removeEventListener("pointerdown", unlock);
-      window.removeEventListener("keydown", unlock);
-    };
-  }, []);
-
-  useEffect(() => {
-    return () => {
       if (popupTimer.current) window.clearTimeout(popupTimer.current);
     };
   }, []);
 
+  // Shared clock — one timer for all cards
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), TICK_MS);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  // Lite poll (no drops images) with abort + overlap guard
   useEffect(() => {
     let alive = true;
+    let inFlight: AbortController | null = null;
+
     const tick = async () => {
-      const res = await fetch("/api/boss");
-      const data = await res.json();
-      if (!alive || !res.ok) return;
-      setRoom(data.room);
+      if (inFlight) return;
+      const ctrl = new AbortController();
+      inFlight = ctrl;
+      try {
+        const res = await fetch("/api/boss", { signal: ctrl.signal });
+        const data = await res.json();
+        if (!alive || !res.ok) return;
+        setRoom(data.room);
+      } catch (err) {
+        if ((err as Error)?.name === "AbortError") return;
+      } finally {
+        inFlight = null;
+      }
     };
-    const timeout = window.setTimeout(() => {
-      void tick();
-    }, 0);
+
+    void tick();
     const timer = window.setInterval(() => {
       void tick();
     }, POLL_MS);
+
     return () => {
       alive = false;
-      window.clearTimeout(timeout);
+      inFlight?.abort();
       window.clearInterval(timer);
     };
   }, []);
 
-  // Surface system vote logs as 2s popups for everyone
+  // Only toast NEW terminal vote results (never replay history on enter)
   useEffect(() => {
-    const systems =
-      room?.chat?.filter((c) => c.memberName === "系统") ?? [];
+    if (!room) return;
+    const systems = room.chat?.filter((c) => c.memberName === "系统") ?? [];
     const last = systems[systems.length - 1];
     if (!systemBootstrapped.current) {
       systemBootstrapped.current = true;
@@ -326,14 +325,42 @@ export function BossTimerPanel({
     }
     if (!last || last.id <= lastSystemId.current) return;
     lastSystemId.current = last.id;
+    if (!isTerminalVoteLog(last.message)) return;
     const fail = /未通过|超时|失败/.test(last.message);
-    const ok = /成功生效|标记生效/.test(last.message);
-    showPopup(last.message, fail ? "fail" : ok ? "ok" : "info");
-  }, [room?.chat]);
+    showPopup(last.message, fail ? "fail" : "ok");
+  }, [room]);
+
+  async function openDrops(boss: Boss) {
+    if (!boss.hasDropsImage && !boss.dropsImage && !boss.dropsNote) return;
+    setDropsLoading(true);
+    try {
+      if (boss.dropsImage) {
+        setDropsBoss(boss);
+        return;
+      }
+      const res = await fetch(`/api/boss?dropsId=${boss.id}`);
+      const data = await res.json();
+      if (!res.ok) {
+        showPopup(data.error || "加载掉落失败", "fail");
+        return;
+      }
+      setDropsBoss({
+        ...boss,
+        dropsImage: data.dropsImage ?? null,
+        dropsNote: data.dropsNote ?? boss.dropsNote,
+        hasDropsImage: Boolean(data.dropsImage),
+      });
+    } catch {
+      showPopup("加载掉落失败", "fail");
+    } finally {
+      setDropsLoading(false);
+    }
+  }
 
   async function vote(bossId: number, voteType: "killed" | "not_spawned") {
     setBusy(true);
     setError("");
+    unlockBossSpawnSound();
     try {
       const res = await fetch("/api/boss/vote", {
         method: "POST",
@@ -356,14 +383,10 @@ export function BossTimerPanel({
       if (lastSystem) lastSystemId.current = lastSystem.id;
 
       if (data.passed) {
-        showPopup(
-          lastSystem?.message || "投票成功，已更新计时",
-          "ok",
-        );
+        showPopup(lastSystem?.message || "投票成功，已更新计时", "ok");
       } else {
         showPopup(
-          lastSystem?.message ||
-            `已投票 ${data.round.voteCount}/${data.room.voteNeed}，等待其他人同意`,
+          `已投票 ${data.round.voteCount}/${data.room.voteNeed}，等待其他人同意`,
           "info",
         );
       }
@@ -392,7 +415,19 @@ export function BossTimerPanel({
     setRoom(data.room);
   }
 
-  const bosses = useMemo(() => room?.bosses ?? [], [room?.bosses]);
+  function goHome() {
+    aliveRef.current = false;
+    if (popupTimer.current) {
+      window.clearTimeout(popupTimer.current);
+      popupTimer.current = null;
+    }
+    setPopup(null);
+    setDropsBoss(null);
+    // Hard navigate so a jammed React tree cannot block leaving
+    window.location.assign(member ? "/home" : "/admin");
+  }
+
+  const bosses = room?.bosses ?? [];
   const voteNeed = room?.voteNeed ?? 3;
   const systemLogs = useMemo(
     () => (room?.chat ?? []).filter((c) => c.memberName === "系统").slice(-8),
@@ -424,7 +459,7 @@ export function BossTimerPanel({
               </span>
             </div>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="relative z-20 flex flex-wrap gap-2">
             <button
               type="button"
               className="btn-ghost text-sm"
@@ -440,7 +475,9 @@ export function BossTimerPanel({
               <button
                 type="button"
                 className="btn-ghost text-sm"
-                onClick={() => router.push("/boss/float")}
+                onClick={() => {
+                  window.location.assign("/boss/float");
+                }}
               >
                 悬浮窗
               </button>
@@ -448,7 +485,7 @@ export function BossTimerPanel({
             <button
               type="button"
               className="btn-ghost text-sm"
-              onClick={() => router.push(member ? "/home" : "/admin")}
+              onClick={goHome}
             >
               返回导航
             </button>
@@ -456,8 +493,8 @@ export function BossTimerPanel({
         </header>
 
         <p className="relative z-10 mb-3 text-xs text-[var(--text-muted)]">
-          倒计时归零时播放「来啦老弟」并闪光特效；成员也可投票「已击杀 / 未刷新」（
-          {voteNeed} 人在 {room?.voteWindowSeconds ?? 10} 秒内同意后生效）。
+          倒计时归零播放「来啦老弟」；投票需 {voteNeed} 人在{" "}
+          {room?.voteWindowSeconds ?? 10} 秒内同意。掉落图点击后按需加载。
         </p>
 
         {error && (
@@ -467,20 +504,27 @@ export function BossTimerPanel({
         )}
 
         <section className="relative z-10 space-y-3 pb-28">
-          {bosses.map((boss) => (
-            <BossCard
-              key={boss.id}
-              boss={boss}
-              member={member}
-              voteNeed={voteNeed}
-              onVote={vote}
-              busy={busy}
-              onOpenDrops={setDropsBoss}
-              soundOn={soundOn}
-              onSpawnReady={handleSpawnReady}
-            />
-          ))}
-          {bosses.length === 0 && (
+          {!room && (
+            <div className="rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)] px-4 py-10 text-center text-sm text-[var(--text-muted)]">
+              加载中…
+            </div>
+          )}
+          {room &&
+            bosses.map((boss) => (
+              <BossCard
+                key={boss.id}
+                boss={boss}
+                member={member}
+                voteNeed={voteNeed}
+                onVote={vote}
+                busy={busy || dropsLoading}
+                onOpenDrops={openDrops}
+                soundOn={soundOn}
+                onSpawnReady={handleSpawnReady}
+                now={now}
+              />
+            ))}
+          {room && bosses.length === 0 && (
             <div className="rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)] px-4 py-10 text-center text-sm text-[var(--text-muted)]">
               暂无 BOSS，请管理员在后台添加
             </div>
@@ -539,7 +583,7 @@ export function BossTimerPanel({
 
         {popup && (
           <div
-            className={`fixed left-1/2 top-[28%] z-50 w-[min(92vw,360px)] -translate-x-1/2 rounded-2xl border px-5 py-4 text-center text-sm shadow-xl ${
+            className={`pointer-events-none fixed left-1/2 top-[28%] z-50 w-[min(92vw,360px)] -translate-x-1/2 rounded-2xl border px-5 py-4 text-center text-sm shadow-xl ${
               popup.tone === "ok"
                 ? "border-emerald-500/40 bg-[#14241c] text-emerald-200"
                 : popup.tone === "fail"
