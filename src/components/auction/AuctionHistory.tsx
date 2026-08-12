@@ -18,6 +18,7 @@ import {
   AuctionItemLightbox,
   AuctionItemThumb,
 } from "./AuctionItemImage";
+import { ItemPriceStatsLine } from "./ItemPriceStatsLine";
 
 export function AuctionHistory({
   member,
@@ -162,6 +163,10 @@ export function AuctionHistory({
                       ? ` · 成交 ¥${item.soldPrice} · ${item.winnerName ?? ""}`
                       : ""}
                   </p>
+                  <ItemPriceStatsLine
+                    stats={item.priceStats}
+                    className="mt-1"
+                  />
                 </div>
               </li>
             ))}

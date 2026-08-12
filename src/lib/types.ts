@@ -88,6 +88,17 @@ export interface AuctionItem {
   /** Current high bidder (live); always real name, never anonymous. */
   leadingBidderId?: number | null;
   leadingBidderName?: string | null;
+  /** Historical sold prices for the same item name. */
+  priceStats?: ItemPriceStats | null;
+}
+
+/** Aggregated sale history for identical item names. */
+export interface ItemPriceStats {
+  name: string;
+  count: number;
+  high: number;
+  low: number;
+  avg: number;
 }
 
 export interface AuctionBid {

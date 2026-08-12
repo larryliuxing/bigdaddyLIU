@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ItemQuality, Member } from "@/lib/types";
+import type { ItemPriceStats, ItemQuality, Member } from "@/lib/types";
 import { recognizeItemName } from "@/lib/auction/itemOcr";
 import { recognizeParticipantNames } from "@/lib/auction/participantOcr";
 import { LockIcon } from "@/components/Icons";
+import { ItemPriceStatsLine } from "./ItemPriceStatsLine";
 
 function roleClass(role: Member["role"]) {
   if (role === "leader") return "role-leader";
@@ -34,6 +35,7 @@ export function AddAuctionItemForm({
   const [ocrStatus, setOcrStatus] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [priceStats, setPriceStats] = useState<ItemPriceStats | null>(null);
   const pasteRef = useRef<HTMLDivElement>(null);
   const memberPasteRef = useRef<HTMLDivElement>(null);
 
@@ -171,6 +173,31 @@ export function AddAuctionItemForm({
     pasteRef.current?.focus();
   }, []);
 
+  useEffect(() => {
+    const trimmed = name.trim();
+    if (trimmed.length < 2) {
+      setPriceStats(null);
+      return;
+    }
+    let alive = true;
+    const timer = window.setTimeout(async () => {
+      try {
+        const res = await fetch(
+          `/api/auction/price-stats?name=${encodeURIComponent(trimmed)}`,
+        );
+        const data = await res.json();
+        if (!alive || !res.ok) return;
+        setPriceStats((data.stats as ItemPriceStats | null) ?? null);
+      } catch {
+        if (alive) setPriceStats(null);
+      }
+    }, 280);
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
+  }, [name]);
+
   return (
     <form
       onSubmit={submit}
@@ -190,6 +217,7 @@ export function AddAuctionItemForm({
             onChange={(e) => setName(e.target.value)}
             placeholder="粘贴装备图后自动识别顶部名称"
           />
+          <ItemPriceStatsLine stats={priceStats} className="mt-1" />
         </label>
         <label className="block space-y-1.5">
           <span className="text-xs text-[var(--text-muted)]">起拍价 ¥</span>

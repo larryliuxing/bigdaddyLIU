@@ -27,6 +27,7 @@ import {
   AuctionItemLightbox,
   AuctionItemThumb,
 } from "./AuctionItemImage";
+import { ItemPriceStatsLine } from "./ItemPriceStatsLine";
 
 function statusTone(status: AuctionSessionSummary["status"]) {
   if (status === "live") return "bg-emerald-500/15 text-emerald-300";
@@ -703,6 +704,10 @@ export function AuctionManagePanel({
                               ? ` · 成交 ¥${item.soldPrice}`
                               : ""}
                           </p>
+                          <ItemPriceStatsLine
+                            stats={item.priceStats}
+                            className="mt-1"
+                          />
                         </div>
                       </div>
                       {editable &&

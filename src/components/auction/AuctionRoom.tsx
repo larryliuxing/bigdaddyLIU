@@ -19,6 +19,7 @@ import {
   AuctionItemLightbox,
   AuctionItemThumb,
 } from "./AuctionItemImage";
+import { ItemPriceStatsLine } from "./ItemPriceStatsLine";
 
 function HourglassIcon() {
   return (
@@ -394,6 +395,10 @@ export function AuctionRoom({
                           <p className="mt-1 text-xs text-[var(--text-muted)]">
                             起拍 ¥{item.startPrice} · 加价 ¥{item.bidIncrement}
                           </p>
+                          <ItemPriceStatsLine
+                            stats={item.priceStats}
+                            className="mt-1"
+                          />
                         </div>
                         <span className="rounded-full bg-emerald-500/15 px-2.5 py-1 text-xs text-emerald-300">
                           竞拍中

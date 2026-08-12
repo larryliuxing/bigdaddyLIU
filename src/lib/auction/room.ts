@@ -10,7 +10,9 @@ import {
   listEvents,
   listItems,
   mapLeadingBidders,
+  mapPriceStatsByNames,
   maybeAutoProgress,
+  normalizeItemNameKey,
 } from "@/lib/db";
 import type { AuctionItem, AuctionRoomState } from "@/lib/types";
 
@@ -39,6 +41,14 @@ function withLeadingBidders(
   });
 }
 
+function withPriceStats(items: AuctionItem[]): AuctionItem[] {
+  const statsMap = mapPriceStatsByNames(items.map((i) => i.name));
+  return items.map((item) => ({
+    ...item,
+    priceStats: statsMap.get(normalizeItemNameKey(item.name)) ?? null,
+  }));
+}
+
 export function buildRoomState(
   sessionId?: number,
   options: BuildRoomOptions = {},
@@ -59,13 +69,12 @@ export function buildRoomState(
   const itemsRaw = session
     ? listItems(session.id, {
         includeImages: !lite,
-        // Dividend member lists are only needed for admin/ended flows.
         includeDividends: !lite && !live,
       })
     : [];
 
   const leaders = session ? mapLeadingBidders(session.id) : new Map();
-  const items = withLeadingBidders(itemsRaw, leaders);
+  const items = withPriceStats(withLeadingBidders(itemsRaw, leaders));
   const activeItems = items.filter((i) => i.status === "active");
   const activeItem = activeItems[0] ?? null;
 
@@ -110,9 +119,6 @@ export function buildRoomState(
     remainingSeconds,
     dividends: ended && session ? listDividends(session.id) : [],
     dividendsCalculated,
-    dividendReport:
-      session && ended
-        ? getDividendReport(session.id)
-        : null,
+    dividendReport: session && ended ? getDividendReport(session.id) : null,
   };
 }

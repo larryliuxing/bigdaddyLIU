@@ -7,6 +7,8 @@ import {
   getOrCreateEditableSession,
   getSessionById,
   listItems,
+  mapPriceStatsByNames,
+  normalizeItemNameKey,
 } from "@/lib/db";
 import type { ItemQuality } from "@/lib/types";
 import { buildRoomState } from "@/lib/auction/room";
@@ -29,9 +31,16 @@ export async function GET(request: Request) {
     ? getSessionById(sessionId)
     : getLatestSession();
 
+  const items = session ? listItems(session.id) : [];
+  const statsMap = mapPriceStatsByNames(items.map((i) => i.name));
+  const withStats = items.map((item) => ({
+    ...item,
+    priceStats: statsMap.get(normalizeItemNameKey(item.name)) ?? null,
+  }));
+
   return NextResponse.json({
     session,
-    items: session ? listItems(session.id) : [],
+    items: withStats,
   });
 }
 

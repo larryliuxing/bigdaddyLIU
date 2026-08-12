@@ -16,6 +16,7 @@ import type {
   DividendSummary,
   ItemDividendGroup,
   ItemDividendLine,
+  ItemPriceStats,
   ItemQuality,
   Member,
   MemberRole,
@@ -161,6 +162,22 @@ export function ensureDb(): Database.Database {
       is_temporary INTEGER NOT NULL DEFAULT 0
     );
 
+    CREATE TABLE IF NOT EXISTS auction_item_sale_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      item_id INTEGER,
+      session_id INTEGER NOT NULL,
+      item_name TEXT NOT NULL,
+      item_name_key TEXT NOT NULL,
+      quality TEXT,
+      sold_price REAL NOT NULL,
+      winner_member_id INTEGER,
+      winner_name TEXT,
+      sold_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_sale_history_name_key
+      ON auction_item_sale_history(item_name_key);
+
     CREATE TABLE IF NOT EXISTS leaderboard_entries (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       member_id INTEGER NOT NULL UNIQUE,
@@ -304,6 +321,8 @@ function seedIfEmpty(database: Database.Database) {
       insertBoss.run(...row);
     }
   }
+
+  backfillSaleHistory(database);
 }
 
 function ensureColumn(
@@ -317,6 +336,61 @@ function ensureColumn(
   }>;
   if (cols.some((c) => c.name === column)) return;
   database.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+}
+
+/** Normalize item names so「祝福的生命之石」matches across spaces / case. */
+export function normalizeItemNameKey(name: string) {
+  return name.replace(/\s+/g, "").trim().toLowerCase();
+}
+
+function backfillSaleHistory(database: Database.Database) {
+  const missing = database
+    .prepare(
+      `SELECT i.id, i.session_id, i.name, i.quality, i.sold_price, i.winner_member_id, i.closed_at,
+              m.name as winner_name
+       FROM auction_items i
+       LEFT JOIN members m ON m.id = i.winner_member_id
+       WHERE i.status = 'sold'
+         AND i.sold_price IS NOT NULL
+         AND i.sold_price > 0
+         AND NOT EXISTS (
+           SELECT 1 FROM auction_item_sale_history h WHERE h.item_id = i.id
+         )`,
+    )
+    .all() as Array<{
+    id: number;
+    session_id: number;
+    name: string;
+    quality: string;
+    sold_price: number;
+    winner_member_id: number | null;
+    closed_at: string | null;
+    winner_name: string | null;
+  }>;
+
+  if (!missing.length) return;
+
+  const insert = database.prepare(
+    `INSERT INTO auction_item_sale_history
+     (item_id, session_id, item_name, item_name_key, quality, sold_price, winner_member_id, winner_name, sold_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  const tx = database.transaction(() => {
+    for (const row of missing) {
+      insert.run(
+        row.id,
+        row.session_id,
+        row.name,
+        normalizeItemNameKey(row.name),
+        row.quality,
+        row.sold_price,
+        row.winner_member_id,
+        row.winner_name,
+        row.closed_at || nowIso(),
+      );
+    }
+  });
+  tx();
 }
 
 function toMember(row: MemberRow): Member {
@@ -823,6 +897,160 @@ export function mapLeadingBidders(sessionId: number): Map<
   return map;
 }
 
+export function recordItemSale(input: {
+  itemId: number;
+  sessionId: number;
+  itemName: string;
+  quality: ItemQuality;
+  soldPrice: number;
+  winnerMemberId: number | null;
+  winnerName: string | null;
+  soldAt?: string;
+}) {
+  const key = normalizeItemNameKey(input.itemName);
+  if (!key || !(input.soldPrice > 0)) return;
+
+  const existing = ensureDb()
+    .prepare(`SELECT id FROM auction_item_sale_history WHERE item_id = ?`)
+    .get(input.itemId) as { id: number } | undefined;
+  if (existing) return;
+
+  ensureDb()
+    .prepare(
+      `INSERT INTO auction_item_sale_history
+       (item_id, session_id, item_name, item_name_key, quality, sold_price, winner_member_id, winner_name, sold_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      input.itemId,
+      input.sessionId,
+      input.itemName.trim(),
+      key,
+      input.quality,
+      input.soldPrice,
+      input.winnerMemberId,
+      input.winnerName,
+      input.soldAt || nowIso(),
+    );
+}
+
+function toPriceStats(
+  name: string,
+  row: { count: number; high: number | null; low: number | null; avg: number | null },
+): ItemPriceStats | null {
+  if (!row.count || row.high == null || row.low == null || row.avg == null) {
+    return null;
+  }
+  return {
+    name,
+    count: row.count,
+    high: Math.round(row.high * 100) / 100,
+    low: Math.round(row.low * 100) / 100,
+    avg: Math.round(row.avg * 100) / 100,
+  };
+}
+
+export function getItemPriceStats(name: string): ItemPriceStats | null {
+  const key = normalizeItemNameKey(name);
+  if (!key) return null;
+  const row = ensureDb()
+    .prepare(
+      `SELECT COUNT(*) as count,
+              MAX(sold_price) as high,
+              MIN(sold_price) as low,
+              AVG(sold_price) as avg
+       FROM auction_item_sale_history
+       WHERE item_name_key = ?`,
+    )
+    .get(key) as {
+    count: number;
+    high: number | null;
+    low: number | null;
+    avg: number | null;
+  };
+  return toPriceStats(name.trim() || key, row);
+}
+
+/** Batch lookup price stats keyed by normalized item name. */
+export function mapPriceStatsByNames(
+  names: string[],
+): Map<string, ItemPriceStats> {
+  const keys = [
+    ...new Set(
+      names.map(normalizeItemNameKey).filter((k) => k.length > 0),
+    ),
+  ];
+  const map = new Map<string, ItemPriceStats>();
+  if (!keys.length) return map;
+
+  const placeholders = keys.map(() => "?").join(",");
+  const rows = ensureDb()
+    .prepare(
+      `SELECT item_name_key,
+              MIN(item_name) as sample_name,
+              COUNT(*) as count,
+              MAX(sold_price) as high,
+              MIN(sold_price) as low,
+              AVG(sold_price) as avg
+       FROM auction_item_sale_history
+       WHERE item_name_key IN (${placeholders})
+       GROUP BY item_name_key`,
+    )
+    .all(...keys) as Array<{
+    item_name_key: string;
+    sample_name: string;
+    count: number;
+    high: number | null;
+    low: number | null;
+    avg: number | null;
+  }>;
+
+  for (const row of rows) {
+    const stats = toPriceStats(row.sample_name, row);
+    if (stats) map.set(row.item_name_key, stats);
+  }
+  return map;
+}
+
+export function listItemSaleHistory(
+  name: string,
+  limit = 20,
+): Array<{
+  id: number;
+  sessionId: number;
+  itemName: string;
+  soldPrice: number;
+  winnerName: string | null;
+  soldAt: string;
+}> {
+  const key = normalizeItemNameKey(name);
+  if (!key) return [];
+  const rows = ensureDb()
+    .prepare(
+      `SELECT id, session_id, item_name, sold_price, winner_name, sold_at
+       FROM auction_item_sale_history
+       WHERE item_name_key = ?
+       ORDER BY sold_at DESC, id DESC
+       LIMIT ?`,
+    )
+    .all(key, limit) as Array<{
+    id: number;
+    session_id: number;
+    item_name: string;
+    sold_price: number;
+    winner_name: string | null;
+    sold_at: string;
+  }>;
+  return rows.map((r) => ({
+    id: r.id,
+    sessionId: r.session_id,
+    itemName: r.item_name,
+    soldPrice: r.sold_price,
+    winnerName: r.winner_name,
+    soldAt: r.sold_at,
+  }));
+}
+
 export function getItemById(id: number): AuctionItem | null {
   const row = ensureDb()
     .prepare(`SELECT * FROM auction_items WHERE id = ?`)
@@ -1040,6 +1268,15 @@ export function closeItem(itemId: number): AuctionItem | null {
       )
       .run(topBid.member_id, topBid.amount, topBid.amount, nowIso(), item.id);
     const winner = getMemberById(topBid.member_id);
+    recordItemSale({
+      itemId: item.id,
+      sessionId: item.sessionId,
+      itemName: item.name,
+      quality: item.quality,
+      soldPrice: topBid.amount,
+      winnerMemberId: topBid.member_id,
+      winnerName: winner?.name ?? null,
+    });
     addEvent(
       item.sessionId,
       "sold",
