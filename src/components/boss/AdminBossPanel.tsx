@@ -15,6 +15,52 @@ import {
   BossDropsPasteZone,
 } from "@/components/boss/BossDropsViewer";
 
+const BOSS_COLORS = [
+  { id: "purple", label: "紫色", value: "#c084fc" },
+  { id: "pink", label: "粉色", value: "#f472b6" },
+] as const;
+
+function normalizeBossColor(color: string | null | undefined) {
+  const c = (color || "").toLowerCase();
+  if (c === "#f472b6" || c === "pink") return "#f472b6";
+  return "#c084fc";
+}
+
+function BossColorPicker({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (color: string) => void;
+}) {
+  const selected = normalizeBossColor(value);
+  return (
+    <div className="flex flex-wrap gap-2">
+      {BOSS_COLORS.map((opt) => {
+        const active = selected === opt.value;
+        return (
+          <button
+            key={opt.id}
+            type="button"
+            className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-sm transition ${
+              active
+                ? "border-white/35 bg-[#2a3350]"
+                : "border-[var(--border-soft)] bg-[#121826] text-[var(--text-muted)]"
+            }`}
+            onClick={() => onChange(opt.value)}
+          >
+            <span
+              className="h-3.5 w-3.5 rounded-full"
+              style={{ background: opt.value }}
+            />
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 type BossForm = {
   name: string;
   color: string;
@@ -36,7 +82,7 @@ const emptyForm = (): BossForm => ({
 function bossToForm(boss: Boss): BossForm {
   return {
     name: boss.name,
-    color: boss.color,
+    color: normalizeBossColor(boss.color),
     spawnRate: boss.spawnRate,
     intervalHours: boss.intervalHours,
     dropsNote: boss.dropsNote || "",
@@ -134,7 +180,10 @@ export function AdminBossPanel({ adminName }: { adminName: string }) {
     const res = await fetch("/api/boss", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(form),
+      body: JSON.stringify({
+        ...form,
+        color: normalizeBossColor(form.color),
+      }),
     });
     const data = await res.json();
     if (!res.ok) {
@@ -166,7 +215,7 @@ export function AdminBossPanel({ adminName }: { adminName: string }) {
   async function saveInherent(bossId: number) {
     const ok = await patchBoss(bossId, {
       name: editForm.name,
-      color: editForm.color,
+      color: normalizeBossColor(editForm.color),
       spawnRate: editForm.spawnRate,
       intervalHours: editForm.intervalHours,
       dropsNote: editForm.dropsNote || null,
@@ -339,17 +388,13 @@ export function AdminBossPanel({ adminName }: { adminName: string }) {
                 }
               />
             </div>
-            <label className="block space-y-1.5 sm:col-span-2">
+            <div className="sm:col-span-2 space-y-1.5">
               <span className="text-xs text-[var(--text-muted)]">显示颜色</span>
-              <input
-                className="field h-10"
-                type="color"
+              <BossColorPicker
                 value={form.color}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, color: e.target.value }))
-                }
+                onChange={(color) => setForm((f) => ({ ...f, color }))}
               />
-            </label>
+            </div>
             <button type="submit" className="btn-primary sm:col-span-2">
               添加 BOSS
             </button>
@@ -590,6 +635,17 @@ export function AdminBossPanel({ adminName }: { adminName: string }) {
                           }
                         />
                       </label>
+                      <div className="sm:col-span-2 space-y-1.5">
+                        <span className="text-xs text-[var(--text-muted)]">
+                          显示颜色
+                        </span>
+                        <BossColorPicker
+                          value={editForm.color}
+                          onChange={(color) =>
+                            setEditForm((f) => ({ ...f, color }))
+                          }
+                        />
+                      </div>
                       <div className="sm:col-span-2 space-y-1.5">
                         <span className="text-xs text-[var(--text-muted)]">
                           掉落说明（粘贴图片）
