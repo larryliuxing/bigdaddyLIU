@@ -22,11 +22,19 @@ export async function POST(request: Request) {
   const body = await request.json().catch(() => null);
   const ocrText = String(body?.ocrText ?? "");
   const ocrNameText = String(body?.ocrNameText ?? "");
+  const ocrPowerTopText = String(body?.ocrPowerTopText ?? "");
+  const ocrPowerBottomText = String(body?.ocrPowerBottomText ?? "");
   const ocrPowerText = String(body?.ocrPowerText ?? "");
   const imageData =
     typeof body?.imageData === "string" ? body.imageData : null;
 
-  if (!ocrText.trim() && !ocrNameText.trim() && !ocrPowerText.trim()) {
+  if (
+    !ocrText.trim() &&
+    !ocrNameText.trim() &&
+    !ocrPowerTopText.trim() &&
+    !ocrPowerBottomText.trim() &&
+    !ocrPowerText.trim()
+  ) {
     return NextResponse.json(
       { error: "请先粘贴或上传战力截图并完成识别" },
       { status: 400 },
@@ -36,6 +44,8 @@ export async function POST(request: Request) {
   const parsed = parseCombatPowerScreenshot(
     {
       nameText: ocrNameText || ocrText,
+      powerTopText: ocrPowerTopText || ocrPowerText || ocrText,
+      powerBottomText: ocrPowerBottomText || ocrPowerText || ocrText,
       powerText: ocrPowerText || ocrText,
       text: ocrText,
     },

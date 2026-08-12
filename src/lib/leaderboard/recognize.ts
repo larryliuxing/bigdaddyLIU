@@ -4,12 +4,13 @@ import { createWorker, PSM, type Worker } from "tesseract.js";
 import { buildCombatPowerOcrVariants } from "./preprocess";
 
 export type CombatPowerOcrResult = {
-  /** Blue/cyan name-crop OCR only — use this for identity checks */
   nameText: string;
-  /** Combat-power crop + full-frame OCR — use for 战斗力 digits */
-  powerText: string;
-  /** Combined text (debug / legacy storage) */
+  powerTopText: string;
+  powerBottomText: string;
+  /** Combined for debug / legacy */
   text: string;
+  /** Convenience merge of both power crops */
+  powerText: string;
 };
 
 let mixedWorkerPromise: Promise<Worker> | null = null;
@@ -22,7 +23,6 @@ async function getMixedWorker() {
   return mixedWorkerPromise;
 }
 
-/** Chinese-only worker — avoids Latin junk like "CT" on name crops */
 async function getNameWorker() {
   if (!nameWorkerPromise) {
     nameWorkerPromise = createWorker("chi_sim");
@@ -44,15 +44,15 @@ async function recognizeNameCrop(worker: Worker, dataUrl: string) {
       const text = (result.data.text || "").trim();
       if (text) chunks.push(text);
     } catch {
-      // try next PSM
+      // next
     }
   }
   return chunks;
 }
 
-async function recognizePowerCrop(worker: Worker, dataUrl: string, mode: "power" | "full") {
+async function recognizeBlock(worker: Worker, dataUrl: string) {
   await worker.setParameters({
-    tessedit_pageseg_mode: mode === "power" ? PSM.SINGLE_BLOCK : PSM.AUTO,
+    tessedit_pageseg_mode: PSM.SINGLE_BLOCK,
     preserve_interword_spaces: "1",
   });
   const result = await worker.recognize(dataUrl);
@@ -72,9 +72,10 @@ function uniqueJoin(chunks: string[]) {
 }
 
 /**
- * Multi-pass OCR:
- * - nameText: chi_sim on blue-filtered top crops only
- * - powerText: mixed worker on power + full frame
+ * Ratio-template OCR:
+ * - nameText from top-left blue name box
+ * - powerTopText from top-left 能力值 box
+ * - powerBottomText from center-bottom combat power box
  */
 export async function recognizeCombatPowerScreenshot(
   image: File | Blob | string,
@@ -85,23 +86,22 @@ export async function recognizeCombatPowerScreenshot(
   ]);
   const variants = await buildCombatPowerOcrVariants(image);
   const nameChunks: string[] = [];
-  const powerChunks: string[] = [];
+  const powerTopChunks: string[] = [];
+  const powerBottomChunks: string[] = [];
 
   for (const variant of variants) {
     try {
       if (variant.mode === "name") {
-        const parts = await recognizeNameCrop(nameWorker, variant.dataUrl);
-        nameChunks.push(...parts);
+        nameChunks.push(...(await recognizeNameCrop(nameWorker, variant.dataUrl)));
+      } else if (variant.mode === "powerTop") {
+        const text = await recognizeBlock(mixedWorker, variant.dataUrl);
+        if (text) powerTopChunks.push(text);
       } else {
-        const text = await recognizePowerCrop(
-          mixedWorker,
-          variant.dataUrl,
-          variant.mode,
-        );
-        if (text) powerChunks.push(text);
+        const text = await recognizeBlock(mixedWorker, variant.dataUrl);
+        if (text) powerBottomChunks.push(text);
       }
     } catch {
-      // Keep going
+      // continue
     }
   }
 
@@ -113,11 +113,15 @@ export async function recognizeCombatPowerScreenshot(
   }
 
   const nameText = uniqueJoin(nameChunks);
-  const powerText = uniqueJoin(powerChunks);
+  const powerTopText = uniqueJoin(powerTopChunks);
+  const powerBottomText = uniqueJoin(powerBottomChunks);
+  const powerText = uniqueJoin([powerTopText, powerBottomText].filter(Boolean));
 
   return {
     nameText,
+    powerTopText,
+    powerBottomText,
     powerText,
-    text: uniqueJoin([nameText, powerText].filter(Boolean)),
+    text: uniqueJoin([nameText, powerTopText, powerBottomText].filter(Boolean)),
   };
 }

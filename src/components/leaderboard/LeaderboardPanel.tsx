@@ -31,8 +31,13 @@ export function LeaderboardPanel({
   const [imageData, setImageData] = useState<string | null>(null);
   const [ocrText, setOcrText] = useState("");
   const [ocrNameText, setOcrNameText] = useState("");
-  const [ocrPowerText, setOcrPowerText] = useState("");
+  const [ocrPowerTopText, setOcrPowerTopText] = useState("");
+  const [ocrPowerBottomText, setOcrPowerBottomText] = useState("");
   const [previewPower, setPreviewPower] = useState<number | null>(null);
+  const [previewPowerTop, setPreviewPowerTop] = useState<number | null>(null);
+  const [previewPowerBottom, setPreviewPowerBottom] = useState<number | null>(
+    null,
+  );
   const [previewNameOk, setPreviewNameOk] = useState<boolean | null>(null);
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
@@ -60,8 +65,10 @@ export function LeaderboardPanel({
   async function handleImage(file: File) {
     setError("");
     setMessage("");
-    setStatus("正在识别截图…");
+    setStatus("正在按示例位置识别…");
     setPreviewPower(null);
+    setPreviewPowerTop(null);
+    setPreviewPowerBottom(null);
     setPreviewNameOk(null);
 
     const reader = new FileReader();
@@ -69,11 +76,11 @@ export function LeaderboardPanel({
       const dataUrl = String(reader.result || "");
       setImageData(dataUrl);
       try {
-        // Blue name crops + combat-power crops (kept separate)
         const ocr = await recognizeCombatPowerScreenshot(file);
         setOcrText(ocr.text);
         setOcrNameText(ocr.nameText);
-        setOcrPowerText(ocr.powerText);
+        setOcrPowerTopText(ocr.powerTopText);
+        setOcrPowerBottomText(ocr.powerBottomText);
 
         if (!member) {
           setStatus("已识别，请以成员身份登录后提交");
@@ -81,16 +88,24 @@ export function LeaderboardPanel({
           setPreviewPower(null);
         } else {
           const parsed = parseCombatPowerScreenshot(
-            { nameText: ocr.nameText, powerText: ocr.powerText, text: ocr.text },
+            {
+              nameText: ocr.nameText,
+              powerTopText: ocr.powerTopText,
+              powerBottomText: ocr.powerBottomText,
+              powerText: ocr.powerText,
+              text: ocr.text,
+            },
             member.name,
           );
           setPreviewNameOk(parsed.detectedName === member.name || parsed.ok);
           setPreviewPower(parsed.combatPower);
+          setPreviewPowerTop(parsed.powerTop);
+          setPreviewPowerBottom(parsed.powerBottom);
           if (!parsed.ok) {
             setStatus(parsed.error || "识别未通过");
           } else {
             setStatus(
-              `识别成功：${member.name} · 战斗力 ${parsed.combatPower}，可提交上榜`,
+              `识别成功：${member.name} · 战力 ${parsed.combatPower}（左上=中下），可提交上榜`,
             );
           }
         }
@@ -134,7 +149,8 @@ export function LeaderboardPanel({
         body: JSON.stringify({
           ocrText,
           ocrNameText,
-          ocrPowerText,
+          ocrPowerTopText,
+          ocrPowerBottomText,
           imageData,
         }),
       });
@@ -244,8 +260,29 @@ export function LeaderboardPanel({
               上传本人战力截图
             </h2>
             <p className="mt-1 text-xs leading-5 text-[var(--text-muted)]">
-              截图需包含顶部蓝色角色名「{member.name}」与「战斗力」数值。名字只识别蓝色中文，不会把「CT」类英文噪点或底部白字当成角色名。
+              请按下方示例截取<strong className="text-[var(--text-primary)]">完整游戏界面</strong>
+              ：① 左上蓝色名字须为「{member.name}」；② 左上能力值/战力与 ③ 中下战力数字须一致。
+              图片大小不限，按相对位置识别。
             </p>
+
+            <details className="mt-3 rounded-xl border border-[var(--border-soft)] bg-[#0f1320] p-3">
+              <summary className="cursor-pointer text-sm text-[var(--text-muted)]">
+                查看截图示例（点击展开）
+              </summary>
+              <div className="mt-3 space-y-2">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src="/leaderboard-ocr-example.png"
+                  alt="战力截图识别示例：①蓝色名字 ②左上战力 ③中下战力"
+                  className="w-full max-w-xl rounded-lg border border-[var(--border-soft)]"
+                />
+                <ol className="list-decimal space-y-1 pl-5 text-xs leading-5 text-[var(--text-muted)]">
+                  <li>左上角蓝色角色名</li>
+                  <li>左上角能力值/战力数字</li>
+                  <li>界面中下方战力大数字（须与②相同）</li>
+                </ol>
+              </div>
+            </details>
 
             <div
               ref={pasteRef}
@@ -309,9 +346,19 @@ export function LeaderboardPanel({
                   名字校验：{previewNameOk ? "一致" : "不一致"}
                 </span>
               )}
+              {previewPowerTop != null && (
+                <span className="text-[var(--text-muted)]">
+                  左上战力：{previewPowerTop}
+                </span>
+              )}
+              {previewPowerBottom != null && (
+                <span className="text-[var(--text-muted)]">
+                  中下战力：{previewPowerBottom}
+                </span>
+              )}
               {previewPower != null && (
                 <span className="text-[var(--accent-gold)]">
-                  识别战力：{previewPower}
+                  校验战力：{previewPower}
                 </span>
               )}
             </div>
