@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { AuctionRoomState, SessionUser } from "@/lib/types";
-import { AdminLoginModal } from "@/components/AdminLoginModal";
 import { hubPath } from "@/lib/nav";
 import { formatCountdown, qualityMeta } from "@/lib/auction/client";
 import { GavelIcon } from "@/components/Icons";
@@ -34,7 +33,6 @@ export function AuctionRoom({
   const [soundOn, setSoundOn] = useState(true);
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
-  const [showAdmin, setShowAdmin] = useState(false);
   const [remaining, setRemaining] = useState<number | null>(null);
   const remainingActive = remaining != null;
 
@@ -171,16 +169,15 @@ export function AuctionRoom({
             >
               分红统计
             </button>
-            <button
-              type="button"
-              className="btn-ghost"
-              onClick={() => {
-                if (isAdmin) router.push("/auction/manage");
-                else setShowAdmin(true);
-              }}
-            >
-              管理
-            </button>
+            {isAdmin && (
+              <button
+                type="button"
+                className="btn-ghost"
+                onClick={() => router.push("/auction/manage")}
+              >
+                拍卖管理
+              </button>
+            )}
           </div>
         </header>
 
@@ -335,17 +332,6 @@ export function AuctionRoom({
           <div className="fixed bottom-8 left-1/2 z-50 -translate-x-1/2 rounded-full border border-[var(--border-soft)] bg-[#1a2030] px-4 py-2 text-sm shadow-lg">
             {toast}
           </div>
-        )}
-
-        {showAdmin && (
-          <AdminLoginModal
-            onClose={() => setShowAdmin(false)}
-            onSuccess={() => {
-              setShowAdmin(false);
-              router.push("/auction/manage");
-              router.refresh();
-            }}
-          />
         )}
       </div>
     </div>

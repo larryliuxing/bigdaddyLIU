@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { Boss, BossRoomState, SessionUser } from "@/lib/types";
 import { formatCountdown } from "@/lib/auction/client";
-import { AdminLoginModal } from "@/components/AdminLoginModal";
 import { SettingsIcon, TimerIcon } from "@/components/Icons";
 import { hubPath } from "@/lib/nav";
 
@@ -150,7 +149,6 @@ export function BossTimerPanel({
   const router = useRouter();
   const [room, setRoom] = useState<BossRoomState | null>(null);
   const [allBosses, setAllBosses] = useState<Boss[]>([]);
-  const [showAdmin, setShowAdmin] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [chatInput, setChatInput] = useState("");
   const [error, setError] = useState("");
@@ -357,7 +355,7 @@ export function BossTimerPanel({
           ))}
           {bosses.length === 0 && (
             <div className="rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)] px-4 py-10 text-center text-sm text-[var(--text-muted)]">
-              暂无 BOSS，请管理员在设置中添加
+              暂无 BOSS，请管理员登录后台后在此页设置中添加
             </div>
           )}
         </section>
@@ -467,17 +465,16 @@ export function BossTimerPanel({
 
         <div className="fixed bottom-0 left-0 right-0 z-30 border-t border-[var(--border-soft)] bg-[rgba(10,12,20,0.92)] px-3 py-3 backdrop-blur">
           <div className="mx-auto flex w-full max-w-[960px] items-center gap-2">
-            <button
-              type="button"
-              className="rounded-full border border-[var(--border-soft)] p-2.5 text-[var(--text-muted)]"
-              title="设置"
-              onClick={() => {
-                if (isAdmin) setShowSettings((v) => !v);
-                else setShowAdmin(true);
-              }}
-            >
-              <SettingsIcon />
-            </button>
+            {isAdmin && (
+              <button
+                type="button"
+                className="rounded-full border border-[var(--border-soft)] p-2.5 text-[var(--text-muted)]"
+                title="BOSS 管理"
+                onClick={() => setShowSettings((v) => !v)}
+              >
+                <SettingsIcon />
+              </button>
+            )}
             <form onSubmit={sendChat} className="flex min-w-0 flex-1 gap-2">
               <input
                 className="field !py-2.5"
@@ -513,17 +510,6 @@ export function BossTimerPanel({
           <div className="fixed bottom-24 left-1/2 z-40 -translate-x-1/2 rounded-full border border-[var(--border-soft)] bg-[#1a2030] px-4 py-2 text-sm shadow-lg">
             {toast}
           </div>
-        )}
-
-        {showAdmin && (
-          <AdminLoginModal
-            onClose={() => setShowAdmin(false)}
-            onSuccess={() => {
-              setShowAdmin(false);
-              setShowSettings(true);
-              router.refresh();
-            }}
-          />
         )}
       </div>
     </div>

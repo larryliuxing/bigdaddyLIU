@@ -113,9 +113,9 @@ export function AdminPanel({
         <header className="animate-fade-up flex items-start justify-between gap-3">
           <div>
             <p className="text-sm text-[var(--text-muted)]">后台管理</p>
-            <h1 className="mt-1 text-2xl font-bold">成员管理</h1>
+            <h1 className="mt-1 text-2xl font-bold">成员账户</h1>
             <p className="mt-1 text-sm text-[var(--text-muted)]">
-              管理员：{adminName}
+              管理员：{adminName} · 新增/删除账户、重置密码与拍卖物品仅限此处
             </p>
           </div>
           <div className="flex gap-2">
@@ -124,7 +124,14 @@ export function AdminPanel({
               className="btn-ghost text-sm"
               onClick={() => router.push("/auction/manage")}
             >
-              拍卖管理
+              拍卖物品
+            </button>
+            <button
+              type="button"
+              className="btn-ghost text-sm"
+              onClick={() => router.push("/boss")}
+            >
+              BOSS 设置
             </button>
             <button
               type="button"

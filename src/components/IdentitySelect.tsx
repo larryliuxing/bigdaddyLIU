@@ -37,7 +37,7 @@ export function IdentitySelect({ members }: { members: Member[] }) {
           type="button"
           className="absolute right-4 top-4 z-10 rounded-full border border-[var(--border-soft)] bg-[rgba(20,24,36,0.8)] p-2.5 text-[var(--text-muted)] transition hover:text-[var(--text-primary)]"
           aria-label="管理员入口"
-          title="后台管理"
+          title="管理员后台（账户与拍卖管理）"
           onClick={() => setShowAdmin(true)}
         >
           <SettingsIcon />
@@ -49,7 +49,7 @@ export function IdentitySelect({ members }: { members: Member[] }) {
           </div>
           <h1 className="mt-4 text-3xl font-bold tracking-wide">选择身份</h1>
           <p className="mt-3 max-w-[20rem] text-sm leading-6 text-[var(--text-muted)]">
-            首次选择需设置至少 6 位密码；已设密码的身份需验证密码后方可使用
+            首次选择需设置至少 6 位密码；已设密码的身份需验证密码后方可使用。右上角齿轮为管理员后台入口。
           </p>
         </header>
 

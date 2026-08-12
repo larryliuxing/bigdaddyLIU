@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { DividendEntry, Member, AuctionSession } from "@/lib/types";
-import { AdminLoginModal } from "@/components/AdminLoginModal";
 import { hubPath } from "@/lib/nav";
 
 export function DividendPanel({
@@ -21,7 +20,6 @@ export function DividendPanel({
   const [amount, setAmount] = useState(0);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
-  const [showAdmin, setShowAdmin] = useState(false);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -156,15 +154,9 @@ export function DividendPanel({
             </button>
           </div>
         ) : (
-          <div className="mb-4">
-            <button
-              type="button"
-              className="btn-ghost text-sm"
-              onClick={() => setShowAdmin(true)}
-            >
-              管理员登录以计算/调整
-            </button>
-          </div>
+          <p className="mb-4 text-sm text-[var(--text-muted)]">
+            分红由管理员在后台计算与调整；成员仅可查看结果。
+          </p>
         )}
 
         {message && <p className="mb-3 text-sm text-emerald-400">{message}</p>}
@@ -257,16 +249,6 @@ export function DividendPanel({
               </button>
             </div>
           </section>
-        )}
-
-        {showAdmin && (
-          <AdminLoginModal
-            onClose={() => setShowAdmin(false)}
-            onSuccess={() => {
-              setShowAdmin(false);
-              router.refresh();
-            }}
-          />
         )}
       </div>
     </div>
