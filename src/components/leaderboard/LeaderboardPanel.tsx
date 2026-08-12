@@ -362,31 +362,20 @@ export function LeaderboardPanel({
 
             <details className="mt-3 rounded-xl border border-[var(--border-soft)] bg-[#0f1320] p-3" open>
               <summary className="cursor-pointer text-sm text-[var(--text-muted)]">
-                查看识别位置示意
+                查看识别结构示意
               </summary>
               <div className="mt-3 space-y-2">
-                {/* Prefer real screenshot if present; fall back to schematic SVG */}
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
-                  src="/leaderboard-ocr-example.png"
-                  alt="战力截图识别示例"
+                  src="/leaderboard-ocr-example.svg"
+                  alt="战力截图识别结构：①蓝色名字 ②左上战力 ③中下战力"
                   className="w-full max-w-xl rounded-lg border border-[var(--border-soft)] bg-[#0b0f18]"
-                  onError={(e) => {
-                    e.currentTarget.onerror = null;
-                    e.currentTarget.src = "/leaderboard-ocr-example.svg";
-                  }}
                 />
-                <p className="text-xs leading-5 text-[var(--text-muted)]">
-                  若仍是示意图：把你的真实截图传到服务器
-                  <code className="mx-1 text-[var(--text-primary)]">
-                    /var/www/guild/public/leaderboard-ocr-example.png
-                  </code>
-                  后刷新即可。
-                </p>
-                <p className="text-xs leading-5 text-[var(--text-muted)]">
-                  上传后请<strong className="text-[var(--text-primary)]">点击角色头顶的蓝色名字</strong>
-                  ；左上与中下两处战力数字须一致。
-                </p>
+                <ol className="list-decimal space-y-1 pl-5 text-xs leading-5 text-[var(--text-muted)]">
+                  <li>头顶蓝色角色名（上传后点击这里校验）</li>
+                  <li>左上角战力数字</li>
+                  <li>角色脚下中下战力（须与②相同）</li>
+                </ol>
               </div>
             </details>
 
