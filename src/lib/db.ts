@@ -1360,10 +1360,14 @@ export function getDividendReport(sessionId: number): DividendReport {
     linesByItem.set(line.itemId, list);
   }
 
-  const calculated = isDividendsCalculated(sessionId);
   const soldItems = listItems(sessionId).filter(
     (i) => i.status === "sold" && i.soldPrice != null && i.soldPrice > 0,
   );
+
+  // Legacy sessions may have totals without per-item lines — require recalculation.
+  const rawCalculated = isDividendsCalculated(sessionId);
+  const calculated =
+    rawCalculated && (lines.length > 0 || soldItems.length === 0);
 
   const taxRateHint = lines[0]?.taxRate ?? settings.taxRate;
   const itemGroups: ItemDividendGroup[] = [];
