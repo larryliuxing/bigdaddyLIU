@@ -33,7 +33,7 @@ export async function POST(request: Request) {
   }
   if (member.status === "exited") {
     return NextResponse.json(
-      { error: "该成员已退出，无法登录" },
+      { error: "该成员已清退，无法登录" },
       { status: 403 },
     );
   }

@@ -2,14 +2,8 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import type { Member, MemberRole } from "@/lib/types";
+import type { Member } from "@/lib/types";
 import { logoutAndRedirect } from "@/lib/nav";
-
-const ROLE_LABEL: Record<MemberRole, string> = {
-  normal: "普通",
-  officer: "干部",
-  leader: "会长",
-};
 
 export function AdminPanel({
   initialMembers,
@@ -21,13 +15,12 @@ export function AdminPanel({
   const router = useRouter();
   const [members, setMembers] = useState(initialMembers);
   const [name, setName] = useState("");
-  const [role, setRole] = useState<MemberRole>("normal");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
 
   const activeCount = members.filter((m) => m.status !== "exited").length;
-  const exitedCount = members.length - activeCount;
+  const clearedCount = members.length - activeCount;
 
   async function refresh() {
     const res = await fetch("/api/admin/members");
@@ -49,7 +42,7 @@ export function AdminPanel({
       const res = await fetch("/api/admin/members", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, role }),
+        body: JSON.stringify({ name }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -57,7 +50,6 @@ export function AdminPanel({
         return;
       }
       setName("");
-      setRole("normal");
       setMessage("成员已添加");
       await refresh();
     } catch {
@@ -65,21 +57,6 @@ export function AdminPanel({
     } finally {
       setLoading(false);
     }
-  }
-
-  async function changeRole(id: number, nextRole: MemberRole) {
-    setError("");
-    const res = await fetch("/api/admin/members", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id, role: nextRole }),
-    });
-    if (!res.ok) {
-      const data = await res.json();
-      setError(data.error || "更新失败");
-      return;
-    }
-    await refresh();
   }
 
   async function resetPassword(id: number) {
@@ -98,10 +75,10 @@ export function AdminPanel({
     await refresh();
   }
 
-  async function exitMember(id: number, memberName: string) {
+  async function clearMember(id: number, memberName: string) {
     if (
       !window.confirm(
-        `确认将「${memberName}」标记为已退出？历史拍卖/分红等记录会保留，主页与拍卖中不再显示。`,
+        `确认将「${memberName}」标记为已清退？历史拍卖/分红等记录会保留，主页与拍卖中不再显示。`,
       )
     ) {
       return;
@@ -115,18 +92,18 @@ export function AdminPanel({
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setError(
-          typeof data.error === "string" ? data.error : "标记退出失败",
+          typeof data.error === "string" ? data.error : "标记清退失败",
         );
         return;
       }
-      setMessage(`成员「${memberName}」已标记为退出`);
+      setMessage(`成员「${memberName}」已清退`);
       await refresh();
     } catch {
-      setError("网络错误，标记退出失败");
+      setError("网络错误，标记清退失败");
     }
   }
 
-  async function restoreExited(id: number, memberName: string) {
+  async function restoreMember(id: number, memberName: string) {
     setError("");
     setMessage("");
     const res = await fetch("/api/admin/members", {
@@ -139,7 +116,7 @@ export function AdminPanel({
       setError(typeof data.error === "string" ? data.error : "恢复失败");
       return;
     }
-    setMessage(`成员「${memberName}」已恢复`);
+    setMessage(`成员「${memberName}」已恢复在盟`);
     await refresh();
   }
 
@@ -204,15 +181,6 @@ export function AdminPanel({
               value={name}
               onChange={(e) => setName(e.target.value)}
             />
-            <select
-              className="field sm:max-w-[140px]"
-              value={role}
-              onChange={(e) => setRole(e.target.value as MemberRole)}
-            >
-              <option value="normal">普通</option>
-              <option value="officer">干部</option>
-              <option value="leader">会长</option>
-            </select>
             <button
               type="submit"
               className="btn-primary sm:max-w-[120px]"
@@ -227,12 +195,12 @@ export function AdminPanel({
 
         <section className="animate-fade-up-delay-2 mt-6 overflow-hidden rounded-2xl border border-[var(--border-soft)] bg-[rgba(21,25,37,0.9)]">
           <div className="border-b border-[var(--border-soft)] px-4 py-3 text-sm text-[var(--text-muted)]">
-            在籍 {activeCount} 人
-            {exitedCount > 0 ? ` · 已退出 ${exitedCount} 人` : ""}
+            在盟 {activeCount} 人
+            {clearedCount > 0 ? ` · 已清退 ${clearedCount} 人` : ""}
           </div>
           <ul className="divide-y divide-[var(--border-soft)]">
             {members.map((member) => {
-              const exited = member.status === "exited";
+              const cleared = member.status === "exited";
               return (
                 <li
                   key={member.id}
@@ -240,40 +208,23 @@ export function AdminPanel({
                 >
                   <div>
                     <p
-                      className={`font-medium ${exited ? "text-[var(--text-muted)] line-through" : ""}`}
+                      className={`font-medium ${cleared ? "text-[var(--text-muted)]" : ""}`}
                     >
                       {member.name}
-                      {exited ? (
-                        <span className="ml-2 text-xs font-normal no-underline">
-                          已退出
-                        </span>
-                      ) : null}
+                      <span className="ml-2 text-xs font-normal text-[var(--text-muted)]">
+                        {cleared ? "已清退" : "在盟"}
+                      </span>
                     </p>
                     <p className="mt-0.5 text-xs text-[var(--text-muted)]">
-                      {ROLE_LABEL[member.role]} ·{" "}
                       {member.hasPassword ? "已设密码" : "未设密码"}
-                      {exited && member.exitedAt
+                      {cleared && member.exitedAt
                         ? ` · ${member.exitedAt.slice(0, 10)}`
                         : ""}
                     </p>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
-                    {!exited ? (
+                    {!cleared ? (
                       <>
-                        <select
-                          className="field !w-auto !py-2 text-sm"
-                          value={member.role}
-                          onChange={(e) =>
-                            changeRole(
-                              member.id,
-                              e.target.value as MemberRole,
-                            )
-                          }
-                        >
-                          <option value="normal">普通</option>
-                          <option value="officer">干部</option>
-                          <option value="leader">会长</option>
-                        </select>
                         <button
                           type="button"
                           className="btn-ghost text-sm"
@@ -284,18 +235,18 @@ export function AdminPanel({
                         <button
                           type="button"
                           className="btn-ghost text-sm text-[var(--accent-crimson)]"
-                          onClick={() => exitMember(member.id, member.name)}
+                          onClick={() => clearMember(member.id, member.name)}
                         >
-                          标记退出
+                          清退
                         </button>
                       </>
                     ) : (
                       <button
                         type="button"
                         className="btn-ghost text-sm"
-                        onClick={() => restoreExited(member.id, member.name)}
+                        onClick={() => restoreMember(member.id, member.name)}
                       >
-                        恢复在籍
+                        恢复在盟
                       </button>
                     )}
                   </div>

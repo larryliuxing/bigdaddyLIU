@@ -7,12 +7,6 @@ import { recognizeParticipantNames } from "@/lib/auction/participantOcr";
 import { LockIcon } from "@/components/Icons";
 import { ItemPriceStatsLine } from "./ItemPriceStatsLine";
 
-function roleClass(role: Member["role"]) {
-  if (role === "leader") return "role-leader";
-  if (role === "officer") return "role-officer";
-  return "";
-}
-
 interface AddAuctionItemFormProps {
   members: Member[];
   sessionId: number;
@@ -348,9 +342,7 @@ export function AddAuctionItemForm({
                       onClick={() => toggleMember(member.id)}
                     >
                       <LockIcon />
-                      <span className={`text-sm ${roleClass(member.role)}`}>
-                        {member.name}
-                      </span>
+                      <span className="text-sm">{member.name}</span>
                     </button>
                   );
                 })}

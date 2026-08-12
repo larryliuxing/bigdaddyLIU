@@ -6,12 +6,6 @@ import { AdminLoginModal } from "./AdminLoginModal";
 import { LockIcon, SettingsIcon, UserAvatarIcon } from "./Icons";
 import { PasswordModal } from "./PasswordModal";
 
-function roleClass(role: Member["role"]) {
-  if (role === "leader") return "role-leader";
-  if (role === "officer") return "role-officer";
-  return "";
-}
-
 function hardNavigate(path: string) {
   // Full navigation so the newly set session cookie is always sent
   window.location.assign(path);
@@ -22,11 +16,7 @@ export function IdentitySelect({ members }: { members: Member[] }) {
   const [selected, setSelected] = useState<Member | null>(null);
   const [showAdmin, setShowAdmin] = useState(false);
   const ordered = useMemo(
-    () =>
-      [...list].sort((a, b) => {
-        const rank = { leader: 0, officer: 1, normal: 2 };
-        return rank[a.role] - rank[b.role] || a.id - b.id;
-      }),
+    () => [...list].sort((a, b) => a.id - b.id),
     [list],
   );
 
@@ -80,9 +70,7 @@ export function IdentitySelect({ members }: { members: Member[] }) {
                 onClick={() => setSelected(member)}
               >
                 <LockIcon />
-                <span className={`text-sm font-medium ${roleClass(member.role)}`}>
-                  {member.name}
-                </span>
+                <span className="text-sm font-medium">{member.name}</span>
               </button>
             ))}
           </div>

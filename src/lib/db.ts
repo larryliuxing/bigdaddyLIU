@@ -490,7 +490,7 @@ export function updateMember(
   return row ? toMember(row) : null;
 }
 
-/** Soft-exit: keep history, hide from home / auction / login. */
+/** Soft-exit / 清退: keep history, hide from home / auction / login. */
 export function markMemberExited(id: number): boolean {
   const result = ensureDb()
     .prepare(
@@ -1498,7 +1498,7 @@ export function placeBid(input: {
 
   const member = getMemberById(input.memberId);
   if (!member) throw new Error("成员不存在");
-  if (member.status === "exited") throw new Error("该成员已退出，无法出价");
+  if (member.status === "exited") throw new Error("该成员已清退，无法出价");
 
   const result = ensureDb()
     .prepare(
@@ -2155,7 +2155,7 @@ export function upsertLeaderboardEntry(input: {
 }) {
   const member = getMemberById(input.memberId);
   if (!member || member.status === "exited") {
-    throw new Error("该成员已退出，无法更新排行榜");
+    throw new Error("该成员已清退，无法更新排行榜");
   }
   ensureDb()
     .prepare(
