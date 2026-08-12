@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import type {
   AuctionItem,
   AuctionRoomState,
+  ItemQuality,
   SessionUser,
 } from "@/lib/types";
 import {
@@ -14,6 +15,10 @@ import {
 } from "@/lib/auction/client";
 import { GavelIcon } from "@/components/Icons";
 import { DividendReportView } from "./DividendReportView";
+import {
+  AuctionItemLightbox,
+  AuctionItemThumb,
+} from "./AuctionItemImage";
 
 function HourglassIcon() {
   return (
@@ -75,6 +80,12 @@ export function AuctionRoom({
     Record<number, { value: string; touched: boolean }>
   >({});
   const [biddingId, setBiddingId] = useState<number | null>(null);
+  const [viewer, setViewer] = useState<{
+    imageData: string;
+    name: string;
+    quality?: ItemQuality | null;
+    detail?: string | null;
+  } | null>(null);
   const hasImagesRef = useRef(false);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const remainingActive = remaining != null;
@@ -354,18 +365,22 @@ export function AuctionRoom({
                   className="rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)] p-4"
                 >
                   <div className="flex flex-col gap-4 sm:flex-row">
-                    {item.imageData ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={item.imageData}
-                        alt={item.name}
-                        className="mx-auto h-28 w-28 rounded-xl object-contain sm:mx-0"
-                      />
-                    ) : (
-                      <div className="mx-auto flex h-28 w-28 items-center justify-center rounded-xl bg-[#121826] text-xs text-[var(--text-muted)] sm:mx-0">
-                        无图
-                      </div>
-                    )}
+                    <AuctionItemThumb
+                      imageData={item.imageData}
+                      name={item.name}
+                      quality={item.quality}
+                      className="mx-auto h-28 w-28 sm:mx-0"
+                      onOpen={(payload) =>
+                        setViewer({
+                          ...payload,
+                          detail: `当前 ¥${item.currentPrice}${
+                            item.leadingBidderName
+                              ? ` · ${item.leadingBidderName}`
+                              : ""
+                          }`,
+                        })
+                      }
+                    />
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-start justify-between gap-2">
                         <div>
@@ -466,16 +481,37 @@ export function AuctionRoom({
                         key={item.id}
                         className="flex items-center justify-between gap-3 px-4 py-3 text-sm"
                       >
-                        <span>
-                          <span
-                            className="mr-2 inline-block h-2 w-2 rounded-full"
-                            style={{
-                              background: qualityMeta(item.quality).color,
-                            }}
+                        <div className="flex min-w-0 items-center gap-3">
+                          <AuctionItemThumb
+                            imageData={item.imageData}
+                            name={item.name}
+                            quality={item.quality}
+                            className="h-12 w-12 shrink-0"
+                            onOpen={(payload) =>
+                              setViewer({
+                                ...payload,
+                                detail:
+                                  item.soldPrice != null
+                                    ? `成交 ¥${item.soldPrice}${
+                                        item.winnerName
+                                          ? ` · ${item.winnerName}`
+                                          : ""
+                                      }`
+                                    : itemStatusLabel(item.status),
+                              })
+                            }
                           />
-                          {item.name}
-                        </span>
-                        <span className="text-[var(--text-muted)]">
+                          <span className="truncate">
+                            <span
+                              className="mr-2 inline-block h-2 w-2 rounded-full"
+                              style={{
+                                background: qualityMeta(item.quality).color,
+                              }}
+                            />
+                            {item.name}
+                          </span>
+                        </div>
+                        <span className="shrink-0 text-[var(--text-muted)]">
                           {itemStatusLabel(item.status)}
                           {item.soldPrice != null
                             ? ` · ¥${item.soldPrice}`
@@ -499,6 +535,17 @@ export function AuctionRoom({
           <div className="fixed bottom-8 left-1/2 z-50 -translate-x-1/2 rounded-full border border-[var(--border-soft)] bg-[#1a2030] px-4 py-2 text-sm shadow-lg">
             {toast}
           </div>
+        )}
+
+        {viewer && (
+          <AuctionItemLightbox
+            open
+            imageData={viewer.imageData}
+            name={viewer.name}
+            quality={viewer.quality}
+            detail={viewer.detail}
+            onClose={() => setViewer(null)}
+          />
         )}
       </div>
     </div>

@@ -7,6 +7,7 @@ import type {
   AuctionRoomState,
   AuctionSessionSummary,
   DividendReport,
+  ItemQuality,
   Member,
 } from "@/lib/types";
 import {
@@ -22,6 +23,10 @@ import {
 } from "@/lib/auction/client";
 import { AddAuctionItemForm } from "./AddAuctionItemForm";
 import { DividendReportView } from "./DividendReportView";
+import {
+  AuctionItemLightbox,
+  AuctionItemThumb,
+} from "./AuctionItemImage";
 
 function statusTone(status: AuctionSessionSummary["status"]) {
   if (status === "live") return "bg-emerald-500/15 text-emerald-300";
@@ -53,6 +58,12 @@ export function AuctionManagePanel({
     null,
   );
   const [taxPercent, setTaxPercent] = useState(5);
+  const [viewer, setViewer] = useState<{
+    imageData: string;
+    name: string;
+    quality?: ItemQuality | null;
+    detail?: string | null;
+  } | null>(null);
 
   const syncEditFields = useCallback((nextRoom: AuctionRoomState | null) => {
     const session = nextRoom?.session;
@@ -661,18 +672,22 @@ export function AuctionManagePanel({
                       className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
                     >
                       <div className="flex items-center gap-3">
-                        {item.imageData ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            src={item.imageData}
-                            alt=""
-                            className="h-12 w-12 rounded-lg object-cover"
-                          />
-                        ) : (
-                          <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-[#1c2230] text-xs text-[var(--text-muted)]">
-                            无图
-                          </div>
-                        )}
+                        <AuctionItemThumb
+                          imageData={item.imageData}
+                          name={item.name}
+                          quality={item.quality}
+                          className="h-12 w-12"
+                          onOpen={(payload) =>
+                            setViewer({
+                              ...payload,
+                              detail: `起拍 ¥${item.startPrice} · ${item.status}${
+                                item.soldPrice != null
+                                  ? ` · 成交 ¥${item.soldPrice}`
+                                  : ""
+                              }`,
+                            })
+                          }
+                        />
                         <div>
                           <p className="font-medium">
                             <span
@@ -741,6 +756,17 @@ export function AuctionManagePanel({
               </div>
             )}
           </>
+        )}
+
+        {viewer && (
+          <AuctionItemLightbox
+            open
+            imageData={viewer.imageData}
+            name={viewer.name}
+            quality={viewer.quality}
+            detail={viewer.detail}
+            onClose={() => setViewer(null)}
+          />
         )}
       </div>
     </div>

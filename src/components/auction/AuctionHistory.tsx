@@ -6,6 +6,7 @@ import type {
   AuctionItem,
   AuctionSession,
   DividendReport,
+  ItemQuality,
   SessionUser,
 } from "@/lib/types";
 import {
@@ -13,6 +14,10 @@ import {
   qualityMeta,
 } from "@/lib/auction/client";
 import { DividendReportView } from "./DividendReportView";
+import {
+  AuctionItemLightbox,
+  AuctionItemThumb,
+} from "./AuctionItemImage";
 
 export function AuctionHistory({
   member,
@@ -24,6 +29,12 @@ export function AuctionHistory({
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [items, setItems] = useState<AuctionItem[]>([]);
   const [report, setReport] = useState<DividendReport | null>(null);
+  const [viewer, setViewer] = useState<{
+    imageData: string;
+    name: string;
+    quality?: ItemQuality | null;
+    detail?: string | null;
+  } | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -96,7 +107,8 @@ export function AuctionHistory({
               }`}
               onClick={() => setSelectedId(s.id)}
             >
-              #{s.id} · {formatBeijingSessionLabel(s.scheduledStart || s.startedAt)}
+              #{s.id} ·{" "}
+              {formatBeijingSessionLabel(s.scheduledStart || s.startedAt)}
             </button>
           ))}
           {sessions.length === 0 && (
@@ -106,7 +118,7 @@ export function AuctionHistory({
 
         <section className="mb-5 overflow-hidden rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)]">
           <div className="border-b border-[var(--border-soft)] px-4 py-3 text-sm font-medium">
-            拍品结果
+            拍品结果（点击图片可放大查看属性）
           </div>
           <ul className="divide-y divide-[var(--border-soft)]">
             {items.length === 0 && (
@@ -115,20 +127,42 @@ export function AuctionHistory({
               </li>
             )}
             {items.map((item) => (
-              <li key={item.id} className="px-4 py-3">
-                <p className="font-medium">
-                  <span
-                    className="mr-2 inline-block h-2.5 w-2.5 rounded-full"
-                    style={{ background: qualityMeta(item.quality).color }}
-                  />
-                  {item.name}
-                </p>
-                <p className="mt-1 text-xs text-[var(--text-muted)]">
-                  {item.status}
-                  {item.soldPrice != null
-                    ? ` · 成交 ¥${item.soldPrice} · ${item.winnerName ?? ""}`
-                    : ""}
-                </p>
+              <li
+                key={item.id}
+                className="flex items-center gap-3 px-4 py-3"
+              >
+                <AuctionItemThumb
+                  imageData={item.imageData}
+                  name={item.name}
+                  quality={item.quality}
+                  className="h-14 w-14 shrink-0"
+                  onOpen={(payload) =>
+                    setViewer({
+                      ...payload,
+                      detail:
+                        item.soldPrice != null
+                          ? `成交 ¥${item.soldPrice}${
+                              item.winnerName ? ` · ${item.winnerName}` : ""
+                            }`
+                          : item.status,
+                    })
+                  }
+                />
+                <div className="min-w-0">
+                  <p className="font-medium">
+                    <span
+                      className="mr-2 inline-block h-2.5 w-2.5 rounded-full"
+                      style={{ background: qualityMeta(item.quality).color }}
+                    />
+                    {item.name}
+                  </p>
+                  <p className="mt-1 text-xs text-[var(--text-muted)]">
+                    {item.status}
+                    {item.soldPrice != null
+                      ? ` · 成交 ¥${item.soldPrice} · ${item.winnerName ?? ""}`
+                      : ""}
+                  </p>
+                </div>
               </li>
             ))}
           </ul>
@@ -139,6 +173,17 @@ export function AuctionHistory({
           editable={false}
           highlightMemberId={member?.id ?? null}
         />
+
+        {viewer && (
+          <AuctionItemLightbox
+            open
+            imageData={viewer.imageData}
+            name={viewer.name}
+            quality={viewer.quality}
+            detail={viewer.detail}
+            onClose={() => setViewer(null)}
+          />
+        )}
       </div>
     </div>
   );
