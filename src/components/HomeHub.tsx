@@ -68,12 +68,19 @@ export function HomeHub({ user }: { user: Extract<SessionUser, { type: "member" 
       <div className="app-frame">
         <div className="grid-bg" />
 
-        <header className="animate-fade-up relative z-10 flex items-start justify-between">
-          <div>
-            <p className="text-sm text-[var(--text-muted)]">欢迎回来</p>
-            <h1 className="mt-1 text-2xl font-bold tracking-wide">{user.name}</h1>
+        <header className="animate-fade-up relative z-10">
+          <div className="pr-24 text-center sm:text-left">
+            <p className="text-[11px] uppercase tracking-[0.22em] text-[var(--accent-gold)]">
+              Lineage 2 Covenant
+            </p>
+            <h1 className="mt-2 text-[1.85rem] font-extrabold leading-tight tracking-wide sm:text-[2.15rem]">
+              天堂2盟约
+            </h1>
+            <p className="mt-1.5 text-base font-semibold text-[var(--text-primary)] sm:text-lg">
+              费沙服务器专用盟助手
+            </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="absolute right-0 top-0 flex items-center gap-2">
             <button
               type="button"
               className="rounded-full border border-[var(--border-soft)] bg-[rgba(20,24,36,0.8)] p-2.5 text-[var(--text-muted)] transition hover:text-[var(--text-primary)]"
@@ -86,6 +93,10 @@ export function HomeHub({ user }: { user: Extract<SessionUser, { type: "member" 
             <button type="button" className="btn-ghost text-sm" onClick={logout}>
               退出
             </button>
+          </div>
+          <div className="mt-5 border-t border-[var(--border-soft)] pt-4">
+            <p className="text-sm text-[var(--text-muted)]">欢迎回来</p>
+            <p className="mt-0.5 text-xl font-bold tracking-wide">{user.name}</p>
           </div>
         </header>
 

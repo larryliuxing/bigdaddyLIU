@@ -43,11 +43,20 @@ export function IdentitySelect({ members }: { members: Member[] }) {
           <SettingsIcon />
         </button>
 
-        <header className="animate-fade-up mt-8 flex flex-col items-center text-center">
-          <div className="avatar-ring rounded-full p-1">
+        <header className="animate-fade-up mt-6 flex flex-col items-center text-center">
+          <p className="text-[11px] uppercase tracking-[0.22em] text-[var(--accent-gold)]">
+            Lineage 2 Covenant
+          </p>
+          <h1 className="mt-2 text-[1.95rem] font-extrabold leading-tight tracking-wide sm:text-[2.25rem]">
+            天堂2盟约
+          </h1>
+          <p className="mt-1.5 text-base font-semibold text-[var(--text-primary)] sm:text-lg">
+            费沙服务器专用盟助手
+          </p>
+          <div className="avatar-ring mt-6 rounded-full p-1">
             <UserAvatarIcon className="h-20 w-20" />
           </div>
-          <h1 className="mt-4 text-3xl font-bold tracking-wide">选择身份</h1>
+          <h2 className="mt-4 text-2xl font-bold tracking-wide">选择身份</h2>
           <p className="mt-3 max-w-[20rem] text-sm leading-6 text-[var(--text-muted)]">
             首次选择需设置至少 6 位密码；已设密码的身份需验证密码后方可使用。成员登录后也可在首页齿轮进入管理员后台。
           </p>
