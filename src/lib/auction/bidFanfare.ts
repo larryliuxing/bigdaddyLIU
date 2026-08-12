@@ -7,7 +7,8 @@
  *   /var/www/guild/public/sounds/zhe-feng-du-ye.mp3 (>¥1000 折风渡夜)
  *
  * Playback rule: only one track at a time.
- * Higher tier may interrupt lower; lower never interrupts higher.
+ * Higher tier may interrupt lower; same/lower never interrupts
+ * a currently playing higher or same-tier track.
  */
 
 export type BidFanfareTier = 300 | 600 | 1000;
@@ -119,14 +120,15 @@ export function parseFanfareKind(kind: string): BidFanfareTier | null {
 
 /**
  * Play fanfare for a tier.
- * - If a higher/equal tier is already playing → ignore (do not interrupt).
- * - If a lower tier is playing → stop it and play this one.
- * - Only one track plays at a time.
+ * - Same tier while playing → keep current (do not restart/interrupt)
+ * - Lower tier while higher playing → ignore
+ * - Higher tier while lower playing → stop lower, play higher
+ * - Only one track plays at a time
  */
 export async function playBidFanfare(tier: BidFanfareTier) {
   if (typeof window === "undefined") return;
 
-  // Lower cannot interrupt higher; equal also ignored (keep current)
+  // Same or lower cannot interrupt whatever is already playing
   if (playingTier != null && tier <= playingTier) {
     return;
   }
