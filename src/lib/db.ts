@@ -1338,39 +1338,72 @@ export function matchNamesFromText(text: string): {
   unrecognized: string[];
 } {
   const members = listMembers();
-  const byName = new Map(members.map((m) => [m.name, m]));
-  const byNameLower = new Map(
-    members.map((m) => [m.name.toLowerCase(), m] as const),
-  );
-
-  const tokens = text
-    .split(/[\s,，、|/\\;；\n\r\t:：]+/)
-    .map((t) => t.trim())
-    .filter((t) => t.length >= 1 && t.length <= 12);
+  const compactFull = text.replace(/\s+/g, "");
+  const compactLower = compactFull.toLowerCase();
 
   const matchedIds = new Set<number>();
-  const unrecognized: string[] = [];
+
+  // Primary: each guild member name appearing inside OCR text (most reliable)
+  for (const member of members) {
+    const name = member.name.replace(/\s+/g, "");
+    if (name.length < 2) continue;
+    if (
+      compactFull.includes(name) ||
+      compactLower.includes(name.toLowerCase())
+    ) {
+      matchedIds.add(member.id);
+    }
+  }
+
+  // Secondary: OCR tokens / lines compared against roster
+  const tokens = text
+    .split(/[\s,，、|/\\;；\n\r\t:：]+/)
+    .map((t) => t.replace(/\s+/g, "").trim())
+    .filter((t) => t.length >= 2 && t.length <= 12);
+
   const skip =
-    /贡献|获得|品级|战盟|名称|普通|守护|参与|战斗力|能力值|力量|体质|灵巧|敏捷|智力|智慧/;
+    /贡献|获得|品级|战盟|名称|普通|守护|参与|战斗力|能力值|力量|体质|灵巧|敏捷|智力|智慧|洪门/;
+
+  const unrecognized: string[] = [];
 
   for (const token of tokens) {
     if (/^[0-9.,%]+$/.test(token)) continue;
     if (skip.test(token)) continue;
 
-    const exact = byName.get(token) || byNameLower.get(token.toLowerCase());
-    if (exact) {
-      matchedIds.add(exact.id);
-      continue;
+    let hit = false;
+    for (const member of members) {
+      const name = member.name.replace(/\s+/g, "");
+      if (name.length < 2) continue;
+      if (
+        token === name ||
+        token.toLowerCase() === name.toLowerCase() ||
+        (token.length >= 2 && name.includes(token)) ||
+        (name.length >= 2 && token.includes(name))
+      ) {
+        matchedIds.add(member.id);
+        hit = true;
+        break;
+      }
     }
+    if (hit) continue;
 
-    if (/^[\u4e00-\u9fffA-Za-z0-9_·]+$/.test(token) && token.length >= 2) {
+    if (
+      /^[\u4e00-\u9fffA-Za-z0-9_·]+$/.test(token) &&
+      /[\u4e00-\u9fff]/.test(token)
+    ) {
       if (!unrecognized.includes(token)) unrecognized.push(token);
     }
   }
 
   return {
     matched: members.filter((m) => matchedIds.has(m.id)),
-    unrecognized,
+    unrecognized: unrecognized.filter((token) => {
+      return !members.some((m) => {
+        if (!matchedIds.has(m.id)) return false;
+        const name = m.name.replace(/\s+/g, "");
+        return name.includes(token) || token.includes(name);
+      });
+    }),
   };
 }
 

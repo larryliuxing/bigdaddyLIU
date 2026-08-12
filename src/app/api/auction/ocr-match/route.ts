@@ -12,10 +12,14 @@ export async function POST(request: Request) {
 
   const body = await request.json().catch(() => null);
   const text = String(body?.text ?? "");
-  if (!text.trim()) {
+  const names = Array.isArray(body?.names)
+    ? body.names.map((n: unknown) => String(n ?? "")).filter(Boolean)
+    : [];
+  const combined = [text, ...names].filter(Boolean).join("\n");
+  if (!combined.trim()) {
     return NextResponse.json({ error: "没有识别到文字" }, { status: 400 });
   }
 
-  const result = matchNamesFromText(text);
+  const result = matchNamesFromText(combined);
   return NextResponse.json(result);
 }

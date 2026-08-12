@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ItemQuality, Member } from "@/lib/types";
-import { recognizeImageText } from "@/lib/auction/client";
 import { recognizeItemName } from "@/lib/auction/itemOcr";
+import { recognizeParticipantNames } from "@/lib/auction/participantOcr";
 import { LockIcon } from "@/components/Icons";
 
 function roleClass(role: Member["role"]) {
@@ -87,14 +87,14 @@ export function AddAuctionItemForm({
         return;
       }
 
-      // members OCR
-      setOcrStatus("正在识别参与者名单…");
+      // members OCR — crop「名称」column, match against guild roster
+      setOcrStatus("正在识别参与者名称列…");
       try {
-        const text = await recognizeImageText(file);
+        const ocr = await recognizeParticipantNames(file);
         const res = await fetch("/api/auction/ocr-match", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text }),
+          body: JSON.stringify({ text: ocr.text, names: ocr.names }),
         });
         const data = await res.json();
         if (!res.ok) {
@@ -109,9 +109,14 @@ export function AddAuctionItemForm({
         });
         const extra = (data.unrecognized as string[]) || [];
         setOcrStatus(
-          `识别到 ${matched.length} 名成员` +
-            (extra.length ? `，未入库：${extra.slice(0, 5).join("、")}` : "") +
-            "。其余请从左侧手动点选补全。",
+          matched.length
+            ? `已匹配 ${matched.length} 名盟成员加入分红` +
+                (extra.length
+                  ? `；截图中另有未入库：${extra.slice(0, 5).join("、")}`
+                  : "")
+            : extra.length
+              ? `未匹配到盟成员。识别到：${extra.slice(0, 8).join("、")}。请手动点选补全。`
+              : "未识别到名称，请换更清晰的参与者截图或手动点选。",
         );
         setTab("members");
       } catch {
@@ -301,9 +306,9 @@ export function AddAuctionItemForm({
                 onPaste={(e) => handleImagePaste(e, "members")}
                 className="flex min-h-40 items-center justify-center rounded-lg border border-dashed border-[rgba(255,255,255,0.15)] px-3 text-center text-sm text-[var(--text-muted)] outline-none focus:border-[rgba(123,108,255,0.5)]"
               >
-                粘贴游戏「参与者」截图，自动识别名字并勾选；
+                粘贴游戏「参与者」截图，自动识别左侧名称列，
                 <br />
-                未识别到的请切回成员名单手动补选
+                与盟成员同名的会加入分红名单；其余请手动补选
               </div>
             )}
           </div>
