@@ -4,7 +4,7 @@
  */
 
 const UI_SKIP =
-  /战斗力|能力值|力量|体质|灵巧|敏捷|智力|智慧|攻击|移动|施法|侍卫|战盟|普通|守护|贡献|获得|品级|名称|参与|铠卫|复活|支配|骑士|经验|等级|装备|背包|技能|任务|日程|自动|进行中|进行|日程自动/;
+  /战斗力|能力值|力量|体质|灵巧|敏捷|智力|智慧|攻击|移动|施法|侍卫|战盟|普通|守护|贡献|获得|品级|名称|参与|铠卫|师卫|复活|支配|骑士|经验|等级|装备|背包|技能|任务|日程|自动|进行中|进行|日程自动/;
 
 function isUiPhrase(token: string) {
   if (UI_SKIP.test(token)) return true;
@@ -12,12 +12,36 @@ function isUiPhrase(token: string) {
     return true;
   }
   if (token.includes("战斗力") || token.includes("经验")) return true;
-  // Long status lines are not character names
   if (token.length >= 6 && /[\u4e00-\u9fff]{6,}/.test(token)) {
-    // Allow long member names only if they look like names (no verb-ish UI)
     if (/自动|进行|日程|系统|提示|已完成|已击杀/.test(token)) return true;
   }
   return false;
+}
+
+function isMostlyLatin(token: string) {
+  const latin = token.match(/[A-Za-z]/g)?.length ?? 0;
+  const cjk = token.match(/[\u4e00-\u9fff]/g)?.length ?? 0;
+  return latin > 0 && cjk === 0;
+}
+
+function expectedIsChinese(expected: string) {
+  return /[\u4e00-\u9fff]/.test(expected);
+}
+
+/** Reject OCR junk like "CT" when the account name is Chinese. */
+export function isPlausibleNameCandidate(token: string, expected: string) {
+  if (!token || isUiPhrase(token)) return false;
+  if (token.length < 2 || token.length > 10) return false;
+  if (!/^[\u4e00-\u9fffA-Za-z0-9_·]+$/.test(token)) return false;
+
+  if (expectedIsChinese(expected)) {
+    const cjk = token.match(/[\u4e00-\u9fff]/g)?.length ?? 0;
+    // Need real Chinese glyphs — never report "CT" / "A1" as the role name
+    if (cjk < 2) return false;
+    if (isMostlyLatin(token)) return false;
+  }
+
+  return true;
 }
 
 export function normalizeOcrText(text: string) {
@@ -71,6 +95,15 @@ function collapseCjk(text: string) {
   return text.replace(/[^\u4e00-\u9fffA-Za-z0-9_·]/g, "");
 }
 
+/** Keep only CJK when matching Chinese account names — drop Latin OCR junk. */
+function collapseForMatch(text: string, expected: string) {
+  const normalized = normalizeOcrText(text);
+  if (expectedIsChinese(expected)) {
+    return normalized.replace(/[^\u4e00-\u9fff·]/g, "");
+  }
+  return collapseCjk(normalized);
+}
+
 function charsInOrder(haystack: string, needle: string) {
   let i = 0;
   for (const ch of haystack) {
@@ -102,15 +135,38 @@ function levenshtein(a: string, b: string) {
   return dp[n];
 }
 
+function charCoverage(haystack: string, needle: string) {
+  if (!needle) return 0;
+  let hit = 0;
+  const pool = haystack.split("");
+  for (const ch of needle) {
+    const idx = pool.indexOf(ch);
+    if (idx >= 0) {
+      hit += 1;
+      pool.splice(idx, 1);
+    }
+  }
+  return hit / needle.length;
+}
+
 function fuzzyMatchExpected(text: string, expected: string): boolean {
   if (!expected) return false;
-  const compact = collapseCjk(normalizeOcrText(text));
-  const exp = collapseCjk(expected);
+  const compact = collapseForMatch(text, expected);
+  const exp = expectedIsChinese(expected)
+    ? expected.replace(/[^\u4e00-\u9fff·]/g, "")
+    : collapseCjk(expected);
   if (!exp) return false;
 
   if (compact.includes(exp)) return true;
 
   if (exp.length >= 2 && charsInOrder(compact, exp)) return true;
+
+  // 2-of-3 / 3-of-4 style coverage when OCR drops one glyph
+  if (exp.length >= 3 && charCoverage(compact, exp) >= (exp.length - 1) / exp.length) {
+    if (charsInOrder(compact, [...exp].filter((ch) => compact.includes(ch)).join(""))) {
+      return true;
+    }
+  }
 
   if (exp.length >= 3) {
     const window = Math.max(exp.length - 1, 2);
@@ -150,12 +206,14 @@ export function extractDetectedName(
     return { matched: false, detectedName: null };
   }
 
-  // Ignore empty blue crops
-  if (!collapseCjk(normalized)) {
+  const compact = collapseForMatch(normalized, expected);
+  if (!compact) {
     return { matched: false, detectedName: null };
   }
 
-  const tokens = tokenize(normalized).filter((t) => !isUiPhrase(t));
+  const tokens = tokenize(normalized).filter((t) =>
+    isPlausibleNameCandidate(t, expected),
+  );
   const expectedLower = expected.toLowerCase();
 
   const exact = tokens.find(
@@ -168,7 +226,7 @@ export function extractDetectedName(
   if (expected.length >= 2) {
     const escaped = expected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const loose = new RegExp(escaped.split("").join("\\s*"), "i");
-    if (loose.test(normalized)) {
+    if (loose.test(normalized) || loose.test(compact)) {
       return { matched: true, detectedName: expected };
     }
   }
@@ -177,16 +235,8 @@ export function extractDetectedName(
     return { matched: true, detectedName: expected };
   }
 
-  // Candidate for error UI: prefer short name-like tokens, never status lines
   const candidate =
-    tokens.find(
-      (t) =>
-        t.length >= 2 &&
-        t.length <= 8 &&
-        /^[\u4e00-\u9fffA-Za-z0-9_·]+$/.test(t) &&
-        !isUiPhrase(t) &&
-        t.toLowerCase() !== expectedLower,
-    ) ?? null;
+    tokens.find((t) => t.toLowerCase() !== expectedLower) ?? null;
 
   return { matched: false, detectedName: candidate };
 }
@@ -223,7 +273,7 @@ export function parseCombatPowerScreenshot(
       detectedName: nameResult.detectedName,
       error: nameResult.detectedName
         ? `截图角色名「${nameResult.detectedName}」与当前账号「${expectedName}」不一致，无法上榜`
-        : `截图蓝色角色名中未识别到「${expectedName}」，请截取本人角色界面（顶部蓝色名字）`,
+        : `未能识别顶部蓝色角色名「${expectedName}」（已忽略英文噪点/底部白字），请重新截取角色界面顶部名字区域后上传`,
     };
   }
 

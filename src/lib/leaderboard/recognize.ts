@@ -12,32 +12,49 @@ export type CombatPowerOcrResult = {
   text: string;
 };
 
-let workerPromise: Promise<Worker> | null = null;
+let mixedWorkerPromise: Promise<Worker> | null = null;
+let nameWorkerPromise: Promise<Worker> | null = null;
 
-async function getWorker() {
-  if (!workerPromise) {
-    workerPromise = createWorker("chi_sim+eng");
+async function getMixedWorker() {
+  if (!mixedWorkerPromise) {
+    mixedWorkerPromise = createWorker("chi_sim+eng");
   }
-  return workerPromise;
+  return mixedWorkerPromise;
 }
 
-async function recognizeVariant(
-  worker: Worker,
-  dataUrl: string,
-  mode: "name" | "power" | "full",
-) {
-  const psm =
-    mode === "name"
-      ? PSM.SINGLE_LINE
-      : mode === "power"
-        ? PSM.SINGLE_BLOCK
-        : PSM.AUTO;
+/** Chinese-only worker — avoids Latin junk like "CT" on name crops */
+async function getNameWorker() {
+  if (!nameWorkerPromise) {
+    nameWorkerPromise = createWorker("chi_sim");
+  }
+  return nameWorkerPromise;
+}
 
+const NAME_PSMS = [PSM.SINGLE_LINE, PSM.SPARSE_TEXT, PSM.SINGLE_BLOCK] as const;
+
+async function recognizeNameCrop(worker: Worker, dataUrl: string) {
+  const chunks: string[] = [];
+  for (const psm of NAME_PSMS) {
+    try {
+      await worker.setParameters({
+        tessedit_pageseg_mode: psm,
+        preserve_interword_spaces: "1",
+      });
+      const result = await worker.recognize(dataUrl);
+      const text = (result.data.text || "").trim();
+      if (text) chunks.push(text);
+    } catch {
+      // try next PSM
+    }
+  }
+  return chunks;
+}
+
+async function recognizePowerCrop(worker: Worker, dataUrl: string, mode: "power" | "full") {
   await worker.setParameters({
-    tessedit_pageseg_mode: psm,
+    tessedit_pageseg_mode: mode === "power" ? PSM.SINGLE_BLOCK : PSM.AUTO,
     preserve_interword_spaces: "1",
   });
-
   const result = await worker.recognize(dataUrl);
   return (result.data.text || "").trim();
 }
@@ -56,35 +73,41 @@ function uniqueJoin(chunks: string[]) {
 
 /**
  * Multi-pass OCR:
- * - nameText: ONLY blue-filtered top crops (never bottom white UI)
- * - powerText: power crop + full frame
+ * - nameText: chi_sim on blue-filtered top crops only
+ * - powerText: mixed worker on power + full frame
  */
 export async function recognizeCombatPowerScreenshot(
   image: File | Blob | string,
 ): Promise<CombatPowerOcrResult> {
-  const worker = await getWorker();
+  const [nameWorker, mixedWorker] = await Promise.all([
+    getNameWorker(),
+    getMixedWorker(),
+  ]);
   const variants = await buildCombatPowerOcrVariants(image);
   const nameChunks: string[] = [];
   const powerChunks: string[] = [];
 
   for (const variant of variants) {
     try {
-      const text = await recognizeVariant(worker, variant.dataUrl, variant.mode);
-      if (!text) continue;
       if (variant.mode === "name") {
-        nameChunks.push(text);
+        const parts = await recognizeNameCrop(nameWorker, variant.dataUrl);
+        nameChunks.push(...parts);
       } else {
-        powerChunks.push(text);
+        const text = await recognizePowerCrop(
+          mixedWorker,
+          variant.dataUrl,
+          variant.mode,
+        );
+        if (text) powerChunks.push(text);
       }
     } catch {
-      // Keep going with other crops
+      // Keep going
     }
   }
 
   try {
-    await worker.setParameters({
-      tessedit_pageseg_mode: PSM.AUTO,
-    });
+    await nameWorker.setParameters({ tessedit_pageseg_mode: PSM.AUTO });
+    await mixedWorker.setParameters({ tessedit_pageseg_mode: PSM.AUTO });
   } catch {
     // ignore
   }

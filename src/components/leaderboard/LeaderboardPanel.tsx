@@ -244,7 +244,7 @@ export function LeaderboardPanel({
               上传本人战力截图
             </h2>
             <p className="mt-1 text-xs leading-5 text-[var(--text-muted)]">
-              截图需包含顶部蓝色角色名「{member.name}」与「战斗力」数值。名字只从蓝色字区域识别，不会把底部白色提示当成名字。
+              截图需包含顶部蓝色角色名「{member.name}」与「战斗力」数值。名字只识别蓝色中文，不会把「CT」类英文噪点或底部白字当成角色名。
             </p>
 
             <div
