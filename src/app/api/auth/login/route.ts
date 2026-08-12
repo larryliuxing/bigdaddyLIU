@@ -31,6 +31,12 @@ export async function POST(request: Request) {
   if (!member) {
     return NextResponse.json({ error: "身份不存在" }, { status: 404 });
   }
+  if (member.status === "exited") {
+    return NextResponse.json(
+      { error: "该成员已退出，无法登录" },
+      { status: 403 },
+    );
+  }
 
   if (!member.password_hash) {
     const claimed = claimMemberPassword(memberId, password);

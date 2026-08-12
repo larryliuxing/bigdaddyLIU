@@ -1,19 +1,24 @@
 export type MemberRole = "normal" | "officer" | "leader";
+export type MemberStatus = "active" | "exited";
 
 export interface Member {
   id: number;
   name: string;
   role: MemberRole;
+  status: MemberStatus;
   hasPassword: boolean;
   createdAt: string;
+  exitedAt: string | null;
 }
 
 export interface MemberRow {
   id: number;
   name: string;
   role: MemberRole;
+  status: MemberStatus;
   password_hash: string | null;
   created_at: string;
+  exited_at: string | null;
 }
 
 export type SessionUser =

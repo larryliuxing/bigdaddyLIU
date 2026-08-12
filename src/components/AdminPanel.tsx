@@ -26,6 +26,9 @@ export function AdminPanel({
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
 
+  const activeCount = members.filter((m) => m.status !== "exited").length;
+  const exitedCount = members.length - activeCount;
+
   async function refresh() {
     const res = await fetch("/api/admin/members");
     if (!res.ok) return;
@@ -95,8 +98,12 @@ export function AdminPanel({
     await refresh();
   }
 
-  async function removeMember(id: number, memberName: string) {
-    if (!window.confirm(`确认删除成员「${memberName}」？删除后不可恢复。`)) {
+  async function exitMember(id: number, memberName: string) {
+    if (
+      !window.confirm(
+        `确认将「${memberName}」标记为已退出？历史拍卖/分红等记录会保留，主页与拍卖中不再显示。`,
+      )
+    ) {
       return;
     }
     setError("");
@@ -108,15 +115,32 @@ export function AdminPanel({
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setError(
-          typeof data.error === "string" ? data.error : "删除失败",
+          typeof data.error === "string" ? data.error : "标记退出失败",
         );
         return;
       }
-      setMessage(`成员「${memberName}」已删除`);
+      setMessage(`成员「${memberName}」已标记为退出`);
       await refresh();
     } catch {
-      setError("网络错误，删除失败");
+      setError("网络错误，标记退出失败");
     }
+  }
+
+  async function restoreExited(id: number, memberName: string) {
+    setError("");
+    setMessage("");
+    const res = await fetch("/api/admin/members", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, action: "restore" }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setError(typeof data.error === "string" ? data.error : "恢复失败");
+      return;
+    }
+    setMessage(`成员「${memberName}」已恢复`);
+    await refresh();
   }
 
   return (
@@ -203,50 +227,81 @@ export function AdminPanel({
 
         <section className="animate-fade-up-delay-2 mt-6 overflow-hidden rounded-2xl border border-[var(--border-soft)] bg-[rgba(21,25,37,0.9)]">
           <div className="border-b border-[var(--border-soft)] px-4 py-3 text-sm text-[var(--text-muted)]">
-            共 {members.length} 名成员
+            在籍 {activeCount} 人
+            {exitedCount > 0 ? ` · 已退出 ${exitedCount} 人` : ""}
           </div>
           <ul className="divide-y divide-[var(--border-soft)]">
-            {members.map((member) => (
-              <li
-                key={member.id}
-                className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
-              >
-                <div>
-                  <p className="font-medium">{member.name}</p>
-                  <p className="mt-0.5 text-xs text-[var(--text-muted)]">
-                    {ROLE_LABEL[member.role]} ·{" "}
-                    {member.hasPassword ? "已设密码" : "未设密码"}
-                  </p>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <select
-                    className="field !w-auto !py-2 text-sm"
-                    value={member.role}
-                    onChange={(e) =>
-                      changeRole(member.id, e.target.value as MemberRole)
-                    }
-                  >
-                    <option value="normal">普通</option>
-                    <option value="officer">干部</option>
-                    <option value="leader">会长</option>
-                  </select>
-                  <button
-                    type="button"
-                    className="btn-ghost text-sm"
-                    onClick={() => resetPassword(member.id)}
-                  >
-                    重置密码
-                  </button>
-                  <button
-                    type="button"
-                    className="btn-ghost text-sm text-[var(--accent-crimson)]"
-                    onClick={() => removeMember(member.id, member.name)}
-                  >
-                    删除
-                  </button>
-                </div>
-              </li>
-            ))}
+            {members.map((member) => {
+              const exited = member.status === "exited";
+              return (
+                <li
+                  key={member.id}
+                  className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <div>
+                    <p
+                      className={`font-medium ${exited ? "text-[var(--text-muted)] line-through" : ""}`}
+                    >
+                      {member.name}
+                      {exited ? (
+                        <span className="ml-2 text-xs font-normal no-underline">
+                          已退出
+                        </span>
+                      ) : null}
+                    </p>
+                    <p className="mt-0.5 text-xs text-[var(--text-muted)]">
+                      {ROLE_LABEL[member.role]} ·{" "}
+                      {member.hasPassword ? "已设密码" : "未设密码"}
+                      {exited && member.exitedAt
+                        ? ` · ${member.exitedAt.slice(0, 10)}`
+                        : ""}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {!exited ? (
+                      <>
+                        <select
+                          className="field !w-auto !py-2 text-sm"
+                          value={member.role}
+                          onChange={(e) =>
+                            changeRole(
+                              member.id,
+                              e.target.value as MemberRole,
+                            )
+                          }
+                        >
+                          <option value="normal">普通</option>
+                          <option value="officer">干部</option>
+                          <option value="leader">会长</option>
+                        </select>
+                        <button
+                          type="button"
+                          className="btn-ghost text-sm"
+                          onClick={() => resetPassword(member.id)}
+                        >
+                          重置密码
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-ghost text-sm text-[var(--accent-crimson)]"
+                          onClick={() => exitMember(member.id, member.name)}
+                        >
+                          标记退出
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        className="btn-ghost text-sm"
+                        onClick={() => restoreExited(member.id, member.name)}
+                      >
+                        恢复在籍
+                      </button>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         </section>
       </div>

@@ -62,8 +62,10 @@ export function ensureDb(): Database.Database {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL UNIQUE,
       role TEXT NOT NULL DEFAULT 'normal',
+      status TEXT NOT NULL DEFAULT 'active',
       password_hash TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      exited_at TEXT
     );
 
     CREATE TABLE IF NOT EXISTS admins (
@@ -305,6 +307,14 @@ function seedIfEmpty(database: Database.Database) {
     "REAL NOT NULL DEFAULT 0.05",
   );
 
+  ensureColumn(
+    database,
+    "members",
+    "status",
+    "TEXT NOT NULL DEFAULT 'active'",
+  );
+  ensureColumn(database, "members", "exited_at", "TEXT");
+
   ensureColumn(database, "bosses", "drops_image", "TEXT");
 
   const bossCount = database
@@ -405,15 +415,25 @@ function toMember(row: MemberRow): Member {
     id: row.id,
     name: row.name,
     role: row.role,
+    status: row.status === "exited" ? "exited" : "active",
     hasPassword: Boolean(row.password_hash),
     createdAt: row.created_at,
+    exitedAt: row.exited_at ?? null,
   };
 }
 
-export function listMembers(): Member[] {
+const MEMBER_SELECT =
+  "SELECT id, name, role, COALESCE(status, 'active') as status, password_hash, created_at, exited_at FROM members";
+
+export function listMembers(options?: {
+  includeExited?: boolean;
+}): Member[] {
+  const includeExited = options?.includeExited === true;
   const rows = ensureDb()
     .prepare(
-      "SELECT id, name, role, password_hash, created_at FROM members ORDER BY id ASC",
+      includeExited
+        ? `${MEMBER_SELECT} ORDER BY CASE WHEN COALESCE(status, 'active') = 'exited' THEN 1 ELSE 0 END, id ASC`
+        : `${MEMBER_SELECT} WHERE COALESCE(status, 'active') = 'active' ORDER BY id ASC`,
     )
     .all() as MemberRow[];
   return rows.map(toMember);
@@ -421,28 +441,34 @@ export function listMembers(): Member[] {
 
 export function getMemberById(id: number): MemberRow | null {
   const row = ensureDb()
-    .prepare(
-      "SELECT id, name, role, password_hash, created_at FROM members WHERE id = ?",
-    )
+    .prepare(`${MEMBER_SELECT} WHERE id = ?`)
     .get(id) as MemberRow | undefined;
-  return row ?? null;
+  if (!row) return null;
+  return {
+    ...row,
+    status: row.status === "exited" ? "exited" : "active",
+  };
 }
 
 export function getMemberByName(name: string): MemberRow | null {
   const row = ensureDb()
-    .prepare(
-      "SELECT id, name, role, password_hash, created_at FROM members WHERE name = ?",
-    )
+    .prepare(`${MEMBER_SELECT} WHERE name = ?`)
     .get(name.trim()) as MemberRow | undefined;
-  return row ?? null;
+  if (!row) return null;
+  return {
+    ...row,
+    status: row.status === "exited" ? "exited" : "active",
+  };
 }
 
 export function createMember(name: string, role: MemberRole = "normal"): Member {
   const result = ensureDb()
-    .prepare("INSERT INTO members (name, role) VALUES (?, ?)")
+    .prepare(
+      "INSERT INTO members (name, role, status) VALUES (?, ?, 'active')",
+    )
     .run(name.trim(), role);
   const row = getMemberById(Number(result.lastInsertRowid));
-  if (!row) throw new Error("创建 member failed");
+  if (!row) throw new Error("Create member failed");
   return toMember(row);
 }
 
@@ -464,112 +490,38 @@ export function updateMember(
   return row ? toMember(row) : null;
 }
 
+/** Soft-exit: keep history, hide from home / auction / login. */
+export function markMemberExited(id: number): boolean {
+  const result = ensureDb()
+    .prepare(
+      `UPDATE members
+       SET status = 'exited', exited_at = COALESCE(exited_at, datetime('now'))
+       WHERE id = ? AND COALESCE(status, 'active') != 'exited'`,
+    )
+    .run(id);
+  if (result.changes > 0) {
+    // Live presence only — not historical records
+    ensureDb()
+      .prepare("DELETE FROM boss_presence WHERE member_id = ?")
+      .run(id);
+  }
+  return result.changes > 0;
+}
+
+export function restoreMember(id: number): boolean {
+  const result = ensureDb()
+    .prepare(
+      `UPDATE members
+       SET status = 'active', exited_at = NULL
+       WHERE id = ? AND status = 'exited'`,
+    )
+    .run(id);
+  return result.changes > 0;
+}
+
+/** Soft-delete alias used by admin DELETE API. */
 export function deleteMember(id: number): boolean {
-  const database = ensureDb();
-  const existing = database
-    .prepare("SELECT id FROM members WHERE id = ?")
-    .get(id);
-  if (!existing) return false;
-
-  const tx = database.transaction(() => {
-    // Tables with FK to members(id) — must clear before DELETE
-    database
-      .prepare("DELETE FROM auction_item_dividends WHERE member_id = ?")
-      .run(id);
-    database
-      .prepare("DELETE FROM leaderboard_entries WHERE member_id = ?")
-      .run(id);
-
-    // Soft refs / related rows without FK
-    database.prepare("DELETE FROM boss_votes WHERE member_id = ?").run(id);
-    database.prepare("DELETE FROM boss_presence WHERE member_id = ?").run(id);
-    database
-      .prepare("UPDATE boss_chat SET member_id = NULL WHERE member_id = ?")
-      .run(id);
-    database
-      .prepare(
-        "UPDATE auction_dividend_entries SET member_id = NULL WHERE member_id = ?",
-      )
-      .run(id);
-    database
-      .prepare(
-        "UPDATE auction_item_dividend_lines SET member_id = NULL WHERE member_id = ?",
-      )
-      .run(id);
-    database
-      .prepare(
-        "UPDATE auction_item_sale_history SET winner_member_id = NULL WHERE winner_member_id = ?",
-      )
-      .run(id);
-    database
-      .prepare(
-        "UPDATE auction_items SET winner_member_id = NULL WHERE winner_member_id = ?",
-      )
-      .run(id);
-
-    const bidItems = database
-      .prepare(
-        "SELECT DISTINCT item_id FROM auction_bids WHERE member_id = ?",
-      )
-      .all(id) as Array<{ item_id: number }>;
-
-    database.prepare("DELETE FROM auction_bids WHERE member_id = ?").run(id);
-
-    for (const { item_id } of bidItems) {
-      const item = database
-        .prepare(
-          "SELECT id, start_price, status FROM auction_items WHERE id = ?",
-        )
-        .get(item_id) as
-        | { id: number; start_price: number; status: string }
-        | undefined;
-      if (!item) continue;
-
-      const top = database
-        .prepare(
-          `SELECT member_id, amount FROM auction_bids
-           WHERE item_id = ?
-           ORDER BY amount DESC, id DESC
-           LIMIT 1`,
-        )
-        .get(item_id) as { member_id: number; amount: number } | undefined;
-
-      if (item.status === "sold") {
-        if (top) {
-          database
-            .prepare(
-              `UPDATE auction_items
-               SET winner_member_id = ?, sold_price = ?, current_price = ?
-               WHERE id = ?`,
-            )
-            .run(top.member_id, top.amount, top.amount, item_id);
-        }
-      } else if (top) {
-        database
-          .prepare(
-            `UPDATE auction_items
-             SET current_price = ?
-             WHERE id = ?`,
-          )
-          .run(top.amount, item_id);
-      } else {
-        database
-          .prepare(
-            `UPDATE auction_items
-             SET current_price = ?
-             WHERE id = ?`,
-          )
-          .run(item.start_price, item_id);
-      }
-    }
-
-    const result = database
-      .prepare("DELETE FROM members WHERE id = ?")
-      .run(id);
-    return result.changes > 0;
-  });
-
-  return tx();
+  return markMemberExited(id);
 }
 
 export function resetMemberPassword(id: number): boolean {
@@ -1546,6 +1498,7 @@ export function placeBid(input: {
 
   const member = getMemberById(input.memberId);
   if (!member) throw new Error("成员不存在");
+  if (member.status === "exited") throw new Error("该成员已退出，无法出价");
 
   const result = ensureDb()
     .prepare(
@@ -2200,6 +2153,10 @@ export function upsertLeaderboardEntry(input: {
   ocrName: string;
   imageData?: string | null;
 }) {
+  const member = getMemberById(input.memberId);
+  if (!member || member.status === "exited") {
+    throw new Error("该成员已退出，无法更新排行榜");
+  }
   ensureDb()
     .prepare(
       `INSERT INTO leaderboard_entries
@@ -2234,6 +2191,7 @@ export function getLeaderboardBoard(thresholdRatio = 0.85) {
       `SELECT le.*, m.role as member_role
        FROM leaderboard_entries le
        LEFT JOIN members m ON m.id = le.member_id
+       WHERE m.id IS NULL OR COALESCE(m.status, 'active') = 'active'
        ORDER BY le.combat_power DESC, le.updated_at ASC, le.id ASC`,
     )
     .all() as Array<
