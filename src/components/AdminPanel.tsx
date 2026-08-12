@@ -78,7 +78,7 @@ export function AdminPanel({
   async function clearMember(id: number, memberName: string) {
     if (
       !window.confirm(
-        `确认将「${memberName}」标记为已清退？历史拍卖/分红等记录会保留，主页与拍卖中不再显示。`,
+        `确认清退「${memberName}」？仅保留历史拍卖/分红记录；账号、登录、排行榜等都会去掉。`,
       )
     ) {
       return;
@@ -196,65 +196,83 @@ export function AdminPanel({
         <section className="animate-fade-up-delay-2 mt-6 overflow-hidden rounded-2xl border border-[var(--border-soft)] bg-[rgba(21,25,37,0.9)]">
           <div className="border-b border-[var(--border-soft)] px-4 py-3 text-sm text-[var(--text-muted)]">
             在盟 {activeCount} 人
-            {clearedCount > 0 ? ` · 已清退 ${clearedCount} 人` : ""}
           </div>
           <ul className="divide-y divide-[var(--border-soft)]">
-            {members.map((member) => {
-              const cleared = member.status === "exited";
-              return (
+            {members
+              .filter((m) => m.status !== "exited")
+              .map((member) => (
                 <li
                   key={member.id}
                   className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
                 >
                   <div>
-                    <p
-                      className={`font-medium ${cleared ? "text-[var(--text-muted)]" : ""}`}
-                    >
-                      {member.name}
-                      <span className="ml-2 text-xs font-normal text-[var(--text-muted)]">
-                        {cleared ? "已清退" : "在盟"}
-                      </span>
-                    </p>
+                    <p className="font-medium">{member.name}</p>
                     <p className="mt-0.5 text-xs text-[var(--text-muted)]">
                       {member.hasPassword ? "已设密码" : "未设密码"}
-                      {cleared && member.exitedAt
-                        ? ` · ${member.exitedAt.slice(0, 10)}`
-                        : ""}
                     </p>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
-                    {!cleared ? (
-                      <>
-                        <button
-                          type="button"
-                          className="btn-ghost text-sm"
-                          onClick={() => resetPassword(member.id)}
-                        >
-                          重置密码
-                        </button>
-                        <button
-                          type="button"
-                          className="btn-ghost text-sm text-[var(--accent-crimson)]"
-                          onClick={() => clearMember(member.id, member.name)}
-                        >
-                          清退
-                        </button>
-                      </>
-                    ) : (
-                      <button
-                        type="button"
-                        className="btn-ghost text-sm"
-                        onClick={() => restoreMember(member.id, member.name)}
-                      >
-                        恢复在盟
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      className="btn-ghost text-sm"
+                      onClick={() => resetPassword(member.id)}
+                    >
+                      重置密码
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-ghost text-sm text-[var(--accent-crimson)]"
+                      onClick={() => clearMember(member.id, member.name)}
+                    >
+                      清退
+                    </button>
                   </div>
                 </li>
-              );
-            })}
+              ))}
+            {activeCount === 0 && (
+              <li className="px-4 py-6 text-sm text-[var(--text-muted)]">
+                暂无在盟成员
+              </li>
+            )}
           </ul>
         </section>
+
+        {clearedCount > 0 && (
+          <section className="animate-fade-up-delay-2 mt-4 overflow-hidden rounded-2xl border border-[var(--border-soft)] bg-[rgba(21,25,37,0.9)]">
+            <div className="border-b border-[var(--border-soft)] px-4 py-3 text-sm text-[var(--text-muted)]">
+              已清退 {clearedCount} 人 · 仅保留历史记录，无账号
+            </div>
+            <ul className="divide-y divide-[var(--border-soft)]">
+              {members
+                .filter((m) => m.status === "exited")
+                .map((member) => (
+                  <li
+                    key={member.id}
+                    className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+                  >
+                    <div>
+                      <p className="font-medium text-[var(--text-muted)]">
+                        {member.name}
+                      </p>
+                      <p className="mt-0.5 text-xs text-[var(--text-muted)]">
+                        已清退
+                        {member.exitedAt
+                          ? ` · ${member.exitedAt.slice(0, 10)}`
+                          : ""}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn-ghost text-sm"
+                      onClick={() => restoreMember(member.id, member.name)}
+                    >
+                      恢复在盟
+                    </button>
+                  </li>
+                ))}
+            </ul>
+          </section>
+        )}
       </div>
     </div>
   );

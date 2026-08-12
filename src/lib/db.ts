@@ -490,22 +490,36 @@ export function updateMember(
   return row ? toMember(row) : null;
 }
 
-/** Soft-exit / 清退: keep history, hide from home / auction / login. */
+/** 清退：只保留历史记录，去掉账号与实时数据。 */
 export function markMemberExited(id: number): boolean {
-  const result = ensureDb()
+  const database = ensureDb();
+  const existing = database
     .prepare(
-      `UPDATE members
-       SET status = 'exited', exited_at = COALESCE(exited_at, datetime('now'))
+      `SELECT id FROM members
        WHERE id = ? AND COALESCE(status, 'active') != 'exited'`,
     )
-    .run(id);
-  if (result.changes > 0) {
-    // Live presence only — not historical records
-    ensureDb()
-      .prepare("DELETE FROM boss_presence WHERE member_id = ?")
+    .get(id);
+  if (!existing) return false;
+
+  const tx = database.transaction(() => {
+    database
+      .prepare(
+        `UPDATE members
+         SET status = 'exited',
+             exited_at = COALESCE(exited_at, datetime('now')),
+             password_hash = NULL
+         WHERE id = ?`,
+      )
       .run(id);
-  }
-  return result.changes > 0;
+
+    // Live / account state only — auction bids, dividends, sale history stay
+    database
+      .prepare("DELETE FROM leaderboard_entries WHERE member_id = ?")
+      .run(id);
+    database.prepare("DELETE FROM boss_presence WHERE member_id = ?").run(id);
+  });
+  tx();
+  return true;
 }
 
 export function restoreMember(id: number): boolean {
