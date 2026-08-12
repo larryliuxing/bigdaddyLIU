@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import type {
   LeaderboardEntry,
   LeaderboardStats,
+  MemberRole,
   SessionUser,
 } from "@/lib/types";
 import { extractDetectedName } from "@/lib/leaderboard/parse";
@@ -12,10 +13,18 @@ import {
   recognizeCombatPowers,
   recognizeNameAtClick,
 } from "@/lib/leaderboard/recognize";
-import { TrophyIcon } from "@/components/Icons";
 import { hubPath } from "@/lib/nav";
 
-/** Map a click on an object-contain <img> to natural-image ratios. */
+function formatPower(n: number) {
+  return Math.round(n).toLocaleString("en-US");
+}
+
+function roleLabel(role: MemberRole) {
+  if (role === "leader") return "队长";
+  if (role === "officer") return "干部";
+  return null;
+}
+
 function clickToImageRatio(e: React.MouseEvent<HTMLImageElement>) {
   const img = e.currentTarget;
   const rect = img.getBoundingClientRect();
@@ -30,6 +39,41 @@ function clickToImageRatio(e: React.MouseEvent<HTMLImageElement>) {
   const y = (e.clientY - rect.top - offsetY) / dispH;
   if (x < 0 || y < 0 || x > 1 || y > 1) return null;
   return { x, y };
+}
+
+function RankCircle({ rank }: { rank: number }) {
+  if (rank === 1) return <span className="lb-rank-badge lb-rank-1">1</span>;
+  if (rank === 2) return <span className="lb-rank-badge lb-rank-2">2</span>;
+  if (rank === 3) return <span className="lb-rank-badge lb-rank-3">3</span>;
+  return <span className="lb-rank-n">{rank}</span>;
+}
+
+function NameButton({
+  entry,
+  onOpen,
+}: {
+  entry: LeaderboardEntry;
+  onOpen: (entry: LeaderboardEntry) => void;
+}) {
+  const label = roleLabel(entry.role);
+  return (
+    <span className="inline-flex flex-wrap items-center gap-y-1">
+      <button
+        type="button"
+        className={`lb-name-link ${entry.belowThreshold ? "danger" : ""}`}
+        disabled={!entry.hasImage}
+        title={
+          entry.hasImage ? "点击查看上传截图" : "该成员暂无上传截图"
+        }
+        onClick={() => {
+          if (entry.hasImage) onOpen(entry);
+        }}
+      >
+        {entry.memberName}
+      </button>
+      {label && <span className="lb-role-pill">{label}</span>}
+    </span>
+  );
 }
 
 export function LeaderboardPanel({
@@ -49,6 +93,7 @@ export function LeaderboardPanel({
     threshold: 0,
     thresholdRatio: 0.85,
   });
+  const [showUpload, setShowUpload] = useState(false);
   const [imageData, setImageData] = useState<string | null>(null);
   const [imageSource, setImageSource] = useState<File | string | null>(null);
   const [ocrNameText, setOcrNameText] = useState("");
@@ -69,6 +114,13 @@ export function LeaderboardPanel({
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [recognizingName, setRecognizingName] = useState(false);
+  const [viewer, setViewer] = useState<{
+    name: string;
+    power: number;
+    loading: boolean;
+    imageData: string | null;
+    error: string | null;
+  } | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -254,6 +306,7 @@ export function LeaderboardPanel({
       setEntries(data.board.entries);
       setStats(data.board.stats);
       setMessage(`已更新战力：${data.combatPower}`);
+      setShowUpload(false);
     } catch {
       setError("网络错误");
     } finally {
@@ -290,92 +343,155 @@ export function LeaderboardPanel({
     setStats(data.board.stats);
   }
 
+  async function openScreenshot(entry: LeaderboardEntry) {
+    if (!entry.hasImage) return;
+    setViewer({
+      name: entry.memberName,
+      power: entry.combatPower,
+      loading: true,
+      imageData: null,
+      error: null,
+    });
+    try {
+      const res = await fetch(
+        `/api/leaderboard/image?memberId=${entry.memberId}`,
+      );
+      const data = await res.json();
+      if (!res.ok) {
+        setViewer({
+          name: entry.memberName,
+          power: entry.combatPower,
+          loading: false,
+          imageData: null,
+          error: data.error || "加载截图失败",
+        });
+        return;
+      }
+      setViewer({
+        name: entry.memberName,
+        power: entry.combatPower,
+        loading: false,
+        imageData: data.imageData,
+        error: null,
+      });
+    } catch {
+      setViewer({
+        name: entry.memberName,
+        power: entry.combatPower,
+        loading: false,
+        imageData: null,
+        error: "网络错误",
+      });
+    }
+  }
+
+  const top1 = entries.find((e) => e.rank === 1) ?? null;
+  const top2 = entries.find((e) => e.rank === 2) ?? null;
+  const top3 = entries.find((e) => e.rank === 3) ?? null;
   const myEntry = member
     ? entries.find((e) => e.memberId === member.id)
     : null;
 
+  function podiumSlot(
+    entry: LeaderboardEntry | null,
+    rank: 1 | 2 | 3,
+  ) {
+    return (
+      <div className={`lb-podium-slot rank-${rank}`}>
+        <div className="lb-podium-card">
+          <RankCircle rank={rank} />
+          {entry ? (
+            <>
+              <div className="px-1">
+                <NameButton entry={entry} onOpen={openScreenshot} />
+              </div>
+              <p className="mt-3 text-xl font-bold text-[var(--accent-gold)]">
+                {formatPower(entry.combatPower)}
+              </p>
+              <p className="mt-0.5 text-[10px] text-[var(--text-muted)]">
+                战斗力
+              </p>
+              <p className="mt-2 text-[10px] text-[var(--text-muted)]">
+                {entry.updatedAt}
+              </p>
+            </>
+          ) : (
+            <p className="mt-6 text-xs text-[var(--text-muted)]">虚位以待</p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="app-shell">
-      <div className="auction-frame">
-        <div className="grid-bg" />
-
-        <header className="relative z-10 mb-6 flex flex-wrap items-start justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <span
-              className="feature-icon"
-              style={{ background: "linear-gradient(145deg, #3a3a20, #222214)" }}
-            >
-              <TrophyIcon />
-            </span>
-            <div>
-              <h1 className="text-2xl font-bold">排行榜</h1>
-              <p className="mt-1 text-sm text-[var(--text-muted)]">
-                上传战力截图更新数据 · 当前身份：
-                {member?.name ?? (isAdmin ? "管理员" : "未登录")}
-              </p>
-            </div>
-          </div>
+      <div className="lb-shell">
+        <header className="relative mb-2 flex items-center justify-between gap-2">
           <button
             type="button"
-            className="btn-ghost text-sm"
+            className="btn-ghost rounded-full px-3 text-sm"
             onClick={() => router.push(hubPath(Boolean(member), isAdmin))}
           >
             返回导航
           </button>
+          <p className="text-xs text-[var(--text-muted)]">
+            {member?.name ?? (isAdmin ? "管理员" : "")}
+          </p>
         </header>
 
-        <section className="relative z-10 mb-5 grid gap-3 sm:grid-cols-3">
-          <div className="rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)] p-4">
-            <p className="text-xs text-[var(--text-muted)]">上榜人数</p>
-            <p className="mt-1 text-2xl font-semibold">{stats.count}</p>
-          </div>
-          <div className="rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)] p-4">
-            <p className="text-xs text-[var(--text-muted)]">平均战力</p>
-            <p className="mt-1 text-2xl font-semibold text-[var(--accent-gold)]">
-              {stats.average || "-"}
-            </p>
-          </div>
-          <div className="rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)] p-4">
-            <p className="text-xs text-[var(--text-muted)]">
-              合格线（平均 × 85%）
-            </p>
-            <p className="mt-1 text-2xl font-semibold">{stats.threshold || "-"}</p>
-            <p className="mt-1 text-xs text-[var(--text-muted)]">
-              低于该值名字标红
-            </p>
-          </div>
+        <h1 className="lb-title">战斗力排行榜</h1>
+
+        <section className="lb-podium" aria-label="前三名">
+          {podiumSlot(top2, 2)}
+          {podiumSlot(top1, 1)}
+          {podiumSlot(top3, 3)}
         </section>
 
         {member && (
-          <section className="relative z-10 mb-5 rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)] p-4">
+          <>
+            <button
+              type="button"
+              className="lb-cta"
+              onClick={() => setShowUpload((v) => !v)}
+            >
+              我要上榜
+            </button>
+            <p className="lb-hint">
+              粘贴或上传本人战斗力截图 · 识别游戏 ID 须与当前身份一致
+            </p>
+          </>
+        )}
+
+        {!member && (
+          <p className="lb-hint mt-6">
+            请先在首页选择身份登录后，再上传本人战力截图上榜。
+          </p>
+        )}
+
+        {member && showUpload && (
+          <section className="mt-4 rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)] p-4">
             <h2 className="text-sm font-medium text-[var(--text-muted)]">
               上传本人战力截图
             </h2>
             <ol className="mt-2 list-decimal space-y-1 pl-5 text-xs leading-5 text-[var(--text-muted)]">
-              <li>上传完整游戏界面截图（系统自动识别左上与中下两处战力，须一致）</li>
+              <li>上传完整游戏界面（自动识别左上与中下战力，须一致）</li>
               <li>
-                在预览图上<strong className="text-[var(--text-primary)]">点击蓝色角色名「{member.name}」</strong>
-                （点名字本身，不要点别处）
+                在预览图上点击蓝色角色名「{member.name}」
               </li>
-              <li>名字与战力都通过后，再点「提交上榜」</li>
+              <li>通过后提交上榜，截图可供他人点击名字查看</li>
             </ol>
 
-            <details className="mt-3 rounded-xl border border-[var(--border-soft)] bg-[#0f1320] p-3" open>
+            <details className="mt-3 rounded-xl border border-[var(--border-soft)] bg-[#0f1320] p-3">
               <summary className="cursor-pointer text-sm text-[var(--text-muted)]">
                 查看识别结构示意
               </summary>
-              <div className="mt-3 space-y-2">
+              <div className="mt-3">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src="/leaderboard-ocr-example.svg"
-                  alt="战力截图识别结构：①蓝色名字 ②左上战力 ③中下战力"
-                  className="w-full max-w-xl rounded-lg border border-[var(--border-soft)] bg-[#0b0f18]"
+                  alt="战力截图识别结构示意"
+                  className="w-full rounded-lg border border-[var(--border-soft)] bg-[#0b0f18]"
                 />
-                <ol className="list-decimal space-y-1 pl-5 text-xs leading-5 text-[var(--text-muted)]">
-                  <li>头顶蓝色角色名（上传后点击这里校验）</li>
-                  <li>左上角战力数字</li>
-                  <li>角色脚下中下战力（须与②相同）</li>
-                </ol>
               </div>
             </details>
 
@@ -383,7 +499,7 @@ export function LeaderboardPanel({
               ref={pasteRef}
               tabIndex={0}
               onPaste={onPaste}
-              className="mt-3 rounded-xl border border-dashed border-[rgba(255,255,255,0.18)] bg-[#0f1320] px-4 py-4 text-center outline-none focus:border-[rgba(123,108,255,0.5)]"
+              className="mt-3 rounded-xl border border-dashed border-[rgba(255,255,255,0.18)] bg-[#0f1320] px-4 py-4 text-center outline-none focus:border-[rgba(232,168,74,0.5)]"
             >
               {imageData ? (
                 <div className="relative mx-auto inline-block max-w-full">
@@ -392,7 +508,7 @@ export function LeaderboardPanel({
                     ref={shotRef}
                     src={imageData}
                     alt="战力截图，点击蓝色角色名"
-                    className={`max-h-72 max-w-full rounded-lg object-contain ${
+                    className={`max-h-64 max-w-full rounded-lg object-contain ${
                       recognizingName ? "opacity-70" : "cursor-crosshair"
                     }`}
                     onClick={onImageClick}
@@ -421,7 +537,7 @@ export function LeaderboardPanel({
                   )}
                 </div>
               ) : (
-                <p className="min-h-[120px] py-10 text-sm text-[var(--text-muted)]">
+                <p className="min-h-[100px] py-8 text-sm text-[var(--text-muted)]">
                   点击此处后 Ctrl+V 粘贴截图，或选择文件上传
                 </p>
               )}
@@ -451,7 +567,7 @@ export function LeaderboardPanel({
               </label>
               <button
                 type="button"
-                className="rounded-xl bg-[#e23d4a] px-4 py-2 text-sm font-semibold disabled:opacity-50"
+                className="rounded-xl bg-[#e8a84a] px-4 py-2 text-sm font-semibold text-[#2a1c05] disabled:opacity-50"
                 disabled={busy || !canSubmit}
                 onClick={submit}
               >
@@ -499,79 +615,129 @@ export function LeaderboardPanel({
           </section>
         )}
 
-        {!member && (
-          <section className="relative z-10 mb-5 rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)] p-4 text-sm text-[var(--text-muted)]">
-            请先在首页选择身份登录后，再上传本人战力截图。
-          </section>
-        )}
-
         {message && (
-          <p className="relative z-10 mb-3 text-sm text-emerald-400">{message}</p>
+          <p className="mt-3 text-center text-sm text-emerald-400">{message}</p>
         )}
         {error && (
-          <p className="relative z-10 mb-3 text-sm text-[var(--accent-crimson)]">
+          <p className="mt-3 text-center text-sm text-[var(--accent-crimson)]">
             {error}
           </p>
         )}
 
-        <section className="relative z-10 overflow-hidden rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)]">
-          <div className="border-b border-[var(--border-soft)] px-4 py-3 text-sm text-[var(--text-muted)]">
-            战力排行（按战斗力从高到低）
+        <section className="lb-board">
+          <div className="lb-board-head">
+            <h2 className="text-lg font-bold">完整排名</h2>
+            <p className="mt-1 text-xs text-[var(--text-muted)]">
+              平均战斗力{" "}
+              <span className="text-[var(--accent-gold)]">
+                {stats.average ? formatPower(stats.average) : "-"}
+              </span>
+              {" · "}
+              合格战力{" "}
+              <span className="text-[var(--accent-gold)]">
+                {stats.threshold ? formatPower(stats.threshold) : "-"}
+              </span>
+              {" "}
+              (平均的 85%)
+            </p>
           </div>
-          <ul className="divide-y divide-[var(--border-soft)]">
-            {entries.length === 0 && (
-              <li className="px-4 py-10 text-center text-sm text-[var(--text-muted)]">
-                暂无上榜数据，请上传截图
-              </li>
-            )}
-            {entries.map((entry) => (
-              <li
-                key={entry.id}
-                className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
-              >
-                <div className="flex items-center gap-3">
-                  <span className="w-8 text-center text-sm text-[var(--text-muted)]">
-                    #{entry.rank}
-                  </span>
-                  <div>
-                    <p
-                      className={`font-medium ${
-                        entry.belowThreshold
-                          ? "text-[var(--accent-crimson)]"
-                          : "text-[var(--text-primary)]"
-                      }`}
-                    >
-                      {entry.memberName}
-                      {entry.belowThreshold && (
-                        <span className="ml-2 text-xs font-normal opacity-80">
-                          未达 85%
-                        </span>
-                      )}
-                    </p>
-                    <p className="mt-0.5 text-xs text-[var(--text-muted)]">
-                      更新于 {entry.updatedAt}
+
+          {entries.length === 0 ? (
+            <p className="px-4 py-10 text-center text-sm text-[var(--text-muted)]">
+              暂无上榜数据
+            </p>
+          ) : (
+            <ul>
+              {entries.map((entry) => (
+                <li
+                  key={entry.id}
+                  className={`lb-row ${
+                    member && entry.memberId === member.id ? "me" : ""
+                  }`}
+                >
+                  <RankCircle rank={entry.rank} />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-1">
+                      <NameButton entry={entry} onOpen={openScreenshot} />
+                    </div>
+                    <p className="mt-1 text-[11px] text-[var(--text-muted)]">
+                      {entry.updatedAt}
+                      {!entry.hasImage && " · 无截图"}
                     </p>
                   </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <p className="text-lg font-semibold text-[var(--accent-gold)]">
-                    {entry.combatPower}
-                  </p>
-                  {isAdmin && (
-                    <button
-                      type="button"
-                      className="btn-ghost text-xs text-[var(--accent-crimson)]"
-                      onClick={() => removeEntry(entry.memberId)}
-                    >
-                      删除
-                    </button>
-                  )}
-                </div>
-              </li>
-            ))}
-          </ul>
+                  <div className="flex items-center gap-2">
+                    <p className="lb-power">{formatPower(entry.combatPower)}</p>
+                    {isAdmin && (
+                      <button
+                        type="button"
+                        className="btn-ghost text-xs text-[var(--accent-crimson)]"
+                        onClick={() => removeEntry(entry.memberId)}
+                      >
+                        删
+                      </button>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
         </section>
+
+        <p className="lb-footer">
+          共 {stats.count} 人 · 点击有截图的名字可查看大图互相检查
+          {stats.count > 0 && " · 低于合格线的名字标红"}
+        </p>
       </div>
+
+      {viewer && (
+        <div
+          className="overlay"
+          role="presentation"
+          onClick={() => setViewer(null)}
+        >
+          <div
+            className="modal-panel w-full max-w-lg rounded-2xl border border-[var(--border-soft)] bg-[#151925] p-4 shadow-[var(--shadow-glow)]"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-label={`${viewer.name} 的战力截图`}
+          >
+            <div className="mb-3 flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-semibold">{viewer.name}</h3>
+                <p className="mt-1 text-sm text-[var(--accent-gold)]">
+                  战斗力 {formatPower(viewer.power)}
+                </p>
+              </div>
+              <button
+                type="button"
+                className="btn-ghost text-sm"
+                onClick={() => setViewer(null)}
+              >
+                关闭
+              </button>
+            </div>
+            {viewer.loading && (
+              <p className="py-10 text-center text-sm text-[var(--text-muted)]">
+                加载截图中…
+              </p>
+            )}
+            {viewer.error && (
+              <p className="py-6 text-center text-sm text-[var(--accent-crimson)]">
+                {viewer.error}
+              </p>
+            )}
+            {viewer.imageData && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={viewer.imageData}
+                alt={`${viewer.name} 上传的战力截图`}
+                className="max-h-[70vh] w-full rounded-xl object-contain bg-black"
+              />
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
