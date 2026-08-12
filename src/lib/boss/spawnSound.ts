@@ -1,53 +1,95 @@
-/** Play「来啦老弟」when a BOSS countdown hits zero. */
+/**
+ * Play「来啦老弟」when a BOSS countdown hits zero.
+ *
+ * Custom file (recommended): put on the server at
+ *   /var/www/guild/public/sounds/lai-la-lao-di.mp4
+ * Also accepted: .m4a / .mp3 / .ogg / .wav with the same basename.
+ */
+
+const SOUND_CANDIDATES = [
+  "/sounds/lai-la-lao-di.mp4",
+  "/sounds/lai-la-lao-di.m4a",
+  "/sounds/lai-la-lao-di.mp3",
+  "/sounds/lai-la-lao-di.ogg",
+  "/sounds/lai-la-lao-di.wav",
+];
 
 let sharedAudio: HTMLAudioElement | null = null;
+let resolvedSrc: string | null = null;
+let unlocked = false;
 
-function getAudio() {
+function pickExistingSource(): Promise<string | null> {
+  return new Promise((resolve) => {
+    let i = 0;
+    const tryNext = () => {
+      if (i >= SOUND_CANDIDATES.length) {
+        resolve(null);
+        return;
+      }
+      const src = SOUND_CANDIDATES[i++];
+      const probe = new Audio();
+      const done = (ok: boolean) => {
+        probe.removeAttribute("src");
+        probe.load();
+        if (ok) resolve(src);
+        else tryNext();
+      };
+      probe.addEventListener("canplaythrough", () => done(true), { once: true });
+      probe.addEventListener("error", () => done(false), { once: true });
+      probe.preload = "auto";
+      probe.src = `${src}?v=${Date.now()}`;
+    };
+    tryNext();
+  });
+}
+
+async function getAudio() {
   if (typeof window === "undefined") return null;
-  if (!sharedAudio) {
-    sharedAudio = new Audio("/sounds/lai-la-lao-di.mp3");
-    sharedAudio.preload = "auto";
-  }
+  if (sharedAudio && resolvedSrc) return sharedAudio;
+
+  const src = resolvedSrc ?? (await pickExistingSource());
+  if (!src) return null;
+  resolvedSrc = src.split("?")[0];
+
+  sharedAudio = new Audio(resolvedSrc);
+  sharedAudio.preload = "auto";
   return sharedAudio;
 }
 
 /** Unlock audio on first user gesture (browser autoplay policy). */
-export function unlockBossSpawnSound() {
-  const audio = getAudio();
+export async function unlockBossSpawnSound() {
+  const audio = await getAudio();
   if (!audio) return;
-  const prev = audio.volume;
-  audio.volume = 0.01;
-  const p = audio.play();
-  if (p && typeof p.then === "function") {
-    p.then(() => {
-      audio.pause();
-      audio.currentTime = 0;
-      audio.volume = prev || 1;
-    }).catch(() => {
-      audio.volume = prev || 1;
-    });
+  try {
+    const prev = audio.volume;
+    audio.volume = 0.01;
+    await audio.play();
+    audio.pause();
+    audio.currentTime = 0;
+    audio.volume = prev || 1;
+    unlocked = true;
+  } catch {
+    /* still locked until a real click */
   }
 }
 
-export function playLaiLaLaoDi() {
+export async function playLaiLaLaoDi() {
   if (typeof window === "undefined") return;
 
-  const audio = getAudio();
-  if (audio) {
-    try {
-      audio.pause();
-      audio.currentTime = 0;
-      audio.volume = 1;
-      const p = audio.play();
-      if (p && typeof p.catch === "function") {
-        p.catch(() => speakFallback());
-      }
+  try {
+    if (!unlocked) await unlockBossSpawnSound();
+    const audio = await getAudio();
+    if (!audio) {
+      speakFallback();
       return;
-    } catch {
-      // fall through
     }
+    audio.pause();
+    audio.currentTime = 0;
+    audio.volume = 1;
+    await audio.play();
+  } catch {
+    speakFallback();
   }
-  speakFallback();
 }
 
 function speakFallback() {
@@ -62,4 +104,14 @@ function speakFallback() {
   } catch {
     /* ignore */
   }
+}
+
+/** Force re-resolve after you replace the file on disk. */
+export function resetBossSpawnSoundCache() {
+  if (sharedAudio) {
+    sharedAudio.pause();
+    sharedAudio = null;
+  }
+  resolvedSrc = null;
+  unlocked = false;
 }

@@ -10,6 +10,7 @@ import { TimerIcon } from "@/components/Icons";
 import { BossDropsLightbox } from "@/components/boss/BossDropsViewer";
 import {
   playLaiLaLaoDi,
+  resetBossSpawnSoundCache,
   unlockBossSpawnSound,
 } from "@/lib/boss/spawnSound";
 
@@ -470,6 +471,17 @@ export function BossTimerPanel({
               title={soundOn ? "关闭刷新音效" : "开启刷新音效"}
             >
               {soundOn ? "音效开" : "音效关"}
+            </button>
+            <button
+              type="button"
+              className="btn-ghost text-sm"
+              onClick={() => {
+                resetBossSpawnSoundCache();
+                void playLaiLaLaoDi();
+              }}
+              title="试听来啦老弟音效"
+            >
+              试听
             </button>
             {!compact && (
               <button
