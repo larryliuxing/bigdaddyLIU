@@ -474,3 +474,262 @@ select {
   line-height: 1.5;
 }
 
+/* —— BOSS timer card FX —— */
+@keyframes boss-border-spin {
+  to {
+    --boss-angle: 360deg;
+  }
+}
+
+@keyframes boss-shimmer {
+  0% {
+    transform: translateX(-120%) skewX(-18deg);
+    opacity: 0;
+  }
+  30% {
+    opacity: 0.55;
+  }
+  100% {
+    transform: translateX(220%) skewX(-18deg);
+    opacity: 0;
+  }
+}
+
+@keyframes boss-countdown-glow {
+  0%,
+  100% {
+    text-shadow: 0 0 8px color-mix(in srgb, var(--boss-fx) 35%, transparent);
+    transform: scale(1);
+  }
+  50% {
+    text-shadow:
+      0 0 18px color-mix(in srgb, var(--boss-fx) 70%, transparent),
+      0 0 36px color-mix(in srgb, var(--boss-fx) 35%, transparent);
+    transform: scale(1.03);
+  }
+}
+
+@keyframes boss-urgent-pulse {
+  0%,
+  100% {
+    box-shadow:
+      inset 0 0 36px color-mix(in srgb, var(--boss-fx) 18%, transparent),
+      0 0 0 1px color-mix(in srgb, var(--boss-fx) 35%, transparent);
+  }
+  50% {
+    box-shadow:
+      inset 0 0 56px color-mix(in srgb, var(--boss-fx) 32%, transparent),
+      0 0 28px color-mix(in srgb, var(--boss-fx) 45%, transparent);
+  }
+}
+
+@keyframes boss-ready-burst {
+  0% {
+    opacity: 0.9;
+    transform: scale(0.6);
+  }
+  70% {
+    opacity: 0.35;
+    transform: scale(1.35);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.7);
+  }
+}
+
+@keyframes boss-ready-flash {
+  0%,
+  100% {
+    filter: brightness(1);
+  }
+  40% {
+    filter: brightness(1.35);
+  }
+}
+
+@keyframes boss-spark {
+  0% {
+    transform: translate(0, 0) scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(var(--sx), var(--sy)) scale(0);
+    opacity: 0;
+  }
+}
+
+@keyframes boss-banner-pop {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -40%) scale(0.6) rotate(-6deg);
+  }
+  18% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1.12) rotate(2deg);
+  }
+  40% {
+    transform: translate(-50%, -50%) scale(1) rotate(0deg);
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -60%) scale(1.05);
+  }
+}
+
+.boss-card {
+  --boss-fx: #c084fc;
+  --boss-angle: 0deg;
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--boss-fx) 28%, transparent);
+  background:
+    radial-gradient(
+      120% 80% at 10% -20%,
+      color-mix(in srgb, var(--boss-fx) 22%, transparent),
+      transparent 55%
+    ),
+    rgba(18, 22, 34, 0.95);
+  box-shadow:
+    inset 0 0 40px color-mix(in srgb, var(--boss-fx) 12%, transparent),
+    0 0 24px color-mix(in srgb, var(--boss-fx) 12%, transparent);
+  transition:
+    border-color 0.3s ease,
+    box-shadow 0.3s ease,
+    transform 0.3s ease;
+}
+
+.boss-card::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  z-index: -1;
+  border-radius: inherit;
+  padding: 1px;
+  background: conic-gradient(
+    from var(--boss-angle),
+    transparent 0%,
+    color-mix(in srgb, var(--boss-fx) 75%, white) 12%,
+    transparent 28%,
+    transparent 55%,
+    color-mix(in srgb, var(--boss-fx) 55%, transparent) 70%,
+    transparent 88%
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.boss-card.is-urgent::before,
+.boss-card.is-ready::before {
+  animation: boss-border-spin 2.2s linear infinite;
+  opacity: 1;
+}
+
+.boss-card::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 42%;
+  height: 100%;
+  background: linear-gradient(
+    100deg,
+    transparent,
+    color-mix(in srgb, var(--boss-fx) 28%, white),
+    transparent
+  );
+  opacity: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.boss-card.is-urgent::after,
+.boss-card.is-ready::after {
+  opacity: 0.22;
+  animation: boss-shimmer 2.4s ease-in-out infinite;
+}
+
+.boss-card > * {
+  position: relative;
+  z-index: 1;
+}
+
+.boss-card.is-urgent {
+  animation: boss-urgent-pulse 1.2s ease-in-out infinite;
+}
+
+.boss-card.is-ready {
+  animation: boss-ready-flash 0.9s ease-in-out infinite;
+  border-color: color-mix(in srgb, var(--boss-fx) 70%, white);
+  box-shadow:
+    inset 0 0 60px color-mix(in srgb, var(--boss-fx) 35%, transparent),
+    0 0 40px color-mix(in srgb, var(--boss-fx) 45%, transparent);
+}
+
+.boss-countdown {
+  animation: none;
+}
+
+.boss-card.is-urgent .boss-countdown,
+.boss-card.is-ready .boss-countdown {
+  animation: boss-countdown-glow 0.9s ease-in-out infinite;
+  color: color-mix(in srgb, var(--boss-fx) 40%, white);
+}
+
+.boss-burst {
+  position: absolute;
+  inset: 12% 18%;
+  border-radius: 999px;
+  border: 2px solid color-mix(in srgb, var(--boss-fx) 70%, white);
+  pointer-events: none;
+  z-index: 2;
+  animation: boss-ready-burst 1.1s ease-out forwards;
+}
+
+.boss-spark {
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--boss-fx) 30%, white);
+  box-shadow: 0 0 10px var(--boss-fx);
+  pointer-events: none;
+  z-index: 3;
+  animation: boss-spark 0.9s ease-out forwards;
+}
+
+.boss-ready-banner {
+  position: absolute;
+  left: 50%;
+  top: 42%;
+  z-index: 4;
+  pointer-events: none;
+  padding: 0.45rem 1rem;
+  border-radius: 999px;
+  font-size: 0.95rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: #fff;
+  background: linear-gradient(
+    120deg,
+    color-mix(in srgb, var(--boss-fx) 85%, #111),
+    color-mix(in srgb, var(--boss-fx) 45%, #fff)
+  );
+  box-shadow: 0 8px 28px color-mix(in srgb, var(--boss-fx) 45%, transparent);
+  animation: boss-banner-pop 2.2s ease forwards;
+  white-space: nowrap;
+}
+
+

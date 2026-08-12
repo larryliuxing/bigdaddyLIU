@@ -232,6 +232,10 @@ export interface Boss {
   lastKillAt: string | null;
   nextSpawnAt: string | null;
   dropsNote: string | null;
+  /** Base64 data-URL screenshot of drop table; members can enlarge. */
+  dropsImage: string | null;
+  /** True when a drops image exists even if omitted from lite payloads. */
+  hasDropsImage?: boolean;
   sortOrder: number;
   enabled: boolean;
   remainingSeconds: number | null;

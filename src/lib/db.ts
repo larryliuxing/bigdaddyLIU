@@ -198,6 +198,7 @@ export function ensureDb(): Database.Database {
       last_kill_at TEXT,
       next_spawn_at TEXT,
       drops_note TEXT,
+      drops_image TEXT,
       sort_order INTEGER NOT NULL DEFAULT 0,
       enabled INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -303,6 +304,8 @@ function seedIfEmpty(database: Database.Database) {
     "tax_rate",
     "REAL NOT NULL DEFAULT 0.05",
   );
+
+  ensureColumn(database, "bosses", "drops_image", "TEXT");
 
   const bossCount = database
     .prepare("SELECT COUNT(*) as count FROM bosses")
@@ -2168,6 +2171,7 @@ type BossRow = {
   last_kill_at: string | null;
   next_spawn_at: string | null;
   drops_note: string | null;
+  drops_image: string | null;
   sort_order: number;
   enabled: number;
 };
@@ -2189,6 +2193,22 @@ function remainingFrom(iso: string | null): number | null {
 
 function expireOpenRounds(database: Database.Database = ensureDb()) {
   const now = new Date().toISOString();
+  const expiring = database
+    .prepare(
+      `SELECT r.id, r.boss_id, r.vote_type, b.name as boss_name,
+              (SELECT COUNT(*) FROM boss_votes v WHERE v.round_id = r.id) as vote_count
+       FROM boss_vote_rounds r
+       JOIN bosses b ON b.id = r.boss_id
+       WHERE r.status = 'open' AND r.expires_at <= ?`,
+    )
+    .all(now) as Array<{
+    id: number;
+    boss_id: number;
+    vote_type: "killed" | "not_spawned";
+    boss_name: string;
+    vote_count: number;
+  }>;
+
   database
     .prepare(
       `UPDATE boss_vote_rounds
@@ -2196,6 +2216,13 @@ function expireOpenRounds(database: Database.Database = ensureDb()) {
        WHERE status = 'open' AND expires_at <= ?`,
     )
     .run(now, now);
+
+  for (const row of expiring) {
+    const label = row.vote_type === "killed" ? "已击杀" : "未刷新";
+    addBossChatSystem(
+      `「${row.boss_name}」投票「${label}」超时未通过（${row.vote_count}人同意）`,
+    );
+  }
 }
 
 function getRoundVotes(roundId: number) {
@@ -2243,7 +2270,11 @@ function getOpenRoundForBoss(bossId: number) {
   return row ? toRound(row) : null;
 }
 
-function toBoss(row: BossRow): import("./types").Boss {
+function toBoss(
+  row: BossRow,
+  opts?: { includeImage?: boolean },
+): import("./types").Boss {
+  const includeImage = opts?.includeImage !== false;
   return {
     id: row.id,
     name: row.name,
@@ -2253,6 +2284,8 @@ function toBoss(row: BossRow): import("./types").Boss {
     lastKillAt: row.last_kill_at,
     nextSpawnAt: row.next_spawn_at,
     dropsNote: row.drops_note,
+    dropsImage: includeImage ? (row.drops_image ?? null) : null,
+    hasDropsImage: Boolean(row.drops_image),
     sortOrder: row.sort_order,
     enabled: Boolean(row.enabled),
     remainingSeconds: remainingFrom(row.next_spawn_at),
@@ -2260,7 +2293,10 @@ function toBoss(row: BossRow): import("./types").Boss {
   };
 }
 
-export function listBosses(includeDisabled = false) {
+export function listBosses(
+  includeDisabled = false,
+  opts?: { includeImages?: boolean },
+) {
   expireOpenRounds();
   const rows = ensureDb()
     .prepare(
@@ -2269,7 +2305,9 @@ export function listBosses(includeDisabled = false) {
         : `SELECT * FROM bosses WHERE enabled = 1 ORDER BY sort_order ASC, id ASC`,
     )
     .all() as BossRow[];
-  return rows.map(toBoss);
+  return rows.map((row) =>
+    toBoss(row, { includeImage: opts?.includeImages !== false }),
+  );
 }
 
 export function getBossById(id: number) {
@@ -2285,14 +2323,15 @@ export function createBoss(input: {
   spawnRate?: number;
   intervalHours?: number;
   dropsNote?: string;
+  dropsImage?: string | null;
 }) {
   const maxOrder = ensureDb()
     .prepare(`SELECT COALESCE(MAX(sort_order), -1) as m FROM bosses`)
     .get() as { m: number };
   const result = ensureDb()
     .prepare(
-      `INSERT INTO bosses (name, color, spawn_rate, interval_hours, drops_note, sort_order)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO bosses (name, color, spawn_rate, interval_hours, drops_note, drops_image, sort_order)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       input.name.trim(),
@@ -2300,6 +2339,7 @@ export function createBoss(input: {
       input.spawnRate ?? 50,
       input.intervalHours ?? 6,
       input.dropsNote ?? null,
+      input.dropsImage ?? null,
       maxOrder.m + 1,
     );
   return getBossById(Number(result.lastInsertRowid))!;
@@ -2313,6 +2353,7 @@ export function updateBoss(
     spawnRate: number;
     intervalHours: number;
     dropsNote: string | null;
+    dropsImage: string | null;
     enabled: boolean;
     lastKillAt: string | null;
     nextSpawnAt: string | null;
@@ -2327,7 +2368,7 @@ export function updateBoss(
     .prepare(
       `UPDATE bosses SET
          name = ?, color = ?, spawn_rate = ?, interval_hours = ?,
-         drops_note = ?, enabled = ?, last_kill_at = ?, next_spawn_at = ?
+         drops_note = ?, drops_image = ?, enabled = ?, last_kill_at = ?, next_spawn_at = ?
        WHERE id = ?`,
     )
     .run(
@@ -2336,6 +2377,9 @@ export function updateBoss(
       data.spawnRate ?? current.spawn_rate,
       data.intervalHours ?? current.interval_hours,
       data.dropsNote === undefined ? current.drops_note : data.dropsNote,
+      data.dropsImage === undefined
+        ? current.drops_image
+        : data.dropsImage,
       data.enabled === undefined ? current.enabled : data.enabled ? 1 : 0,
       data.lastKillAt === undefined ? current.last_kill_at : data.lastKillAt,
       data.nextSpawnAt === undefined ? current.next_spawn_at : data.nextSpawnAt,
@@ -2493,11 +2537,16 @@ export function castBossVote(input: {
     return { round, passed, voteCount };
   });
 
-  const { round, passed } = run();
+  const { round, passed, voteCount } = run();
+  const label = input.voteType === "killed" ? "已击杀" : "未刷新";
   if (passed) {
     applyPassedVote(input.bossId, input.voteType);
     addBossChatSystem(
-      `「${boss.name}」${input.voteType === "killed" ? "已击杀" : "未刷新"}标记生效（${round.voteCount}人同意）`,
+      `「${boss.name}」投票「${label}」成功生效（${round.voteCount}人同意）`,
+    );
+  } else {
+    addBossChatSystem(
+      `「${boss.name}」${input.memberName} 投票「${label}」（${voteCount}/${BOSS_VOTE_NEED}）`,
     );
   }
 
@@ -2508,6 +2557,7 @@ export function castBossVote(input: {
         .get(round.id) as RoundRow,
     ),
     passed,
+    voteCount,
     boss: getBossById(input.bossId)!,
   };
 }
@@ -2582,15 +2632,40 @@ function addBossChatSystem(message: string) {
     .run(message);
 }
 
-export function getBossRoomState() {
+export function getBossRoomState(opts?: { includeImages?: boolean }) {
   expireOpenRounds();
   return {
-    bosses: listBosses(false),
+    bosses: listBosses(false, {
+      includeImages: opts?.includeImages === true,
+    }),
     onlineCount: getBossOnlineCount(),
     chat: listBossChat(40),
     serverNow: new Date().toISOString(),
     voteNeed: BOSS_VOTE_NEED,
     voteWindowSeconds: BOSS_VOTE_WINDOW_SECONDS,
+  };
+}
+
+/** Drops payload for on-demand lightbox (avoids shipping images on every poll). */
+export function getBossDrops(id: number) {
+  const row = ensureDb()
+    .prepare(
+      `SELECT id, name, drops_note, drops_image FROM bosses WHERE id = ?`,
+    )
+    .get(id) as
+    | {
+        id: number;
+        name: string;
+        drops_note: string | null;
+        drops_image: string | null;
+      }
+    | undefined;
+  if (!row) return null;
+  return {
+    id: row.id,
+    name: row.name,
+    dropsNote: row.drops_note,
+    dropsImage: row.drops_image,
   };
 }
 
