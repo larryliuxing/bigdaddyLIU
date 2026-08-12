@@ -2,11 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ItemQuality, Member } from "@/lib/types";
-import {
-  QUALITY_OPTIONS,
-  qualityMeta,
-  recognizeImageText,
-} from "@/lib/auction/client";
+import { QUALITY_OPTIONS, qualityMeta } from "@/lib/auction/client";
+import { recognizeItemName } from "@/lib/auction/itemOcr";
+import { recognizeImageText } from "@/lib/auction/client";
 import { LockIcon } from "@/components/Icons";
 
 function roleClass(role: Member["role"]) {
@@ -31,7 +29,7 @@ export function AddAuctionItemForm({
   const [startPrice, setStartPrice] = useState(5);
   const [bidIncrement, setBidIncrement] = useState(5);
   const [imageData, setImageData] = useState<string | null>(null);
-  const [ocrTokens, setOcrTokens] = useState<string[]>([]);
+  const [namePreview, setNamePreview] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [tab, setTab] = useState<"members" | "ocr">("members");
   const [ocrStatus, setOcrStatus] = useState("");
@@ -68,15 +66,20 @@ export function AddAuctionItemForm({
         reader.onload = async () => {
           const dataUrl = String(reader.result || "");
           setImageData(dataUrl);
-          setOcrStatus("正在识别拍品文字…");
+          setNamePreview(null);
+          setOcrStatus("正在识别顶部装备名称…");
           try {
-            const text = await recognizeImageText(file);
-            const lines = text
-              .split(/\n+/)
-              .map((l) => l.trim())
-              .filter(Boolean);
-            setOcrTokens(lines.slice(0, 12));
-            setOcrStatus(lines.length ? "点选识别文字填入名称" : "未识别到文字");
+            const result = await recognizeItemName(file);
+            setNamePreview(result.previewDataUrl);
+            if (result.name) {
+              setName(result.name);
+              setOcrStatus(`已识别名称：${result.name}`);
+            } else {
+              setOcrStatus("未识别到顶部名称，请手动填写");
+            }
+            if (result.quality) {
+              setQuality(result.quality);
+            }
           } catch {
             setOcrStatus("识别失败，可手动填写名称");
           }
@@ -147,8 +150,8 @@ export function AddAuctionItemForm({
       setStartPrice(5);
       setBidIncrement(5);
       setImageData(null);
+      setNamePreview(null);
       setSelectedIds([]);
-      setOcrTokens([]);
       setOcrStatus("");
       onCreated();
     } catch {
@@ -181,7 +184,7 @@ export function AddAuctionItemForm({
             className="field"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="粘贴图片后点选识别文字填入名称"
+            placeholder="粘贴装备图后自动识别顶部名称"
           />
         </label>
         <label className="block space-y-1.5">
@@ -237,32 +240,33 @@ export function AddAuctionItemForm({
           className="flex min-h-[140px] cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-[rgba(255,255,255,0.18)] bg-[#0f1320] px-4 text-center outline-none focus:border-[rgba(123,108,255,0.5)]"
         >
           {imageData ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={imageData}
-              alt="拍品"
-              className="max-h-40 rounded-lg object-contain"
-            />
+            <div className="flex w-full flex-col items-center gap-2 py-2">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={imageData}
+                alt="拍品"
+                className="max-h-40 rounded-lg object-contain"
+              />
+              {namePreview && (
+                <div className="w-full rounded-lg bg-white px-2 py-1">
+                  <p className="mb-1 text-[10px] text-slate-500">
+                    名称识别区域
+                  </p>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={namePreview}
+                    alt="名称裁切"
+                    className="mx-auto max-h-10 object-contain"
+                  />
+                </div>
+              )}
+            </div>
           ) : (
             <p className="text-sm text-[var(--text-muted)]">
-              点击此区域后 Ctrl+V 粘贴图片
+              点击此区域后 Ctrl+V 粘贴装备详情图（自动识别顶部彩色名称）
             </p>
           )}
         </div>
-        {ocrTokens.length > 0 && (
-          <div className="flex flex-wrap gap-2">
-            {ocrTokens.map((token) => (
-              <button
-                key={token}
-                type="button"
-                className="rounded-lg border border-[var(--border-soft)] bg-[#1c2230] px-2.5 py-1 text-xs hover:border-[rgba(123,108,255,0.45)]"
-                onClick={() => setName(token)}
-              >
-                {token}
-              </button>
-            ))}
-          </div>
-        )}
         {ocrStatus && (
           <p className="text-xs text-[var(--text-muted)]">{ocrStatus}</p>
         )}
