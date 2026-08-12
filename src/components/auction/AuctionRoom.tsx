@@ -3,8 +3,6 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { AuctionRoomState, SessionUser } from "@/lib/types";
-import { AdminLoginModal } from "@/components/AdminLoginModal";
-import { hubPath } from "@/lib/nav";
 import { formatCountdown, qualityMeta } from "@/lib/auction/client";
 import { GavelIcon } from "@/components/Icons";
 
@@ -23,10 +21,8 @@ function HourglassIcon() {
 
 export function AuctionRoom({
   member,
-  isAdmin,
 }: {
   member: Extract<SessionUser, { type: "member" }> | null;
-  isAdmin: boolean;
 }) {
   const router = useRouter();
   const [room, setRoom] = useState<AuctionRoomState | null>(null);
@@ -34,7 +30,6 @@ export function AuctionRoom({
   const [soundOn, setSoundOn] = useState(true);
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
-  const [showAdmin, setShowAdmin] = useState(false);
   const [remaining, setRemaining] = useState<number | null>(null);
   const remainingActive = remaining != null;
 
@@ -142,12 +137,12 @@ export function AuctionRoom({
             <button
               type="button"
               className="btn-ghost"
-              onClick={() => router.push(hubPath(Boolean(member), isAdmin))}
+              onClick={() => router.push(member ? "/home" : "/admin")}
             >
               返回导航
             </button>
             <span className="rounded-lg border border-[var(--border-soft)] px-2.5 py-1.5 text-[var(--text-muted)]">
-              当前身份：{member?.name ?? (isAdmin ? "管理员" : "未登录")}
+              当前身份：{member?.name ?? "未登录"}
             </span>
             <label className="flex items-center gap-1.5 rounded-lg border border-[var(--border-soft)] px-2.5 py-1.5 text-[var(--text-muted)]">
               <input
@@ -170,16 +165,6 @@ export function AuctionRoom({
               onClick={() => router.push("/auction/dividends")}
             >
               分红统计
-            </button>
-            <button
-              type="button"
-              className="btn-ghost"
-              onClick={() => {
-                if (isAdmin) router.push("/auction/manage");
-                else setShowAdmin(true);
-              }}
-            >
-              管理
             </button>
           </div>
         </header>
@@ -335,17 +320,6 @@ export function AuctionRoom({
           <div className="fixed bottom-8 left-1/2 z-50 -translate-x-1/2 rounded-full border border-[var(--border-soft)] bg-[#1a2030] px-4 py-2 text-sm shadow-lg">
             {toast}
           </div>
-        )}
-
-        {showAdmin && (
-          <AdminLoginModal
-            onClose={() => setShowAdmin(false)}
-            onSuccess={() => {
-              setShowAdmin(false);
-              router.push("/auction/manage");
-              router.refresh();
-            }}
-          />
         )}
       </div>
     </div>

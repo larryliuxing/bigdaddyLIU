@@ -17,7 +17,7 @@ const FEATURES = [
   {
     key: "auction",
     title: "拍卖",
-    description: "物品竞拍、出价与分红管理",
+    description: "物品竞拍、出价与分红查看",
     iconBg: "linear-gradient(145deg, #4a2424, #2a1616)",
     icon: <GavelIcon />,
   },
@@ -78,7 +78,7 @@ export function HomeHub({ user }: { user: Extract<SessionUser, { type: "member" 
               type="button"
               className="rounded-full border border-[var(--border-soft)] bg-[rgba(20,24,36,0.8)] p-2.5 text-[var(--text-muted)] transition hover:text-[var(--text-primary)]"
               aria-label="管理员入口"
-              title="后台管理"
+              title="管理员后台"
               onClick={() => setShowAdmin(true)}
             >
               <SettingsIcon />
@@ -124,8 +124,7 @@ export function HomeHub({ user }: { user: Extract<SessionUser, { type: "member" 
             onClose={() => setShowAdmin(false)}
             onSuccess={() => {
               setShowAdmin(false);
-              router.push("/admin");
-              router.refresh();
+              window.location.assign("/admin");
             }}
           />
         )}

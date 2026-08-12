@@ -55,7 +55,7 @@ export function AdminLoginModal({ onClose, onSuccess }: AdminLoginModalProps) {
           管理员登录
         </h2>
         <p className="mt-1 text-sm text-[var(--text-muted)]">
-          使用管理员账号进入后台管理
+          进入后台：成员账户（增删、重置密码）与拍卖物品管理
         </p>
 
         <form className="mt-4 space-y-3" onSubmit={handleSubmit}>

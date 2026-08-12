@@ -13,7 +13,6 @@ import {
   recognizeCombatPowers,
   recognizeNameAtClick,
 } from "@/lib/leaderboard/recognize";
-import { hubPath } from "@/lib/nav";
 
 function formatPower(n: number) {
   return Math.round(n).toLocaleString("en-US");
@@ -78,10 +77,8 @@ function NameButton({
 
 export function LeaderboardPanel({
   member,
-  isAdmin,
 }: {
   member: Extract<SessionUser, { type: "member" }> | null;
-  isAdmin: boolean;
 }) {
   const router = useRouter();
   const pasteRef = useRef<HTMLDivElement>(null);
@@ -328,21 +325,6 @@ export function LeaderboardPanel({
     setMessage("已移除自己的记录");
   }
 
-  async function removeEntry(memberId: number) {
-    if (!isAdmin) return;
-    if (!window.confirm("确认删除该成员排行记录？")) return;
-    const res = await fetch(`/api/leaderboard?memberId=${memberId}`, {
-      method: "DELETE",
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      setError(data.error || "删除失败");
-      return;
-    }
-    setEntries(data.board.entries);
-    setStats(data.board.stats);
-  }
-
   async function openScreenshot(entry: LeaderboardEntry) {
     if (!entry.hasImage) return;
     setViewer({
@@ -430,12 +412,12 @@ export function LeaderboardPanel({
           <button
             type="button"
             className="btn-ghost rounded-full px-3 text-sm"
-            onClick={() => router.push(hubPath(Boolean(member), isAdmin))}
+            onClick={() => router.push(member ? "/home" : "/admin")}
           >
             返回导航
           </button>
           <p className="text-xs text-[var(--text-muted)]">
-            {member?.name ?? (isAdmin ? "管理员" : "")}
+            {member?.name ?? ""}
           </p>
         </header>
 
@@ -667,15 +649,6 @@ export function LeaderboardPanel({
                   </div>
                   <div className="flex items-center gap-2">
                     <p className="lb-power">{formatPower(entry.combatPower)}</p>
-                    {isAdmin && (
-                      <button
-                        type="button"
-                        className="btn-ghost text-xs text-[var(--accent-crimson)]"
-                        onClick={() => removeEntry(entry.memberId)}
-                      >
-                        删
-                      </button>
-                    )}
                   </div>
                 </li>
               ))}
