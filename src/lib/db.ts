@@ -1253,11 +1253,9 @@ function rebuildSessionDividendTotals(sessionId: number) {
     total: number;
   }>;
 
-  // Keep temporary adjustments; rebuild only auto totals from per-item lines.
+  // Totals are derived only from per-item lines (no separate temporary rows).
   database
-    .prepare(
-      `DELETE FROM auction_dividend_entries WHERE session_id = ? AND is_temporary = 0`,
-    )
+    .prepare(`DELETE FROM auction_dividend_entries WHERE session_id = ?`)
     .run(sessionId);
 
   const insert = database.prepare(
@@ -1348,10 +1346,12 @@ export function getDividendReport(sessionId: number): DividendReport {
   const lines = listItemDividendLines(sessionId);
   const belowThresholdMemberIds = getBelowThresholdMemberIds();
   const below = new Set(belowThresholdMemberIds);
-  const totals = listDividends(sessionId).map((d) => ({
-    ...d,
-    belowThreshold: d.memberId != null ? below.has(d.memberId) : false,
-  }));
+  const totals = listDividends(sessionId)
+    .filter((d) => !d.isTemporary)
+    .map((d) => ({
+      ...d,
+      belowThreshold: d.memberId != null ? below.has(d.memberId) : false,
+    }));
 
   const linesByItem = new Map<number, ItemDividendLine[]>();
   for (const line of lines) {
