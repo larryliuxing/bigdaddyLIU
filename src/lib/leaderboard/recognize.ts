@@ -53,7 +53,12 @@ async function recognizeBlock(worker: Worker, dataUrl: string) {
 
 async function recognizeNameCrop(worker: Worker, dataUrl: string) {
   const chunks: string[] = [];
-  for (const psm of [PSM.SINGLE_LINE, PSM.SPARSE_TEXT, PSM.SINGLE_WORD] as const) {
+  for (const psm of [
+    PSM.SINGLE_LINE,
+    PSM.RAW_LINE,
+    PSM.SINGLE_WORD,
+    PSM.SPARSE_TEXT,
+  ] as const) {
     try {
       await worker.setParameters({
         tessedit_pageseg_mode: psm,
@@ -79,6 +84,29 @@ function uniqueJoin(chunks: string[]) {
     merged.push(chunk);
   }
   return merged.join("\n");
+}
+
+/** Prefer CJK-heavy OCR lines for name matching (drop digit/+ noise). */
+function uniqueJoinName(chunks: string[]) {
+  const cleaned = chunks
+    .map((c) =>
+      c
+        .replace(/\+\d+/g, " ")
+        .replace(/[0-9]+/g, " ")
+        .replace(/[^\u4e00-\u9fffA-Za-z·\s]/g, " ")
+        .replace(/\s+/g, " ")
+        .trim(),
+    )
+    .filter(Boolean);
+
+  // Put lines with more CJK first so parse sees the name sooner
+  cleaned.sort((a, b) => {
+    const ca = (a.match(/[\u4e00-\u9fff]/g) || []).length;
+    const cb = (b.match(/[\u4e00-\u9fff]/g) || []).length;
+    return cb - ca;
+  });
+
+  return uniqueJoin(cleaned);
 }
 
 /**
@@ -234,7 +262,7 @@ export async function recognizeNameAtClick(
   }
 
   return {
-    nameText: uniqueJoin(chunks),
+    nameText: uniqueJoinName(chunks),
     previewDataUrl,
   };
 }

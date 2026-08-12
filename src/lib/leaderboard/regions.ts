@@ -1,9 +1,6 @@
 /**
  * Multi-layout proportional regions for combat-power OCR.
- * Tuned from Lineage2:Oath style screenshots:
- * - name: upper-center above character (user click)
- * - power top: under portrait / sword icon (left)
- * - power bottom: center-bottom 「战斗力」
+ * Name uses a small click probe, then auto-trims to blue glyphs.
  */
 
 export type RatioRect = {
@@ -20,17 +17,11 @@ export type PowerLayout = {
   bottom: RatioRect;
 };
 
-/**
- * Candidate pairs for (左上战力, 中下战力).
- * Recognizer picks the first layout where both numbers exist and match.
- */
 export const POWER_LAYOUTS: PowerLayout[] = [
   {
     id: "char-center",
     label: "角色面板（名字在头顶）",
-    // sword number under portrait / top-left HUD
     top: { x: 0.01, y: 0.08, w: 0.18, h: 0.10 },
-    // 「战斗力」 under character feet, horizontal center
     bottom: { x: 0.30, y: 0.62, w: 0.40, h: 0.14 },
   },
   {
@@ -59,8 +50,18 @@ export const POWER_LAYOUTS: PowerLayout[] = [
   },
 ];
 
-/** Crop size around a user click on the blue name (ratios of full image). */
+/**
+ * Initial probe around click — intentionally modest so we don't pull in
+ * nearby +N badges / portraits / skill icons. Auto-trim expands/shrinks
+ * to the blue name glyphs afterward.
+ */
 export const NAME_CLICK_CROP = {
+  w: 0.16,
+  h: 0.055,
+} as const;
+
+/** Wider probe if the first trim finds too little blue ink. */
+export const NAME_CLICK_CROP_WIDE = {
   w: 0.22,
-  h: 0.08,
+  h: 0.07,
 } as const;

@@ -476,9 +476,9 @@ export function LeaderboardPanel({
             <ol className="mt-2 list-decimal space-y-1 pl-5 text-xs leading-5 text-[var(--text-muted)]">
               <li>上传完整游戏界面（自动识别左上与中下战力，须一致）</li>
               <li>
-                在预览图上点击蓝色角色名「{member.name}」
+                在预览图上对准蓝色角色名「{member.name}」点击（尽量点在字上，不要点旁边图标）
               </li>
-              <li>通过后提交上榜，截图可供他人点击名字查看</li>
+              <li>确认「名字截取预览」里主要是名字本身后，再提交上榜</li>
             </ol>
 
             <details className="mt-3 rounded-xl border border-[var(--border-soft)] bg-[#0f1320] p-3">
