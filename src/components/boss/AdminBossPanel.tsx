@@ -52,22 +52,72 @@ export function AdminBossPanel({ adminName }: { adminName: string }) {
   const [form, setForm] = useState<BossForm>(emptyForm);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editForm, setEditForm] = useState<BossForm>(emptyForm);
-  const [killDate, setKillDate] = useState(beijingTodayDate());
-  const [killTime, setKillTime] = useState("12:00");
-  const [nextDate, setNextDate] = useState(beijingTodayDate());
-  const [nextTime, setNextTime] = useState("18:00");
-  const [timerBossId, setTimerBossId] = useState<number | null>(null);
+  const [timerDrafts, setTimerDrafts] = useState<
+    Record<
+      number,
+      {
+        killDate: string;
+        killTime: string;
+        nextDate: string;
+        nextTime: string;
+      }
+    >
+  >({});
   const [preview, setPreview] = useState<{
     name: string;
     image: string | null;
     note: string | null;
   } | null>(null);
 
+  function draftFromBoss(boss: Boss) {
+    return {
+      killDate: boss.lastKillAt
+        ? beijingDateFromIso(boss.lastKillAt)
+        : beijingTodayDate(),
+      killTime: boss.lastKillAt ? beijingHmFromIso(boss.lastKillAt) : "12:00",
+      nextDate: boss.nextSpawnAt
+        ? beijingDateFromIso(boss.nextSpawnAt)
+        : beijingTodayDate(),
+      nextTime: boss.nextSpawnAt ? beijingHmFromIso(boss.nextSpawnAt) : "18:00",
+    };
+  }
+
+  function updateTimerDraft(
+    bossId: number,
+    patch: Partial<{
+      killDate: string;
+      killTime: string;
+      nextDate: string;
+      nextTime: string;
+    }>,
+  ) {
+    setTimerDrafts((prev) => ({
+      ...prev,
+      [bossId]: {
+        ...(prev[bossId] || {
+          killDate: beijingTodayDate(),
+          killTime: "12:00",
+          nextDate: beijingTodayDate(),
+          nextTime: "18:00",
+        }),
+        ...patch,
+      },
+    }));
+  }
+
   async function refresh() {
     const res = await fetch("/api/boss");
     const data = await res.json();
     if (!res.ok) return;
-    setBosses(data.allBosses || data.room?.bosses || []);
+    const list = (data.allBosses || data.room?.bosses || []) as Boss[];
+    setBosses(list);
+    setTimerDrafts((prev) => {
+      const next = { ...prev };
+      for (const boss of list) {
+        if (!next[boss.id]) next[boss.id] = draftFromBoss(boss);
+      }
+      return next;
+    });
   }
 
   useEffect(() => {
@@ -76,24 +126,6 @@ export function AdminBossPanel({ adminName }: { adminName: string }) {
     }, 0);
     return () => window.clearTimeout(timeout);
   }, []);
-
-  function openTimerEditor(boss: Boss) {
-    setTimerBossId(boss.id);
-    if (boss.lastKillAt) {
-      setKillDate(beijingDateFromIso(boss.lastKillAt));
-      setKillTime(beijingHmFromIso(boss.lastKillAt));
-    } else {
-      setKillDate(beijingTodayDate());
-      setKillTime("12:00");
-    }
-    if (boss.nextSpawnAt) {
-      setNextDate(beijingDateFromIso(boss.nextSpawnAt));
-      setNextTime(beijingHmFromIso(boss.nextSpawnAt));
-    } else {
-      setNextDate(beijingTodayDate());
-      setNextTime("18:00");
-    }
-  }
 
   async function createBoss(e: React.FormEvent) {
     e.preventDefault();
@@ -147,12 +179,21 @@ export function AdminBossPanel({ adminName }: { adminName: string }) {
   }
 
   async function applyKillTime(boss: Boss) {
-    const lastKillAt = fromBeijingDateAndTime(killDate, killTime);
+    const draft = timerDrafts[boss.id] || draftFromBoss(boss);
+    const lastKillAt = fromBeijingDateAndTime(draft.killDate, draft.killTime);
     const nextSpawnAt = new Date(
       new Date(lastKillAt).getTime() + boss.intervalHours * 60 * 60 * 1000,
     ).toISOString();
     const ok = await patchBoss(boss.id, { lastKillAt, nextSpawnAt });
     if (ok) {
+      setTimerDrafts((prev) => ({
+        ...prev,
+        [boss.id]: {
+          ...draft,
+          nextDate: beijingDateFromIso(nextSpawnAt),
+          nextTime: beijingHmFromIso(nextSpawnAt),
+        },
+      }));
       setMessage(
         `已按击杀时间更新：下次刷新 = 击杀 + ${boss.intervalHours} 小时`,
       );
@@ -160,7 +201,8 @@ export function AdminBossPanel({ adminName }: { adminName: string }) {
   }
 
   async function applyNextSpawn(boss: Boss) {
-    const nextSpawnAt = fromBeijingDateAndTime(nextDate, nextTime);
+    const draft = timerDrafts[boss.id] || draftFromBoss(boss);
+    const nextSpawnAt = fromBeijingDateAndTime(draft.nextDate, draft.nextTime);
     const ok = await patchBoss(boss.id, { nextSpawnAt });
     if (ok) {
       setMessage("已设置下次刷新时间，盟员端倒计时已同步");
@@ -177,9 +219,13 @@ export function AdminBossPanel({ adminName }: { adminName: string }) {
       return;
     }
     setBosses(data.allBosses || []);
+    setTimerDrafts((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
     setMessage("已删除");
     if (editingId === id) setEditingId(null);
-    if (timerBossId === id) setTimerBossId(null);
   }
 
   return (
@@ -322,7 +368,7 @@ export function AdminBossPanel({ adminName }: { adminName: string }) {
             )}
             {bosses.map((boss) => {
               const editing = editingId === boss.id;
-              const timing = timerBossId === boss.id;
+              const draft = timerDrafts[boss.id] || draftFromBoss(boss);
               return (
                 <li key={boss.id} className="px-4 py-3">
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
@@ -373,15 +419,6 @@ export function AdminBossPanel({ adminName }: { adminName: string }) {
                         type="button"
                         className="btn-ghost text-xs"
                         onClick={() =>
-                          timing ? setTimerBossId(null) : openTimerEditor(boss)
-                        }
-                      >
-                        {timing ? "收起计时" : "设置击杀/刷新时间"}
-                      </button>
-                      <button
-                        type="button"
-                        className="btn-ghost text-xs"
-                        onClick={() =>
                           patchBoss(boss.id, { enabled: !boss.enabled })
                         }
                       >
@@ -394,6 +431,94 @@ export function AdminBossPanel({ adminName }: { adminName: string }) {
                       >
                         删除
                       </button>
+                    </div>
+                  </div>
+
+                  <div className="mt-3 space-y-3 rounded-xl border border-[var(--border-soft)] bg-[#0f1320] p-3">
+                    <p className="text-xs font-medium text-[var(--text-muted)]">
+                      手动调倒计时（北京时间）· 间隔 {boss.intervalHours} 小时
+                    </p>
+                    <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto]">
+                      <label className="block space-y-1.5">
+                        <span className="text-xs text-[var(--text-muted)]">
+                          击杀日期
+                        </span>
+                        <input
+                          className="field"
+                          type="date"
+                          value={draft.killDate}
+                          onChange={(e) =>
+                            updateTimerDraft(boss.id, {
+                              killDate: e.target.value,
+                            })
+                          }
+                        />
+                      </label>
+                      <label className="block space-y-1.5">
+                        <span className="text-xs text-[var(--text-muted)]">
+                          击杀时间
+                        </span>
+                        <input
+                          className="field"
+                          type="time"
+                          value={draft.killTime}
+                          onChange={(e) =>
+                            updateTimerDraft(boss.id, {
+                              killTime: e.target.value,
+                            })
+                          }
+                        />
+                      </label>
+                      <div className="flex items-end">
+                        <button
+                          type="button"
+                          className="btn-primary w-full"
+                          onClick={() => applyKillTime(boss)}
+                        >
+                          按击杀时间计时
+                        </button>
+                      </div>
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto]">
+                      <label className="block space-y-1.5">
+                        <span className="text-xs text-[var(--text-muted)]">
+                          下次刷新日期
+                        </span>
+                        <input
+                          className="field"
+                          type="date"
+                          value={draft.nextDate}
+                          onChange={(e) =>
+                            updateTimerDraft(boss.id, {
+                              nextDate: e.target.value,
+                            })
+                          }
+                        />
+                      </label>
+                      <label className="block space-y-1.5">
+                        <span className="text-xs text-[var(--text-muted)]">
+                          下次刷新时间
+                        </span>
+                        <input
+                          className="field"
+                          type="time"
+                          value={draft.nextTime}
+                          onChange={(e) =>
+                            updateTimerDraft(boss.id, {
+                              nextTime: e.target.value,
+                            })
+                          }
+                        />
+                      </label>
+                      <div className="flex items-end">
+                        <button
+                          type="button"
+                          className="btn-ghost w-full"
+                          onClick={() => applyNextSpawn(boss)}
+                        >
+                          直接设下次刷新
+                        </button>
+                      </div>
                     </div>
                   </div>
 
@@ -483,81 +608,6 @@ export function AdminBossPanel({ adminName }: { adminName: string }) {
                       >
                         保存固有属性
                       </button>
-                    </div>
-                  )}
-
-                  {timing && (
-                    <div className="mt-3 space-y-3 rounded-xl border border-[var(--border-soft)] bg-[#0f1320] p-3">
-                      <p className="text-xs text-[var(--text-muted)]">
-                        北京时间。设置击杀时间将按间隔 {boss.intervalHours}{" "}
-                        小时自动推算下次刷新；也可只改下次刷新时间。
-                      </p>
-                      <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto]">
-                        <label className="block space-y-1.5">
-                          <span className="text-xs text-[var(--text-muted)]">
-                            击杀日期
-                          </span>
-                          <input
-                            className="field"
-                            type="date"
-                            value={killDate}
-                            onChange={(e) => setKillDate(e.target.value)}
-                          />
-                        </label>
-                        <label className="block space-y-1.5">
-                          <span className="text-xs text-[var(--text-muted)]">
-                            击杀时间
-                          </span>
-                          <input
-                            className="field"
-                            type="time"
-                            value={killTime}
-                            onChange={(e) => setKillTime(e.target.value)}
-                          />
-                        </label>
-                        <div className="flex items-end">
-                          <button
-                            type="button"
-                            className="btn-primary w-full"
-                            onClick={() => applyKillTime(boss)}
-                          >
-                            按击杀时间计时
-                          </button>
-                        </div>
-                      </div>
-                      <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto]">
-                        <label className="block space-y-1.5">
-                          <span className="text-xs text-[var(--text-muted)]">
-                            下次刷新日期
-                          </span>
-                          <input
-                            className="field"
-                            type="date"
-                            value={nextDate}
-                            onChange={(e) => setNextDate(e.target.value)}
-                          />
-                        </label>
-                        <label className="block space-y-1.5">
-                          <span className="text-xs text-[var(--text-muted)]">
-                            下次刷新时间
-                          </span>
-                          <input
-                            className="field"
-                            type="time"
-                            value={nextTime}
-                            onChange={(e) => setNextTime(e.target.value)}
-                          />
-                        </label>
-                        <div className="flex items-end">
-                          <button
-                            type="button"
-                            className="btn-ghost w-full"
-                            onClick={() => applyNextSpawn(boss)}
-                          >
-                            直接设下次刷新
-                          </button>
-                        </div>
-                      </div>
                     </div>
                   )}
                 </li>

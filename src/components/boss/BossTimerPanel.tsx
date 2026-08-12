@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { Boss, BossRoomState, SessionUser } from "@/lib/types";
 import {
@@ -10,13 +10,16 @@ import {
 import { TimerIcon } from "@/components/Icons";
 import { BossDropsLightbox } from "@/components/boss/BossDropsViewer";
 
+const POLL_MS = 900;
+const TICK_MS = 900;
+const POPUP_MS = 2000;
+
 function BossCard({
   boss,
   member,
   voteNeed,
   onVote,
   busy,
-  serverNow,
   onOpenDrops,
 }: {
   boss: Boss;
@@ -24,30 +27,27 @@ function BossCard({
   voteNeed: number;
   onVote: (bossId: number, voteType: "killed" | "not_spawned") => void;
   busy: boolean;
-  serverNow: string;
   onOpenDrops: (boss: Boss) => void;
 }) {
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    const timer = window.setInterval(() => setNow(Date.now()), TICK_MS);
     return () => window.clearInterval(timer);
   }, []);
 
-  const skew = now - new Date(serverNow).getTime();
-  const wall = now - Math.min(Math.max(skew, -5000), 5000);
-
+  // Absolute target times — tick locally so countdown looks continuous
   const remain = boss.nextSpawnAt
     ? Math.max(
         0,
-        Math.floor((new Date(boss.nextSpawnAt).getTime() - wall) / 1000),
+        Math.floor((new Date(boss.nextSpawnAt).getTime() - now) / 1000),
       )
     : null;
   const roundRemain = boss.activeRound?.expiresAt
     ? Math.max(
         0,
         Math.floor(
-          (new Date(boss.activeRound.expiresAt).getTime() - wall) / 1000,
+          (new Date(boss.activeRound.expiresAt).getTime() - now) / 1000,
         ),
       )
     : null;
@@ -123,7 +123,8 @@ function BossCard({
               {round.voteType === "killed" ? "已击杀" : "未刷新"}
             </span>
             {" · "}
-            {round.voteCount}/{voteNeed} · 剩余 {roundRemain ?? 0}s
+            {round.voteCount}/{voteNeed} · 剩余{" "}
+            <span className="tabular-nums">{roundRemain ?? 0}s</span>
           </p>
           <p className="mt-1 text-xs text-[var(--text-muted)]">
             {round.votes.map((v) => v.memberName).join("、") || "等待同意"}
@@ -167,9 +168,30 @@ export function BossTimerPanel({
   const [room, setRoom] = useState<BossRoomState | null>(null);
   const [chatInput, setChatInput] = useState("");
   const [error, setError] = useState("");
-  const [toast, setToast] = useState("");
+  const [popup, setPopup] = useState<{
+    text: string;
+    tone: "ok" | "fail" | "info";
+  } | null>(null);
   const [busy, setBusy] = useState(false);
   const [dropsBoss, setDropsBoss] = useState<Boss | null>(null);
+  const popupTimer = useRef<number | null>(null);
+  const lastSystemId = useRef(0);
+  const systemBootstrapped = useRef(false);
+
+  function showPopup(text: string, tone: "ok" | "fail" | "info" = "info") {
+    if (popupTimer.current) window.clearTimeout(popupTimer.current);
+    setPopup({ text, tone });
+    popupTimer.current = window.setTimeout(() => {
+      setPopup(null);
+      popupTimer.current = null;
+    }, POPUP_MS);
+  }
+
+  useEffect(() => {
+    return () => {
+      if (popupTimer.current) window.clearTimeout(popupTimer.current);
+    };
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -184,13 +206,30 @@ export function BossTimerPanel({
     }, 0);
     const timer = window.setInterval(() => {
       void tick();
-    }, 2000);
+    }, POLL_MS);
     return () => {
       alive = false;
       window.clearTimeout(timeout);
       window.clearInterval(timer);
     };
   }, []);
+
+  // Surface system vote logs as 2s popups for everyone
+  useEffect(() => {
+    const systems =
+      room?.chat?.filter((c) => c.memberName === "系统") ?? [];
+    const last = systems[systems.length - 1];
+    if (!systemBootstrapped.current) {
+      systemBootstrapped.current = true;
+      lastSystemId.current = last?.id ?? 0;
+      return;
+    }
+    if (!last || last.id <= lastSystemId.current) return;
+    lastSystemId.current = last.id;
+    const fail = /未通过|超时|失败/.test(last.message);
+    const ok = /成功生效|标记生效/.test(last.message);
+    showPopup(last.message, fail ? "fail" : ok ? "ok" : "info");
+  }, [room?.chat]);
 
   async function vote(bossId: number, voteType: "killed" | "not_spawned") {
     setBusy(true);
@@ -203,18 +242,34 @@ export function BossTimerPanel({
       });
       const data = await res.json();
       if (!res.ok) {
-        setError(data.error || "投票失败");
+        const msg = data.error || "投票失败";
+        setError(msg);
+        showPopup(msg, "fail");
         return;
       }
       setRoom(data.room);
-      setToast(
-        data.passed
-          ? "投票通过，已更新计时"
-          : `已投票 ${data.round.voteCount}/${data.room.voteNeed}`,
-      );
-      window.setTimeout(() => setToast(""), 1800);
+      const systems =
+        (data.room?.chat as BossRoomState["chat"] | undefined)?.filter(
+          (c) => c.memberName === "系统",
+        ) ?? [];
+      const lastSystem = systems[systems.length - 1];
+      if (lastSystem) lastSystemId.current = lastSystem.id;
+
+      if (data.passed) {
+        showPopup(
+          lastSystem?.message || "投票成功，已更新计时",
+          "ok",
+        );
+      } else {
+        showPopup(
+          lastSystem?.message ||
+            `已投票 ${data.round.voteCount}/${data.room.voteNeed}，等待其他人同意`,
+          "info",
+        );
+      }
     } catch {
       setError("网络错误");
+      showPopup("网络错误，投票失败", "fail");
     } finally {
       setBusy(false);
     }
@@ -239,6 +294,10 @@ export function BossTimerPanel({
 
   const bosses = useMemo(() => room?.bosses ?? [], [room?.bosses]);
   const voteNeed = room?.voteNeed ?? 3;
+  const systemLogs = useMemo(
+    () => (room?.chat ?? []).filter((c) => c.memberName === "系统").slice(-8),
+    [room?.chat],
+  );
 
   return (
     <div className="app-shell">
@@ -306,13 +365,26 @@ export function BossTimerPanel({
               voteNeed={voteNeed}
               onVote={vote}
               busy={busy}
-              serverNow={room?.serverNow ?? new Date().toISOString()}
               onOpenDrops={setDropsBoss}
             />
           ))}
           {bosses.length === 0 && (
             <div className="rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)] px-4 py-10 text-center text-sm text-[var(--text-muted)]">
               暂无 BOSS，请管理员在后台添加
+            </div>
+          )}
+
+          {systemLogs.length > 0 && (
+            <div className="rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)] px-4 py-3">
+              <p className="mb-2 text-xs text-[var(--text-muted)]">投票日志</p>
+              <ul className="space-y-1 text-xs text-[var(--text-muted)]">
+                {systemLogs.map((msg) => (
+                  <li key={msg.id}>
+                    <span className="text-[var(--accent-violet)]">系统</span>：
+                    {msg.message}
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
         </section>
@@ -338,21 +410,33 @@ export function BossTimerPanel({
           </div>
           {(room?.chat?.length ?? 0) > 0 && (
             <div className="mx-auto mt-2 max-h-20 w-full max-w-[960px] overflow-y-auto text-xs text-[var(--text-muted)]">
-              {[...(room?.chat ?? [])].slice(-5).map((msg) => (
-                <p key={msg.id}>
-                  <span className="text-[var(--text-primary)]">
-                    {msg.memberName}
-                  </span>
-                  ：{msg.message}
-                </p>
-              ))}
+              {[...(room?.chat ?? [])]
+                .filter((m) => m.memberName !== "系统")
+                .slice(-5)
+                .map((msg) => (
+                  <p key={msg.id}>
+                    <span className="text-[var(--text-primary)]">
+                      {msg.memberName}
+                    </span>
+                    ：{msg.message}
+                  </p>
+                ))}
             </div>
           )}
         </div>
 
-        {toast && (
-          <div className="fixed bottom-24 left-1/2 z-40 -translate-x-1/2 rounded-full border border-[var(--border-soft)] bg-[#1a2030] px-4 py-2 text-sm shadow-lg">
-            {toast}
+        {popup && (
+          <div
+            className={`fixed left-1/2 top-[28%] z-50 w-[min(92vw,360px)] -translate-x-1/2 rounded-2xl border px-5 py-4 text-center text-sm shadow-xl ${
+              popup.tone === "ok"
+                ? "border-emerald-500/40 bg-[#14241c] text-emerald-200"
+                : popup.tone === "fail"
+                  ? "border-[rgba(226,61,74,0.45)] bg-[#2a1518] text-[#ffb4ba]"
+                  : "border-[var(--border-soft)] bg-[#1a2030] text-[var(--text-primary)]"
+            }`}
+            role="status"
+          >
+            {popup.text}
           </div>
         )}
 

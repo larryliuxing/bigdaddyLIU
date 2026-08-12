@@ -2193,6 +2193,22 @@ function remainingFrom(iso: string | null): number | null {
 
 function expireOpenRounds(database: Database.Database = ensureDb()) {
   const now = new Date().toISOString();
+  const expiring = database
+    .prepare(
+      `SELECT r.id, r.boss_id, r.vote_type, b.name as boss_name,
+              (SELECT COUNT(*) FROM boss_votes v WHERE v.round_id = r.id) as vote_count
+       FROM boss_vote_rounds r
+       JOIN bosses b ON b.id = r.boss_id
+       WHERE r.status = 'open' AND r.expires_at <= ?`,
+    )
+    .all(now) as Array<{
+    id: number;
+    boss_id: number;
+    vote_type: "killed" | "not_spawned";
+    boss_name: string;
+    vote_count: number;
+  }>;
+
   database
     .prepare(
       `UPDATE boss_vote_rounds
@@ -2200,6 +2216,13 @@ function expireOpenRounds(database: Database.Database = ensureDb()) {
        WHERE status = 'open' AND expires_at <= ?`,
     )
     .run(now, now);
+
+  for (const row of expiring) {
+    const label = row.vote_type === "killed" ? "已击杀" : "未刷新";
+    addBossChatSystem(
+      `「${row.boss_name}」投票「${label}」超时未通过（${row.vote_count}人同意）`,
+    );
+  }
 }
 
 function getRoundVotes(roundId: number) {
@@ -2504,11 +2527,16 @@ export function castBossVote(input: {
     return { round, passed, voteCount };
   });
 
-  const { round, passed } = run();
+  const { round, passed, voteCount } = run();
+  const label = input.voteType === "killed" ? "已击杀" : "未刷新";
   if (passed) {
     applyPassedVote(input.bossId, input.voteType);
     addBossChatSystem(
-      `「${boss.name}」${input.voteType === "killed" ? "已击杀" : "未刷新"}标记生效（${round.voteCount}人同意）`,
+      `「${boss.name}」投票「${label}」成功生效（${round.voteCount}人同意）`,
+    );
+  } else {
+    addBossChatSystem(
+      `「${boss.name}」${input.memberName} 投票「${label}」（${voteCount}/${BOSS_VOTE_NEED}）`,
     );
   }
 
@@ -2519,6 +2547,7 @@ export function castBossVote(input: {
         .get(round.id) as RoundRow,
     ),
     passed,
+    voteCount,
     boss: getBossById(input.bossId)!,
   };
 }
