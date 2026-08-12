@@ -1322,9 +1322,14 @@ export function deleteLeaderboardEntry(memberId: number): boolean {
 export function getLeaderboardBoard(thresholdRatio = 0.85) {
   const rows = ensureDb()
     .prepare(
-      `SELECT * FROM leaderboard_entries ORDER BY combat_power DESC, updated_at ASC, id ASC`,
+      `SELECT le.*, m.role as member_role
+       FROM leaderboard_entries le
+       LEFT JOIN members m ON m.id = le.member_id
+       ORDER BY le.combat_power DESC, le.updated_at ASC, le.id ASC`,
     )
-    .all() as LeaderboardRow[];
+    .all() as Array<
+    LeaderboardRow & { member_role: MemberRole | null }
+  >;
 
   const count = rows.length;
   const average =
@@ -1339,7 +1344,8 @@ export function getLeaderboardBoard(thresholdRatio = 0.85) {
     memberName: row.member_name,
     combatPower: row.combat_power,
     ocrName: row.ocr_name,
-    imageData: row.image_data,
+    hasImage: Boolean(row.image_data),
+    role: (row.member_role || "normal") as MemberRole,
     updatedAt: row.updated_at,
     rank: index + 1,
     belowThreshold: count > 0 ? row.combat_power < threshold : false,
@@ -1354,6 +1360,15 @@ export function getLeaderboardBoard(thresholdRatio = 0.85) {
       thresholdRatio,
     },
   };
+}
+
+export function getLeaderboardImage(memberId: number): string | null {
+  const row = ensureDb()
+    .prepare(
+      `SELECT image_data FROM leaderboard_entries WHERE member_id = ?`,
+    )
+    .get(memberId) as { image_data: string | null } | undefined;
+  return row?.image_data ?? null;
 }
 
 /* -------------------- Boss Timer -------------------- */

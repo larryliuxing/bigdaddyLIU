@@ -21,23 +21,41 @@ export async function POST(request: Request) {
 
   const body = await request.json().catch(() => null);
   const ocrText = String(body?.ocrText ?? "");
+  const ocrNameText = String(body?.ocrNameText ?? "");
+  const ocrPowerTopText = String(body?.ocrPowerTopText ?? "");
+  const ocrPowerBottomText = String(body?.ocrPowerBottomText ?? "");
+  const powerTop =
+    typeof body?.powerTop === "number" ? body.powerTop : null;
+  const powerBottom =
+    typeof body?.powerBottom === "number" ? body.powerBottom : null;
   const imageData =
     typeof body?.imageData === "string" ? body.imageData : null;
 
-  if (!ocrText.trim()) {
+  if (!ocrNameText.trim()) {
     return NextResponse.json(
-      { error: "请先粘贴或上传战力截图并完成识别" },
+      { error: "请先在截图上点击蓝色角色名完成校验" },
       { status: 400 },
     );
   }
 
-  const parsed = parseCombatPowerScreenshot(ocrText, member.name);
+  const parsed = parseCombatPowerScreenshot(
+    {
+      nameText: ocrNameText,
+      powerTop,
+      powerBottom,
+      powerTopText: ocrPowerTopText || ocrText,
+      powerBottomText: ocrPowerBottomText || ocrText,
+    },
+    member.name,
+  );
   if (!parsed.ok || parsed.combatPower == null) {
     return NextResponse.json(
       {
         error: parsed.error || "识别失败",
         detectedName: parsed.detectedName,
         combatPower: parsed.combatPower,
+        powerTop: parsed.powerTop,
+        powerBottom: parsed.powerBottom,
       },
       { status: 400 },
     );
@@ -70,13 +88,11 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ error: "未授权" }, { status: 401 });
   }
 
-  // Admin deleting a specific member
   if (admin && Number.isFinite(memberId) && memberId > 0) {
     deleteLeaderboardEntry(memberId);
     return NextResponse.json({ ok: true, board: getLeaderboardBoard(0.85) });
   }
 
-  // Member (even if also admin) removing self
   if (member) {
     deleteLeaderboardEntry(member.id);
     return NextResponse.json({ ok: true, board: getLeaderboardBoard(0.85) });

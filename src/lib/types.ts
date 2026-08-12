@@ -130,7 +130,9 @@ export interface LeaderboardEntry {
   memberName: string;
   combatPower: number;
   ocrName: string;
-  imageData: string | null;
+  /** Whether a verification screenshot is stored (full image fetched on demand). */
+  hasImage: boolean;
+  role: MemberRole;
   updatedAt: string;
   rank: number;
   belowThreshold: boolean;
