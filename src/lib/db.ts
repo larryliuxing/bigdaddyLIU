@@ -1476,6 +1476,27 @@ export function placeBid(input: {
     `${member.name} 出价 ¥${input.amount}（${item.name}）`,
   );
 
+  // High-bid fanfare for the whole room (highest matching tier only)
+  if (input.amount > 1000) {
+    addEvent(
+      input.sessionId,
+      "bid_fanfare_1000",
+      `大哥${member.name}牛逼！这件上品灵器非你莫属！`,
+    );
+  } else if (input.amount > 600) {
+    addEvent(
+      input.sessionId,
+      "bid_fanfare_600",
+      `${member.name}豪掷：¥${input.amount}，还有谁！`,
+    );
+  } else if (input.amount > 300) {
+    addEvent(
+      input.sessionId,
+      "bid_fanfare_300",
+      `${member.name}出价：¥${input.amount}，势必拿下这件物品`,
+    );
+  }
+
   const bidRow = ensureDb()
     .prepare(`SELECT * FROM auction_bids WHERE id = ?`)
     .get(Number(result.lastInsertRowid)) as {

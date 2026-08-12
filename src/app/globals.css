@@ -474,6 +474,28 @@ select {
   line-height: 1.5;
 }
 
+@keyframes auction-danmaku-fly {
+  from {
+    transform: translateX(105vw);
+    opacity: 0;
+  }
+  8% {
+    opacity: 1;
+  }
+  85% {
+    opacity: 1;
+  }
+  to {
+    transform: translateX(-110%);
+    opacity: 0;
+  }
+}
+
+.auction-danmaku {
+  left: 0;
+  animation: auction-danmaku-fly 5s linear forwards;
+}
+
 /* —— BOSS timer card FX —— */
 @keyframes boss-border-spin {
   to {
