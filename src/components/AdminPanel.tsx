@@ -96,15 +96,27 @@ export function AdminPanel({
   }
 
   async function removeMember(id: number, memberName: string) {
-    if (!window.confirm(`确认删除成员「${memberName}」？`)) return;
-    const res = await fetch(`/api/admin/members?id=${id}`, { method: "DELETE" });
-    if (!res.ok) {
-      const data = await res.json();
-      setError(data.error || "删除失败");
+    if (!window.confirm(`确认删除成员「${memberName}」？删除后不可恢复。`)) {
       return;
     }
-    setMessage("成员已删除");
-    await refresh();
+    setError("");
+    setMessage("");
+    try {
+      const res = await fetch(`/api/admin/members?id=${id}`, {
+        method: "DELETE",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(
+          typeof data.error === "string" ? data.error : "删除失败",
+        );
+        return;
+      }
+      setMessage(`成员「${memberName}」已删除`);
+      await refresh();
+    } catch {
+      setError("网络错误，删除失败");
+    }
   }
 
   return (

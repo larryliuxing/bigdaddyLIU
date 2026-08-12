@@ -94,9 +94,18 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ error: "缺少成员 ID" }, { status: 400 });
   }
 
-  const ok = deleteMember(id);
-  if (!ok) {
-    return NextResponse.json({ error: "成员不存在" }, { status: 404 });
+  try {
+    const ok = deleteMember(id);
+    if (!ok) {
+      return NextResponse.json({ error: "成员不存在" }, { status: 404 });
+    }
+    return NextResponse.json({ ok: true });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[admin/members DELETE]", id, message);
+    return NextResponse.json(
+      { error: "删除失败，请稍后重试" },
+      { status: 500 },
+    );
   }
-  return NextResponse.json({ ok: true });
 }

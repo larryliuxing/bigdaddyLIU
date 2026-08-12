@@ -465,8 +465,111 @@ export function updateMember(
 }
 
 export function deleteMember(id: number): boolean {
-  const result = ensureDb().prepare("DELETE FROM members WHERE id = ?").run(id);
-  return result.changes > 0;
+  const database = ensureDb();
+  const existing = database
+    .prepare("SELECT id FROM members WHERE id = ?")
+    .get(id);
+  if (!existing) return false;
+
+  const tx = database.transaction(() => {
+    // Tables with FK to members(id) — must clear before DELETE
+    database
+      .prepare("DELETE FROM auction_item_dividends WHERE member_id = ?")
+      .run(id);
+    database
+      .prepare("DELETE FROM leaderboard_entries WHERE member_id = ?")
+      .run(id);
+
+    // Soft refs / related rows without FK
+    database.prepare("DELETE FROM boss_votes WHERE member_id = ?").run(id);
+    database.prepare("DELETE FROM boss_presence WHERE member_id = ?").run(id);
+    database
+      .prepare("UPDATE boss_chat SET member_id = NULL WHERE member_id = ?")
+      .run(id);
+    database
+      .prepare(
+        "UPDATE auction_dividend_entries SET member_id = NULL WHERE member_id = ?",
+      )
+      .run(id);
+    database
+      .prepare(
+        "UPDATE auction_item_dividend_lines SET member_id = NULL WHERE member_id = ?",
+      )
+      .run(id);
+    database
+      .prepare(
+        "UPDATE auction_item_sale_history SET winner_member_id = NULL WHERE winner_member_id = ?",
+      )
+      .run(id);
+    database
+      .prepare(
+        "UPDATE auction_items SET winner_member_id = NULL WHERE winner_member_id = ?",
+      )
+      .run(id);
+
+    const bidItems = database
+      .prepare(
+        "SELECT DISTINCT item_id FROM auction_bids WHERE member_id = ?",
+      )
+      .all(id) as Array<{ item_id: number }>;
+
+    database.prepare("DELETE FROM auction_bids WHERE member_id = ?").run(id);
+
+    for (const { item_id } of bidItems) {
+      const item = database
+        .prepare(
+          "SELECT id, start_price, status FROM auction_items WHERE id = ?",
+        )
+        .get(item_id) as
+        | { id: number; start_price: number; status: string }
+        | undefined;
+      if (!item) continue;
+
+      const top = database
+        .prepare(
+          `SELECT member_id, amount FROM auction_bids
+           WHERE item_id = ?
+           ORDER BY amount DESC, id DESC
+           LIMIT 1`,
+        )
+        .get(item_id) as { member_id: number; amount: number } | undefined;
+
+      if (item.status === "sold") {
+        if (top) {
+          database
+            .prepare(
+              `UPDATE auction_items
+               SET winner_member_id = ?, sold_price = ?, current_price = ?
+               WHERE id = ?`,
+            )
+            .run(top.member_id, top.amount, top.amount, item_id);
+        }
+      } else if (top) {
+        database
+          .prepare(
+            `UPDATE auction_items
+             SET current_price = ?
+             WHERE id = ?`,
+          )
+          .run(top.amount, item_id);
+      } else {
+        database
+          .prepare(
+            `UPDATE auction_items
+             SET current_price = ?
+             WHERE id = ?`,
+          )
+          .run(item.start_price, item_id);
+      }
+    }
+
+    const result = database
+      .prepare("DELETE FROM members WHERE id = ?")
+      .run(id);
+    return result.changes > 0;
+  });
+
+  return tx();
 }
 
 export function resetMemberPassword(id: number): boolean {
