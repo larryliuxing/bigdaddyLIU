@@ -36,6 +36,7 @@ export function AddAuctionItemForm({
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [priceStats, setPriceStats] = useState<ItemPriceStats | null>(null);
+  const [priceStatsLoading, setPriceStatsLoading] = useState(false);
   const pasteRef = useRef<HTMLDivElement>(null);
   const memberPasteRef = useRef<HTMLDivElement>(null);
 
@@ -161,6 +162,8 @@ export function AddAuctionItemForm({
       setNamePreview(null);
       setSelectedIds([]);
       setOcrStatus("");
+      setPriceStats(null);
+      setPriceStatsLoading(false);
       onCreated();
     } catch {
       setError("网络错误");
@@ -177,19 +180,27 @@ export function AddAuctionItemForm({
     const trimmed = name.trim();
     if (trimmed.length < 2) {
       setPriceStats(null);
+      setPriceStatsLoading(false);
       return;
     }
     let alive = true;
+    setPriceStatsLoading(true);
     const timer = window.setTimeout(async () => {
       try {
         const res = await fetch(
           `/api/auction/price-stats?name=${encodeURIComponent(trimmed)}`,
         );
         const data = await res.json();
-        if (!alive || !res.ok) return;
+        if (!alive) return;
+        if (!res.ok) {
+          setPriceStats(null);
+          return;
+        }
         setPriceStats((data.stats as ItemPriceStats | null) ?? null);
       } catch {
         if (alive) setPriceStats(null);
+      } finally {
+        if (alive) setPriceStatsLoading(false);
       }
     }, 280);
     return () => {
@@ -217,7 +228,22 @@ export function AddAuctionItemForm({
             onChange={(e) => setName(e.target.value)}
             placeholder="粘贴装备图后自动识别顶部名称"
           />
-          <ItemPriceStatsLine stats={priceStats} className="mt-1" />
+          {name.trim().length < 2 ? (
+            <p className="mt-1 text-xs text-[var(--text-muted)]">
+              填写名称后显示同名历史最高价 / 最低价 / 平均价
+            </p>
+          ) : priceStatsLoading ? (
+            <p className="mt-1 text-xs text-[var(--text-muted)]">
+              正在查询同名成交价…
+            </p>
+          ) : (
+            <ItemPriceStatsLine
+              stats={priceStats}
+              variant="panel"
+              className="mt-2"
+              emptyLabel="暂无同名成交记录（尚无历史最高/最低/平均价）"
+            />
+          )}
         </label>
         <label className="block space-y-1.5">
           <span className="text-xs text-[var(--text-muted)]">起拍价 ¥</span>
