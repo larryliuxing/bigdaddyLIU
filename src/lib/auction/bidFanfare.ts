@@ -1,10 +1,13 @@
 /**
  * Auction high-bid fanfare sounds.
  *
- * Upload to server (fixed names):
- *   /var/www/guild/public/sounds/da-ge.m4a          (>¥300)
- *   /var/www/guild/public/sounds/qi-ting-zhang.m4a  (>¥600)
- *   /var/www/guild/public/sounds/zhe-feng-du-ye.mp3 (>¥1000)
+ * Upload to server (fixed English names):
+ *   /var/www/guild/public/sounds/da-ge.m4a          (>¥300  大哥)
+ *   /var/www/guild/public/sounds/qi-ting-zhang.m4a  (>¥600  祁厅长)
+ *   /var/www/guild/public/sounds/zhe-feng-du-ye.mp3 (>¥1000 折风渡夜)
+ *
+ * Playback rule: only one track at a time.
+ * Higher tier may interrupt lower; lower never interrupts higher.
  */
 
 export type BidFanfareTier = 300 | 600 | 1000;
@@ -16,7 +19,22 @@ const SOURCES: Record<BidFanfareTier, string[]> = {
 };
 
 const audioCache = new Map<BidFanfareTier, HTMLAudioElement>();
+const resolvedSrc = new Map<BidFanfareTier, string>();
 let unlocked = false;
+let playingTier: BidFanfareTier | null = null;
+let playToken = 0;
+
+function stopAllExcept(keep?: BidFanfareTier | null) {
+  for (const [tier, audio] of audioCache) {
+    if (keep != null && tier === keep) continue;
+    try {
+      audio.pause();
+      audio.currentTime = 0;
+    } catch {
+      /* ignore */
+    }
+  }
+}
 
 function getCached(tier: BidFanfareTier, src: string) {
   let audio = audioCache.get(tier);
@@ -24,21 +42,35 @@ function getCached(tier: BidFanfareTier, src: string) {
     audio = new Audio(src);
     audio.preload = "auto";
     audioCache.set(tier, audio);
-  } else if (!audio.src.endsWith(src) && !audio.src.includes(src)) {
-    audio.src = src;
+    audio.addEventListener("ended", () => {
+      if (playingTier === tier) playingTier = null;
+    });
+  } else {
+    const current = audio.getAttribute("src") || audio.src;
+    if (!current.includes(src)) {
+      audio.src = src;
+    }
   }
   return audio;
 }
 
 async function resolveSource(tier: BidFanfareTier): Promise<string | null> {
+  const cached = resolvedSrc.get(tier);
+  if (cached) return cached;
+
   for (const src of SOURCES[tier]) {
     const ok = await new Promise<boolean>((resolve) => {
       const probe = new Audio();
+      let settled = false;
       const finish = (v: boolean) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timer);
         probe.removeAttribute("src");
         probe.load();
         resolve(v);
       };
+      const timer = window.setTimeout(() => finish(false), 2500);
       probe.addEventListener("canplaythrough", () => finish(true), {
         once: true,
       });
@@ -46,7 +78,10 @@ async function resolveSource(tier: BidFanfareTier): Promise<string | null> {
       probe.preload = "auto";
       probe.src = src;
     });
-    if (ok) return src;
+    if (ok) {
+      resolvedSrc.set(tier, src);
+      return src;
+    }
   }
   return null;
 }
@@ -75,10 +110,6 @@ export function tierFromAmount(amount: number): BidFanfareTier | null {
   return null;
 }
 
-export function fanfareKind(tier: BidFanfareTier) {
-  return `bid_fanfare_${tier}` as const;
-}
-
 export function parseFanfareKind(kind: string): BidFanfareTier | null {
   if (kind === "bid_fanfare_1000") return 1000;
   if (kind === "bid_fanfare_600") return 600;
@@ -86,19 +117,51 @@ export function parseFanfareKind(kind: string): BidFanfareTier | null {
   return null;
 }
 
+/**
+ * Play fanfare for a tier.
+ * - If a higher/equal tier is already playing → ignore (do not interrupt).
+ * - If a lower tier is playing → stop it and play this one.
+ * - Only one track plays at a time.
+ */
 export async function playBidFanfare(tier: BidFanfareTier) {
   if (typeof window === "undefined") return;
+
+  // Lower cannot interrupt higher; equal also ignored (keep current)
+  if (playingTier != null && tier <= playingTier) {
+    return;
+  }
+
+  const token = ++playToken;
   try {
     if (!unlocked) await unlockBidFanfare();
+    if (token !== playToken) return;
+
     const src = (await resolveSource(tier)) || SOURCES[tier][0];
+    if (token !== playToken) return;
+
+    // Re-check after async gap: a higher request may have won
+    if (playingTier != null && tier <= playingTier) return;
+
+    stopAllExcept(null);
     const audio = getCached(tier, src);
     audio.pause();
     audio.currentTime = 0;
     audio.volume = 1;
+    playingTier = tier;
     await audio.play();
+    if (token !== playToken) {
+      audio.pause();
+      return;
+    }
   } catch {
-    /* missing file or autoplay blocked */
+    if (playingTier === tier) playingTier = null;
   }
+}
+
+export function stopBidFanfare() {
+  playToken += 1;
+  playingTier = null;
+  stopAllExcept(null);
 }
 
 export function buildFanfareMessage(

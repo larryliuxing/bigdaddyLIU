@@ -1,7 +1,11 @@
-拍卖高价音效（请用英文文件名上传到本目录）：
+拍卖高价音效文件（必须用下面英文文件名）：
 
-  da-ge.m4a            ← 大哥111.m4a        （出价 > 300）
-  qi-ting-zhang.m4a    ← 祁厅长进步小曲222.m4a（出价 > 600）
-  zhe-feng-du-ye.mp3   ← 折风渡夜333.mp3     （出价 > 1000）
+  da-ge.m4a            ← 本地「大哥111.m4a」        （出价 > 300）
+  qi-ting-zhang.m4a    ← 本地「祁厅长进步小曲222.m4a」（出价 > 600）
+  zhe-feng-du-ye.mp3   ← 本地「折风渡夜333.mp3」     （出价 > 1000）
 
-服务器路径：/var/www/guild/public/sounds/
+服务器目录：
+  /var/www/guild/public/sounds/
+
+播放规则：
+  同一时间只播一首；更高档可打断更低档；更低档不能打断更高档。
