@@ -9,11 +9,41 @@ import {
   listDividends,
   listEvents,
   listItems,
+  mapLeadingBidders,
   maybeAutoProgress,
 } from "@/lib/db";
-import type { AuctionRoomState } from "@/lib/types";
+import type { AuctionItem, AuctionRoomState } from "@/lib/types";
 
-export function buildRoomState(sessionId?: number): AuctionRoomState {
+export type BuildRoomOptions = {
+  /**
+   * When true, omit base64 item images and dividend roster details.
+   * Used for bid responses and live polling so updates stay fast.
+   */
+  lite?: boolean;
+};
+
+function withLeadingBidders(
+  items: AuctionItem[],
+  leaders: Map<
+    number,
+    { memberId: number; memberName: string; amount: number }
+  >,
+): AuctionItem[] {
+  return items.map((item) => {
+    const lead = leaders.get(item.id);
+    return {
+      ...item,
+      leadingBidderId: lead?.memberId ?? null,
+      leadingBidderName: lead?.memberName ?? null,
+    };
+  });
+}
+
+export function buildRoomState(
+  sessionId?: number,
+  options: BuildRoomOptions = {},
+): AuctionRoomState {
+  const lite = Boolean(options.lite);
   const settings = getAuctionSettings();
   let session = sessionId
     ? getSessionById(sessionId)
@@ -23,7 +53,19 @@ export function buildRoomState(sessionId?: number): AuctionRoomState {
     session = maybeAutoProgress(session.id) ?? session;
   }
 
-  const items = session ? listItems(session.id) : [];
+  const live = session?.status === "live";
+  const ended = session?.status === "ended";
+
+  const itemsRaw = session
+    ? listItems(session.id, {
+        includeImages: !lite,
+        // Dividend member lists are only needed for admin/ended flows.
+        includeDividends: !lite && !live,
+      })
+    : [];
+
+  const leaders = session ? mapLeadingBidders(session.id) : new Map();
+  const items = withLeadingBidders(itemsRaw, leaders);
   const activeItems = items.filter((i) => i.status === "active");
   const activeItem = activeItems[0] ?? null;
 
@@ -66,10 +108,10 @@ export function buildRoomState(sessionId?: number): AuctionRoomState {
     recentBids: session ? listBids(session.id, 20) : [],
     serverNow: new Date().toISOString(),
     remainingSeconds,
-    dividends: session ? listDividends(session.id) : [],
+    dividends: ended && session ? listDividends(session.id) : [],
     dividendsCalculated,
     dividendReport:
-      session && (session.status === "ended" || dividendsCalculated)
+      session && ended
         ? getDividendReport(session.id)
         : null,
   };

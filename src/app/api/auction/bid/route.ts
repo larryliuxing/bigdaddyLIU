@@ -14,7 +14,6 @@ export async function POST(request: Request) {
   const body = await request.json().catch(() => null);
   const amount = Number(body?.amount);
   const itemId = Number(body?.itemId);
-  const isAnonymous = Boolean(body?.isAnonymous);
 
   if (!(amount > 0)) {
     return NextResponse.json({ error: "请输入有效出价" }, { status: 400 });
@@ -34,11 +33,11 @@ export async function POST(request: Request) {
       itemId,
       memberId: member.id,
       amount,
-      isAnonymous,
     });
+    // Lite room: no base64 images — client merges cached images for instant UI.
     return NextResponse.json({
       ...result,
-      room: buildRoomState(session.id),
+      room: buildRoomState(session.id, { lite: true }),
     });
   } catch (error) {
     return NextResponse.json(

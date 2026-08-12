@@ -16,8 +16,10 @@ export const runtime = "nodejs";
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const sessionId = Number(searchParams.get("sessionId"));
+  const lite = searchParams.get("lite") === "1";
   const room = buildRoomState(
     Number.isFinite(sessionId) && sessionId > 0 ? sessionId : undefined,
+    { lite },
   );
   return NextResponse.json({
     room,

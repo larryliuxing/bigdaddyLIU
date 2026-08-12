@@ -85,6 +85,9 @@ export interface AuctionItem {
   closedAt: string | null;
   dividendMemberIds: number[];
   dividendMemberNames: string[];
+  /** Current high bidder (live); always real name, never anonymous. */
+  leadingBidderId?: number | null;
+  leadingBidderName?: string | null;
 }
 
 export interface AuctionBid {

@@ -487,11 +487,20 @@ function getItemDividendIds(itemId: number): number[] {
   return rows.map((r) => r.member_id);
 }
 
-function toItem(row: ItemRow): AuctionItem {
-  const dividendMemberIds = getItemDividendIds(row.id);
-  const dividendMemberNames = dividendMemberIds
-    .map((id) => getMemberById(id)?.name)
-    .filter(Boolean) as string[];
+function toItem(
+  row: ItemRow,
+  opts?: { includeImages?: boolean; includeDividends?: boolean },
+): AuctionItem {
+  const includeImages = opts?.includeImages !== false;
+  const includeDividends = opts?.includeDividends !== false;
+  const dividendMemberIds = includeDividends
+    ? getItemDividendIds(row.id)
+    : [];
+  const dividendMemberNames = includeDividends
+    ? (dividendMemberIds
+        .map((id) => getMemberById(id)?.name)
+        .filter(Boolean) as string[])
+    : [];
 
   let winnerName: string | null = null;
   if (row.winner_member_id) {
@@ -505,7 +514,7 @@ function toItem(row: ItemRow): AuctionItem {
     quality: row.quality,
     startPrice: row.start_price,
     bidIncrement: row.bid_increment,
-    imageData: row.image_data,
+    imageData: includeImages ? row.image_data : null,
     sortOrder: row.sort_order,
     status: row.status,
     currentPrice: row.current_price,
@@ -516,6 +525,8 @@ function toItem(row: ItemRow): AuctionItem {
     closedAt: row.closed_at,
     dividendMemberIds,
     dividendMemberNames,
+    leadingBidderId: null,
+    leadingBidderName: null,
   };
 }
 
@@ -762,13 +773,54 @@ export function deleteAuctionSession(sessionId: number): boolean {
   return true;
 }
 
-export function listItems(sessionId: number): AuctionItem[] {
+export function listItems(
+  sessionId: number,
+  opts?: { includeImages?: boolean; includeDividends?: boolean },
+): AuctionItem[] {
   const rows = ensureDb()
     .prepare(
       `SELECT * FROM auction_items WHERE session_id = ? ORDER BY sort_order ASC, id ASC`,
     )
     .all(sessionId) as ItemRow[];
-  return rows.map(toItem);
+  return rows.map((row) => toItem(row, opts));
+}
+
+/** Latest high bidder per item in a session (by max bid id = current price). */
+export function mapLeadingBidders(sessionId: number): Map<
+  number,
+  { memberId: number; memberName: string; amount: number }
+> {
+  const rows = ensureDb()
+    .prepare(
+      `SELECT b.item_id, b.member_id, m.name as member_name, b.amount
+       FROM auction_bids b
+       JOIN members m ON m.id = b.member_id
+       INNER JOIN (
+         SELECT item_id, MAX(id) as max_id
+         FROM auction_bids
+         WHERE session_id = ?
+         GROUP BY item_id
+       ) t ON b.id = t.max_id`,
+    )
+    .all(sessionId) as Array<{
+    item_id: number;
+    member_id: number;
+    member_name: string;
+    amount: number;
+  }>;
+
+  const map = new Map<
+    number,
+    { memberId: number; memberName: string; amount: number }
+  >();
+  for (const row of rows) {
+    map.set(row.item_id, {
+      memberId: row.member_id,
+      memberName: row.member_name,
+      amount: row.amount,
+    });
+  }
+  return map;
 }
 
 export function getItemById(id: number): AuctionItem | null {
@@ -901,7 +953,7 @@ export function listBids(sessionId: number, limit = 30): AuctionBid[] {
     memberId: r.member_id,
     memberName: r.member_name,
     amount: r.amount,
-    isAnonymous: Boolean(r.is_anonymous),
+    isAnonymous: false,
     createdAt: r.created_at,
   }));
 }
@@ -1101,7 +1153,6 @@ export function placeBid(input: {
   itemId: number;
   memberId: number;
   amount: number;
-  isAnonymous?: boolean;
 }): { bid: AuctionBid; item: AuctionItem } {
   const session = getSessionById(input.sessionId);
   if (!session || session.status !== "live") {
@@ -1138,15 +1189,9 @@ export function placeBid(input: {
   const result = ensureDb()
     .prepare(
       `INSERT INTO auction_bids (session_id, item_id, member_id, amount, is_anonymous)
-       VALUES (?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, 0)`,
     )
-    .run(
-      input.sessionId,
-      item.id,
-      input.memberId,
-      input.amount,
-      input.isAnonymous ? 1 : 0,
-    );
+    .run(input.sessionId, item.id, input.memberId, input.amount);
 
   ensureDb()
     .prepare(`UPDATE auction_items SET current_price = ? WHERE id = ?`)
@@ -1167,11 +1212,10 @@ export function placeBid(input: {
     }
   }
 
-  const displayName = input.isAnonymous ? "匿名" : member.name;
   addEvent(
     input.sessionId,
     "bid",
-    `${displayName} 出价 ¥${input.amount}（${item.name}）`,
+    `${member.name} 出价 ¥${input.amount}（${item.name}）`,
   );
 
   const bidRow = ensureDb()
@@ -1186,6 +1230,10 @@ export function placeBid(input: {
     created_at: string;
   };
 
+  const updated = getItemById(item.id)!;
+  updated.leadingBidderId = member.id;
+  updated.leadingBidderName = member.name;
+
   return {
     bid: {
       id: bidRow.id,
@@ -1194,10 +1242,10 @@ export function placeBid(input: {
       memberId: bidRow.member_id,
       memberName: member.name,
       amount: bidRow.amount,
-      isAnonymous: Boolean(bidRow.is_anonymous),
+      isAnonymous: false,
       createdAt: bidRow.created_at,
     },
-    item: getItemById(item.id)!,
+    item: updated,
   };
 }
 
