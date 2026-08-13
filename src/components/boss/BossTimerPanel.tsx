@@ -137,7 +137,10 @@ function BossCard({
 
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
-          <h3 className="text-xl font-bold" style={{ color: boss.color }}>
+          <h3
+            className="text-3xl font-extrabold tracking-wide sm:text-4xl"
+            style={{ color: boss.color }}
+          >
             {boss.name}
           </h3>
           <p className="mt-1 text-sm text-[var(--text-muted)]">
@@ -428,12 +431,34 @@ export function BossTimerPanel({
     window.location.assign(member ? "/home" : "/admin");
   }
 
-  const bosses = room?.bosses ?? [];
   const voteNeed = room?.voteNeed ?? 3;
   const systemLogs = useMemo(
     () => (room?.chat ?? []).filter((c) => c.memberName === "系统").slice(-8),
     [room?.chat],
   );
+
+  const bosses = useMemo(() => {
+    const list = [...(room?.bosses ?? [])];
+    const remainOf = (boss: Boss) => {
+      if (!boss.nextSpawnAt) return null;
+      return Math.max(
+        0,
+        Math.floor((new Date(boss.nextSpawnAt).getTime() - now) / 1000),
+      );
+    };
+    list.sort((a, b) => {
+      const ra = remainOf(a);
+      const rb = remainOf(b);
+      if (ra == null && rb == null) {
+        return a.sortOrder - b.sortOrder || a.id - b.id;
+      }
+      if (ra == null) return 1;
+      if (rb == null) return -1;
+      if (ra !== rb) return ra - rb;
+      return a.sortOrder - b.sortOrder || a.id - b.id;
+    });
+    return list;
+  }, [room?.bosses, now]);
 
   return (
     <div className="app-shell">

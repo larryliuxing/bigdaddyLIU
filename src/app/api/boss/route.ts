@@ -9,7 +9,9 @@ import {
   deleteBoss,
   getBossDrops,
   getBossRoomState,
+  getBossVoteNeed,
   listBosses,
+  setBossVoteNeed,
   touchBossPresence,
   updateBoss,
 } from "@/lib/db";
@@ -46,6 +48,7 @@ export async function GET(request: Request) {
     allBosses: admin
       ? listBosses(true, { includeImages: false })
       : undefined,
+    voteNeed: getBossVoteNeed(),
   });
 }
 
@@ -106,6 +109,24 @@ export async function PATCH(request: Request) {
   }
 
   const body = await request.json().catch(() => null);
+
+  if (body?.action === "setVoteNeed") {
+    const n = Number(body?.voteNeed);
+    if (!Number.isFinite(n) || n < 1 || n > 5) {
+      return NextResponse.json(
+        { error: "投票人数须为 1～5" },
+        { status: 400 },
+      );
+    }
+    const voteNeed = setBossVoteNeed(n);
+    return NextResponse.json({
+      ok: true,
+      voteNeed,
+      room: getBossRoomState({ includeImages: false }),
+      allBosses: listBosses(true, { includeImages: false }),
+    });
+  }
+
   const id = Number(body?.id);
   if (!id) {
     return NextResponse.json({ error: "缺少 BOSS ID" }, { status: 400 });
