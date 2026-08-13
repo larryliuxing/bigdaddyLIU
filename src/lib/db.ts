@@ -2291,6 +2291,8 @@ type BossRow = {
   next_spawn_at: string | null;
   drops_note: string | null;
   drops_image: string | null;
+  /** Present on lite queries that omit drops_image blob */
+  has_drops_image?: number | boolean;
   sort_order: number;
   enabled: number;
 };
@@ -2394,6 +2396,9 @@ function toBoss(
   opts?: { includeImage?: boolean },
 ): import("./types").Boss {
   const includeImage = opts?.includeImage !== false;
+  const hasDropsImage = includeImage
+    ? Boolean(row.drops_image)
+    : Boolean(row.has_drops_image ?? row.drops_image);
   return {
     id: row.id,
     name: row.name,
@@ -2404,7 +2409,7 @@ function toBoss(
     nextSpawnAt: row.next_spawn_at,
     dropsNote: row.drops_note,
     dropsImage: includeImage ? (row.drops_image ?? null) : null,
-    hasDropsImage: Boolean(row.drops_image),
+    hasDropsImage,
     sortOrder: row.sort_order,
     enabled: Boolean(row.enabled),
     remainingSeconds: remainingFrom(row.next_spawn_at),
@@ -2412,21 +2417,28 @@ function toBoss(
   };
 }
 
+const BOSS_LITE_SELECT = `
+  id, name, color, spawn_rate, interval_hours, last_kill_at, next_spawn_at,
+  drops_note, NULL as drops_image,
+  CASE WHEN drops_image IS NOT NULL AND drops_image != '' THEN 1 ELSE 0 END as has_drops_image,
+  sort_order, enabled
+`;
+
 export function listBosses(
   includeDisabled = false,
   opts?: { includeImages?: boolean },
 ) {
   expireOpenRounds();
+  const includeImages = opts?.includeImages === true;
+  const select = includeImages ? "*" : BOSS_LITE_SELECT;
   const rows = ensureDb()
     .prepare(
       includeDisabled
-        ? `SELECT * FROM bosses ORDER BY sort_order ASC, id ASC`
-        : `SELECT * FROM bosses WHERE enabled = 1 ORDER BY sort_order ASC, id ASC`,
+        ? `SELECT ${select} FROM bosses ORDER BY sort_order ASC, id ASC`
+        : `SELECT ${select} FROM bosses WHERE enabled = 1 ORDER BY sort_order ASC, id ASC`,
     )
     .all() as BossRow[];
-  return rows.map((row) =>
-    toBoss(row, { includeImage: opts?.includeImages !== false }),
-  );
+  return rows.map((row) => toBoss(row, { includeImage: includeImages }));
 }
 
 export function getBossById(id: number) {
