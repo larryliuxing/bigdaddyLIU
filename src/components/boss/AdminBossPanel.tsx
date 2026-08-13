@@ -11,6 +11,10 @@ import {
   fromBeijingDateAndTime,
 } from "@/lib/auction/client";
 import {
+  computeTimerFromKill,
+  computeTimerFromNextSpawn,
+} from "@/lib/boss/timer";
+import {
   BossDropsLightbox,
   BossDropsPasteZone,
 } from "@/components/boss/BossDropsViewer";
@@ -408,10 +412,14 @@ export function AdminBossPanel({
 
   async function applyKillTime(boss: Boss) {
     const draft = timerDrafts[boss.id] || draftFromBoss(boss);
-    const lastKillAt = fromBeijingDateAndTime(draft.killDate, draft.killTime);
-    const nextSpawnAt = new Date(
-      new Date(lastKillAt).getTime() + boss.intervalHours * 60 * 60 * 1000,
-    ).toISOString();
+    const killIso = fromBeijingDateAndTime(draft.killDate, draft.killTime);
+    const computed = computeTimerFromKill(killIso, boss.intervalHours);
+    if (!computed.ok) {
+      setError(computed.error);
+      setMessage("");
+      return;
+    }
+    const { lastKillAt, nextSpawnAt } = computed;
     setTimerBusy({ bossId: boss.id, action: "kill" });
     try {
       const ok = await patchBoss(boss.id, { lastKillAt, nextSpawnAt });
@@ -424,7 +432,7 @@ export function AdminBossPanel({
             nextTime: beijingHmFromIso(nextSpawnAt),
           },
         }));
-        const tip = `已按击杀时间计时 · 下次刷新 ${formatBeijingDateTime(nextSpawnAt)}`;
+        const tip = `已记击杀 · 下次刷新 ${formatBeijingDateTime(nextSpawnAt)}（+${boss.intervalHours}h）`;
         setMessage(tip);
         flashTimerOk(boss.id, "kill", tip);
       }
@@ -435,12 +443,26 @@ export function AdminBossPanel({
 
   async function applyNextSpawn(boss: Boss) {
     const draft = timerDrafts[boss.id] || draftFromBoss(boss);
-    const nextSpawnAt = fromBeijingDateAndTime(draft.nextDate, draft.nextTime);
+    const nextIso = fromBeijingDateAndTime(draft.nextDate, draft.nextTime);
+    const { lastKillAt, nextSpawnAt } = computeTimerFromNextSpawn(
+      nextIso,
+      boss.intervalHours,
+    );
     setTimerBusy({ bossId: boss.id, action: "next" });
     try {
-      const ok = await patchBoss(boss.id, { nextSpawnAt });
+      const ok = await patchBoss(boss.id, { lastKillAt, nextSpawnAt });
       if (ok) {
-        const tip = `已设置下次刷新 · ${formatBeijingDateTime(nextSpawnAt)}`;
+        setTimerDrafts((prev) => ({
+          ...prev,
+          [boss.id]: {
+            ...draft,
+            killDate: beijingDateFromIso(lastKillAt),
+            killTime: beijingHmFromIso(lastKillAt),
+            nextDate: beijingDateFromIso(nextSpawnAt),
+            nextTime: beijingHmFromIso(nextSpawnAt),
+          },
+        }));
+        const tip = `已设下次刷新 · ${formatBeijingDateTime(nextSpawnAt)}（倒计时对准此时刻）`;
         setMessage(tip);
         flashTimerOk(boss.id, "next", tip);
       }
@@ -498,9 +520,9 @@ export function AdminBossPanel({
         </header>
 
         <p className="mb-4 text-xs leading-relaxed text-[var(--text-muted)]">
-          固有属性：名称、刷新概率、刷新间隔、掉落说明（可粘贴截图）。
-          计时由管理员设置击杀时间（自动推算下次刷新）或直接设置下次刷新时间；
-          全体盟员在 BOSS 模块查看倒计时列表。
+          固有属性：名称、刷新概率、刷新间隔、掉落说明。计时：盟员端倒计时对准「下次刷新」；
+          要倒计时到某个时刻请用「设下次刷新」；已击杀再用「记击杀并推算」（击杀时间 +
+          间隔）。
         </p>
 
         {message && <p className="mb-3 text-sm text-emerald-400">{message}</p>}
@@ -678,62 +700,17 @@ export function AdminBossPanel({
                         : "border-[var(--border-soft)]"
                     }`}
                   >
-                    <p className="text-xs font-medium text-[var(--text-muted)]">
-                      手动调倒计时（北京时间）· 间隔 {boss.intervalHours} 小时
-                    </p>
-                    <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto]">
-                      <label className="block space-y-1.5">
-                        <span className="text-xs text-[var(--text-muted)]">
-                          击杀日期
-                        </span>
-                        <input
-                          className="field"
-                          type="date"
-                          value={draft.killDate}
-                          onChange={(e) =>
-                            updateTimerDraft(boss.id, {
-                              killDate: e.target.value,
-                            })
-                          }
-                        />
-                      </label>
-                      <label className="block space-y-1.5">
-                        <span className="text-xs text-[var(--text-muted)]">
-                          击杀时间
-                        </span>
-                        <input
-                          className="field"
-                          type="time"
-                          value={draft.killTime}
-                          onChange={(e) =>
-                            updateTimerDraft(boss.id, {
-                              killTime: e.target.value,
-                            })
-                          }
-                        />
-                      </label>
-                      <div className="flex items-end">
-                        <button
-                          type="button"
-                          className={`w-full rounded-xl px-3 py-2.5 text-sm font-semibold transition disabled:opacity-60 ${
-                            timerFlash?.bossId === boss.id &&
-                            timerFlash.action === "kill"
-                              ? "bg-emerald-500 text-white"
-                              : "btn-primary"
-                          }`}
-                          disabled={Boolean(timerBusy)}
-                          onClick={() => applyKillTime(boss)}
-                        >
-                          {timerBusy?.bossId === boss.id &&
-                          timerBusy.action === "kill"
-                            ? "设置中…"
-                            : timerFlash?.bossId === boss.id &&
-                                timerFlash.action === "kill"
-                              ? "已设置 ✓"
-                              : "按击杀时间计时"}
-                        </button>
-                      </div>
+                    <div className="space-y-1">
+                      <p className="text-xs font-medium text-[var(--text-muted)]">
+                        倒计时规则（北京时间）· 间隔 {boss.intervalHours} 小时
+                      </p>
+                      <p className="text-[11px] leading-relaxed text-[var(--text-muted)]">
+                        盟员端始终倒计时到「下次刷新」。想倒计时到某个时刻（如
+                        14:22），用上面「设下次刷新」；只有已经击杀了才用下面「记击杀」（会再
+                        +{boss.intervalHours} 小时）。
+                      </p>
                     </div>
+
                     <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto]">
                       <label className="block space-y-1.5">
                         <span className="text-xs text-[var(--text-muted)]">
@@ -772,7 +749,7 @@ export function AdminBossPanel({
                             timerFlash?.bossId === boss.id &&
                             timerFlash.action === "next"
                               ? "bg-emerald-500 text-white"
-                              : "btn-ghost"
+                              : "btn-primary"
                           }`}
                           disabled={Boolean(timerBusy)}
                           onClick={() => applyNextSpawn(boss)}
@@ -783,7 +760,61 @@ export function AdminBossPanel({
                             : timerFlash?.bossId === boss.id &&
                                 timerFlash.action === "next"
                               ? "已设置 ✓"
-                              : "直接设下次刷新"}
+                              : "设下次刷新"}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto]">
+                      <label className="block space-y-1.5">
+                        <span className="text-xs text-[var(--text-muted)]">
+                          击杀日期（须已发生）
+                        </span>
+                        <input
+                          className="field"
+                          type="date"
+                          value={draft.killDate}
+                          onChange={(e) =>
+                            updateTimerDraft(boss.id, {
+                              killDate: e.target.value,
+                            })
+                          }
+                        />
+                      </label>
+                      <label className="block space-y-1.5">
+                        <span className="text-xs text-[var(--text-muted)]">
+                          击杀时间
+                        </span>
+                        <input
+                          className="field"
+                          type="time"
+                          value={draft.killTime}
+                          onChange={(e) =>
+                            updateTimerDraft(boss.id, {
+                              killTime: e.target.value,
+                            })
+                          }
+                        />
+                      </label>
+                      <div className="flex items-end">
+                        <button
+                          type="button"
+                          className={`w-full rounded-xl px-3 py-2.5 text-sm font-semibold transition disabled:opacity-60 ${
+                            timerFlash?.bossId === boss.id &&
+                            timerFlash.action === "kill"
+                              ? "bg-emerald-500 text-white"
+                              : "btn-ghost"
+                          }`}
+                          disabled={Boolean(timerBusy)}
+                          onClick={() => applyKillTime(boss)}
+                        >
+                          {timerBusy?.bossId === boss.id &&
+                          timerBusy.action === "kill"
+                            ? "设置中…"
+                            : timerFlash?.bossId === boss.id &&
+                                timerFlash.action === "kill"
+                              ? "已设置 ✓"
+                              : "记击杀并推算"}
                         </button>
                       </div>
                     </div>
