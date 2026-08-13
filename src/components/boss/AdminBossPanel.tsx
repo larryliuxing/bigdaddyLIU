@@ -90,14 +90,28 @@ function bossToForm(boss: Boss): BossForm {
   };
 }
 
-export function AdminBossPanel({ adminName }: { adminName: string }) {
+function hasDropsPreview(boss: Boss) {
+  return Boolean(boss.hasDropsImage || boss.dropsImage || boss.dropsNote);
+}
+
+export function AdminBossPanel({
+  adminName,
+  initialBosses = [],
+}: {
+  adminName: string;
+  initialBosses?: Boss[];
+}) {
   const router = useRouter();
-  const [bosses, setBosses] = useState<Boss[]>([]);
+  const [bosses, setBosses] = useState<Boss[]>(initialBosses);
+  const [listLoading, setListLoading] = useState(initialBosses.length === 0);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [form, setForm] = useState<BossForm>(emptyForm);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editForm, setEditForm] = useState<BossForm>(emptyForm);
+  const [editImageLoading, setEditImageLoading] = useState(false);
+  /** When false, save must omit dropsImage so we don't wipe the stored blob. */
+  const [editDropsReady, setEditDropsReady] = useState(true);
   const [timerDrafts, setTimerDrafts] = useState<
     Record<
       number,
@@ -108,12 +122,38 @@ export function AdminBossPanel({ adminName }: { adminName: string }) {
         nextTime: string;
       }
     >
-  >({});
+  >(() => {
+    const drafts: Record<
+      number,
+      {
+        killDate: string;
+        killTime: string;
+        nextDate: string;
+        nextTime: string;
+      }
+    > = {};
+    for (const boss of initialBosses) {
+      drafts[boss.id] = {
+        killDate: boss.lastKillAt
+          ? beijingDateFromIso(boss.lastKillAt)
+          : beijingTodayDate(),
+        killTime: boss.lastKillAt ? beijingHmFromIso(boss.lastKillAt) : "12:00",
+        nextDate: boss.nextSpawnAt
+          ? beijingDateFromIso(boss.nextSpawnAt)
+          : beijingTodayDate(),
+        nextTime: boss.nextSpawnAt
+          ? beijingHmFromIso(boss.nextSpawnAt)
+          : "18:00",
+      };
+    }
+    return drafts;
+  });
   const [preview, setPreview] = useState<{
     name: string;
     image: string | null;
     note: string | null;
   } | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
   const [timerBusy, setTimerBusy] = useState<{
     bossId: number;
     action: "kill" | "next";
@@ -124,6 +164,11 @@ export function AdminBossPanel({ adminName }: { adminName: string }) {
     text: string;
   } | null>(null);
   const timerFlashTimer = useRef<number | null>(null);
+  const editingIdRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    editingIdRef.current = editingId;
+  }, [editingId]);
 
   function flashTimerOk(
     bossId: number,
@@ -181,26 +226,128 @@ export function AdminBossPanel({ adminName }: { adminName: string }) {
   }
 
   async function refresh() {
-    const res = await fetch("/api/boss?full=1");
-    const data = await res.json();
-    if (!res.ok) return;
-    const list = (data.allBosses || data.room?.bosses || []) as Boss[];
-    setBosses(list);
-    setTimerDrafts((prev) => {
-      const next = { ...prev };
-      for (const boss of list) {
-        if (!next[boss.id]) next[boss.id] = draftFromBoss(boss);
-      }
-      return next;
-    });
+    setListLoading(true);
+    try {
+      // Lite list — no base64 drops images (load via ?dropsId= when needed)
+      const res = await fetch("/api/boss");
+      const data = await res.json();
+      if (!res.ok) return;
+      const list = (data.allBosses || data.room?.bosses || []) as Boss[];
+      setBosses(list);
+      setTimerDrafts((prev) => {
+        const next = { ...prev };
+        for (const boss of list) {
+          if (!next[boss.id]) next[boss.id] = draftFromBoss(boss);
+        }
+        return next;
+      });
+    } finally {
+      setListLoading(false);
+    }
   }
 
   useEffect(() => {
+    // If SSR already provided the list, skip blocking client reload.
+    if (initialBosses.length > 0) {
+      setListLoading(false);
+      return;
+    }
     const timeout = window.setTimeout(() => {
       void refresh();
     }, 0);
     return () => window.clearTimeout(timeout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  async function fetchDrops(bossId: number) {
+    const res = await fetch(`/api/boss?dropsId=${bossId}`);
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(
+        typeof data.error === "string" ? data.error : "加载掉落失败",
+      );
+    }
+    return data as {
+      dropsImage?: string | null;
+      dropsNote?: string | null;
+      name?: string;
+    };
+  }
+
+  async function openPreview(boss: Boss) {
+    if (!hasDropsPreview(boss)) return;
+    if (boss.dropsImage || (!boss.hasDropsImage && boss.dropsNote)) {
+      setPreview({
+        name: boss.name,
+        image: boss.dropsImage,
+        note: boss.dropsNote,
+      });
+      return;
+    }
+    setPreviewLoading(true);
+    try {
+      const data = await fetchDrops(boss.id);
+      setPreview({
+        name: boss.name,
+        image: data.dropsImage ?? null,
+        note: data.dropsNote ?? boss.dropsNote,
+      });
+      setBosses((prev) =>
+        prev.map((b) =>
+          b.id === boss.id
+            ? {
+                ...b,
+                dropsImage: data.dropsImage ?? null,
+                dropsNote: data.dropsNote ?? b.dropsNote,
+                hasDropsImage: Boolean(data.dropsImage),
+              }
+            : b,
+        ),
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "加载掉落失败");
+    } finally {
+      setPreviewLoading(false);
+    }
+  }
+
+  async function startEdit(boss: Boss) {
+    setEditingId(boss.id);
+    setEditForm(bossToForm(boss));
+    if (boss.dropsImage || !boss.hasDropsImage) {
+      setEditDropsReady(true);
+      setEditImageLoading(false);
+      return;
+    }
+    setEditDropsReady(false);
+    setEditImageLoading(true);
+    try {
+      const data = await fetchDrops(boss.id);
+      if (editingIdRef.current !== boss.id) return;
+      setEditForm((f) => ({
+        ...f,
+        dropsImage: data.dropsImage ?? null,
+        dropsNote: data.dropsNote ?? f.dropsNote,
+      }));
+      setEditDropsReady(true);
+      setBosses((prev) =>
+        prev.map((b) =>
+          b.id === boss.id
+            ? {
+                ...b,
+                dropsImage: data.dropsImage ?? null,
+                hasDropsImage: Boolean(data.dropsImage),
+              }
+            : b,
+        ),
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "加载掉落图片失败");
+      // Keep editDropsReady false so save won't clear the stored image
+    } finally {
+      setEditImageLoading(false);
+    }
+  }
 
   async function createBoss(e: React.FormEvent) {
     e.preventDefault();
@@ -242,14 +389,17 @@ export function AdminBossPanel({ adminName }: { adminName: string }) {
   }
 
   async function saveInherent(bossId: number) {
-    const ok = await patchBoss(bossId, {
+    const patch: Record<string, unknown> = {
       name: editForm.name,
       color: normalizeBossColor(editForm.color),
       spawnRate: editForm.spawnRate,
       intervalHours: editForm.intervalHours,
       dropsNote: editForm.dropsNote || null,
-      dropsImage: editForm.dropsImage,
-    });
+    };
+    if (editDropsReady) {
+      patch.dropsImage = editForm.dropsImage;
+    }
+    const ok = await patchBoss(bossId, patch);
     if (ok) {
       setEditingId(null);
       setMessage("固有属性已更新");
@@ -445,9 +595,16 @@ export function AdminBossPanel({ adminName }: { adminName: string }) {
         <section className="mt-5 overflow-hidden rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)]">
           <div className="border-b border-[var(--border-soft)] px-4 py-3 text-sm text-[var(--text-muted)]">
             已配置（{bosses.length}）
+            {listLoading ? " · 加载中…" : ""}
+            {previewLoading ? " · 加载掉落…" : ""}
           </div>
           <ul className="divide-y divide-[var(--border-soft)]">
-            {bosses.length === 0 && (
+            {listLoading && bosses.length === 0 && (
+              <li className="px-4 py-6 text-sm text-[var(--text-muted)]">
+                正在加载 BOSS 列表…
+              </li>
+            )}
+            {!listLoading && bosses.length === 0 && (
               <li className="px-4 py-6 text-sm text-[var(--text-muted)]">
                 尚未添加 BOSS
               </li>
@@ -470,17 +627,12 @@ export function AdminBossPanel({ adminName }: { adminName: string }) {
                         击杀 {formatBeijingDateTime(boss.lastKillAt)} · 下次刷新{" "}
                         {formatBeijingDateTime(boss.nextSpawnAt)}
                       </p>
-                      {(boss.dropsImage || boss.dropsNote) && (
+                      {hasDropsPreview(boss) && (
                         <button
                           type="button"
-                          className="mt-1 text-xs text-[var(--accent-violet)] underline-offset-2 hover:underline"
-                          onClick={() =>
-                            setPreview({
-                              name: boss.name,
-                              image: boss.dropsImage,
-                              note: boss.dropsNote,
-                            })
-                          }
+                          className="mt-1 text-xs text-[var(--accent-violet)] underline-offset-2 hover:underline disabled:opacity-60"
+                          disabled={previewLoading}
+                          onClick={() => openPreview(boss)}
                         >
                           预览掉落说明
                         </button>
@@ -494,8 +646,7 @@ export function AdminBossPanel({ adminName }: { adminName: string }) {
                           if (editing) {
                             setEditingId(null);
                           } else {
-                            setEditingId(boss.id);
-                            setEditForm(bossToForm(boss));
+                            void startEdit(boss);
                           }
                         }}
                       >
@@ -725,18 +876,21 @@ export function AdminBossPanel({ adminName }: { adminName: string }) {
                       <div className="sm:col-span-2 space-y-1.5">
                         <span className="text-xs text-[var(--text-muted)]">
                           掉落说明（粘贴图片）
+                          {editImageLoading ? " · 加载中…" : ""}
                         </span>
                         <BossDropsPasteZone
                           imageData={editForm.dropsImage}
-                          onChange={(dropsImage) =>
-                            setEditForm((f) => ({ ...f, dropsImage }))
-                          }
+                          onChange={(dropsImage) => {
+                            setEditDropsReady(true);
+                            setEditForm((f) => ({ ...f, dropsImage }));
+                          }}
                         />
                       </div>
                       <button
                         type="button"
                         className="btn-primary sm:col-span-2"
                         onClick={() => saveInherent(boss.id)}
+                        disabled={editImageLoading}
                       >
                         保存固有属性
                       </button>

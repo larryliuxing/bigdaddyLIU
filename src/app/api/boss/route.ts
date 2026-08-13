@@ -19,7 +19,6 @@ export const runtime = "nodejs";
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const dropsId = Number(searchParams.get("dropsId"));
-  const full = searchParams.get("full") === "1";
 
   // On-demand drops image — keeps live polls light
   if (Number.isFinite(dropsId) && dropsId > 0) {
@@ -41,11 +40,11 @@ export async function GET(request: Request) {
   }
 
   const admin = await getAdminSession();
-  // Default lite room (no base64 images). Admin settings page uses ?full=1.
+  // Lite by default (no base64 drops images). Use ?dropsId= for on-demand image.
   return NextResponse.json({
-    room: getBossRoomState({ includeImages: full }),
+    room: getBossRoomState({ includeImages: false }),
     allBosses: admin
-      ? listBosses(true, { includeImages: full })
+      ? listBosses(true, { includeImages: false })
       : undefined,
   });
 }
@@ -91,7 +90,7 @@ export async function POST(request: Request) {
       {
         boss,
         room: getBossRoomState({ includeImages: false }),
-        allBosses: listBosses(true, { includeImages: true }),
+        allBosses: listBosses(true, { includeImages: false }),
       },
       { status: 201 },
     );
@@ -139,7 +138,7 @@ export async function PATCH(request: Request) {
     return NextResponse.json({
       boss,
       room: getBossRoomState({ includeImages: false }),
-      allBosses: listBosses(true, { includeImages: true }),
+      allBosses: listBosses(true, { includeImages: false }),
     });
   } catch {
     return NextResponse.json({ error: "更新失败（名称可能重复）" }, { status: 400 });
@@ -162,6 +161,6 @@ export async function DELETE(request: Request) {
   return NextResponse.json({
     ok: true,
     room: getBossRoomState({ includeImages: false }),
-    allBosses: listBosses(true, { includeImages: true }),
+    allBosses: listBosses(true, { includeImages: false }),
   });
 }
