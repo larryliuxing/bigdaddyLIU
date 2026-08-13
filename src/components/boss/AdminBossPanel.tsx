@@ -108,6 +108,8 @@ export function AdminBossPanel({
   const router = useRouter();
   const [bosses, setBosses] = useState<Boss[]>(initialBosses);
   const [listLoading, setListLoading] = useState(initialBosses.length === 0);
+  const [voteNeed, setVoteNeed] = useState(3);
+  const [voteNeedBusy, setVoteNeedBusy] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [form, setForm] = useState<BossForm>(emptyForm);
@@ -238,6 +240,8 @@ export function AdminBossPanel({
       if (!res.ok) return;
       const list = (data.allBosses || data.room?.bosses || []) as Boss[];
       setBosses(list);
+      const need = Number(data.voteNeed ?? data.room?.voteNeed);
+      if (Number.isFinite(need)) setVoteNeed(need);
       setTimerDrafts((prev) => {
         const next = { ...prev };
         for (const boss of list) {
@@ -251,17 +255,37 @@ export function AdminBossPanel({
   }
 
   useEffect(() => {
-    // If SSR already provided the list, skip blocking client reload.
-    if (initialBosses.length > 0) {
-      setListLoading(false);
-      return;
-    }
+    // Always load voteNeed; skip list reload flash when SSR provided bosses.
     const timeout = window.setTimeout(() => {
       void refresh();
     }, 0);
     return () => window.clearTimeout(timeout);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  async function saveVoteNeed(n: number) {
+    setError("");
+    setMessage("");
+    setVoteNeedBusy(true);
+    try {
+      const res = await fetch("/api/boss", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "setVoteNeed", voteNeed: n }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "设置失败");
+        return;
+      }
+      setVoteNeed(Number(data.voteNeed) || n);
+      setMessage(`投票通过人数已设为 ${data.voteNeed} 人`);
+    } catch {
+      setError("网络错误");
+    } finally {
+      setVoteNeedBusy(false);
+    }
+  }
 
   async function fetchDrops(bossId: number) {
     const res = await fetch(`/api/boss?dropsId=${bossId}`);
@@ -529,6 +553,40 @@ export function AdminBossPanel({
         {error && (
           <p className="mb-3 text-sm text-[var(--accent-crimson)]">{error}</p>
         )}
+
+        <section className="mb-5 rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)] p-4">
+          <h2 className="text-sm font-medium text-[var(--text-muted)]">
+            投票通过人数
+          </h2>
+          <p className="mt-1 text-xs text-[var(--text-muted)]">
+            全局设置：已击杀 / 未刷新需几人同意才生效（1～5），与单个 BOSS
+            固有属性无关。
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {[1, 2, 3, 4, 5].map((n) => {
+              const active = voteNeed === n;
+              return (
+                <button
+                  key={n}
+                  type="button"
+                  disabled={voteNeedBusy}
+                  className={`min-w-[3rem] rounded-xl px-3 py-2.5 text-sm font-semibold transition disabled:opacity-60 ${
+                    active
+                      ? "bg-[var(--accent-violet,#7b6cff)] text-white"
+                      : "btn-ghost"
+                  }`}
+                  onClick={() => saveVoteNeed(n)}
+                >
+                  {n} 人
+                </button>
+              );
+            })}
+          </div>
+          <p className="mt-2 text-xs text-[var(--text-muted)]">
+            当前：{voteNeed} 人通过
+            {voteNeedBusy ? " · 保存中…" : ""}
+          </p>
+        </section>
 
         <section className="rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)] p-4">
           <h2 className="text-sm font-medium text-[var(--text-muted)]">

@@ -2277,9 +2277,42 @@ export function getLeaderboardImage(memberId: number): string | null {
 
 /* -------------------- Boss Timer -------------------- */
 
-export const BOSS_VOTE_NEED = 3;
+export const BOSS_VOTE_NEED_DEFAULT = 3;
+export const BOSS_VOTE_NEED_MIN = 1;
+export const BOSS_VOTE_NEED_MAX = 5;
+/** @deprecated Use getBossVoteNeed() — kept for import compatibility. */
+export const BOSS_VOTE_NEED = BOSS_VOTE_NEED_DEFAULT;
 export const BOSS_VOTE_WINDOW_SECONDS = 10;
 export const BOSS_PRESENCE_TTL_SECONDS = 45;
+
+const BOSS_VOTE_NEED_KEY = "boss_vote_need";
+
+function clampBossVoteNeed(n: number) {
+  if (!Number.isFinite(n)) return BOSS_VOTE_NEED_DEFAULT;
+  return Math.min(
+    BOSS_VOTE_NEED_MAX,
+    Math.max(BOSS_VOTE_NEED_MIN, Math.round(n)),
+  );
+}
+
+export function getBossVoteNeed(): number {
+  const row = ensureDb()
+    .prepare(`SELECT value FROM app_meta WHERE key = ?`)
+    .get(BOSS_VOTE_NEED_KEY) as { value: string } | undefined;
+  if (!row) return BOSS_VOTE_NEED_DEFAULT;
+  return clampBossVoteNeed(Number(row.value));
+}
+
+export function setBossVoteNeed(n: number): number {
+  const value = clampBossVoteNeed(n);
+  ensureDb()
+    .prepare(
+      `INSERT INTO app_meta (key, value) VALUES (?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+    )
+    .run(BOSS_VOTE_NEED_KEY, String(value));
+  return value;
+}
 
 type BossRow = {
   id: number;
@@ -2645,7 +2678,8 @@ export function castBossVote(input: {
     ).count;
 
     let passed = false;
-    if (voteCount >= BOSS_VOTE_NEED) {
+    const voteNeed = getBossVoteNeed();
+    if (voteCount >= voteNeed) {
       const now = new Date().toISOString();
       const result = database
         .prepare(
@@ -2665,10 +2699,10 @@ export function castBossVote(input: {
         .get(roundRow.id) as RoundRow,
     );
 
-    return { round, passed, voteCount };
+    return { round, passed, voteCount, voteNeed };
   });
 
-  const { round, passed, voteCount } = run();
+  const { round, passed, voteCount, voteNeed } = run();
   const label = input.voteType === "killed" ? "已击杀" : "未刷新";
   if (passed) {
     applyPassedVote(input.bossId, input.voteType);
@@ -2677,7 +2711,7 @@ export function castBossVote(input: {
     );
   } else {
     addBossChatSystem(
-      `「${boss.name}」${input.memberName} 投票「${label}」（${voteCount}/${BOSS_VOTE_NEED}）`,
+      `「${boss.name}」${input.memberName} 投票「${label}」（${voteCount}/${voteNeed}）`,
     );
   }
 
@@ -2765,14 +2799,25 @@ function addBossChatSystem(message: string) {
 
 export function getBossRoomState(opts?: { includeImages?: boolean }) {
   expireOpenRounds();
+  const bosses = listBosses(false, {
+    includeImages: opts?.includeImages === true,
+  });
+  // Soonest refresh first; unset timers last
+  bosses.sort((a, b) => {
+    const ra = a.remainingSeconds;
+    const rb = b.remainingSeconds;
+    if (ra == null && rb == null) return a.sortOrder - b.sortOrder || a.id - b.id;
+    if (ra == null) return 1;
+    if (rb == null) return -1;
+    if (ra !== rb) return ra - rb;
+    return a.sortOrder - b.sortOrder || a.id - b.id;
+  });
   return {
-    bosses: listBosses(false, {
-      includeImages: opts?.includeImages === true,
-    }),
+    bosses,
     onlineCount: getBossOnlineCount(),
     chat: listBossChat(40),
     serverNow: new Date().toISOString(),
-    voteNeed: BOSS_VOTE_NEED,
+    voteNeed: getBossVoteNeed(),
     voteWindowSeconds: BOSS_VOTE_WINDOW_SECONDS,
   };
 }
