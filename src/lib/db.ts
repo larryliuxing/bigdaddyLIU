@@ -240,6 +240,7 @@ function seedIfEmpty(database: Database.Database) {
   `);
 
   wipeRosterAndAuctionsOnce(database);
+  prodGoLiveCleanupOnce(database);
 
   const adminCount = database
     .prepare("SELECT COUNT(*) as count FROM admins")
@@ -247,7 +248,7 @@ function seedIfEmpty(database: Database.Database) {
 
   if (adminCount.count === 0) {
     const username = process.env.ADMIN_USERNAME || "admin";
-    const password = process.env.ADMIN_PASSWORD || "admin123";
+    const password = process.env.ADMIN_PASSWORD || "Feisha2026";
     const hash = bcrypt.hashSync(password, 10);
     database
       .prepare("INSERT INTO admins (username, password_hash) VALUES (?, ?)")
@@ -375,6 +376,101 @@ function wipeRosterAndAuctionsOnce(database: Database.Database) {
   wipe();
   console.info(
     "[db] wiped members + auction data (kept admins + bosses)",
+  );
+}
+
+/**
+ * One-shot before formal go-live:
+ * - delete test members 测试1～测试6
+ * - clear all auction history
+ * - reset admin password
+ * Bosses are kept.
+ */
+function prodGoLiveCleanupOnce(database: Database.Database) {
+  const done = database
+    .prepare(`SELECT value FROM app_meta WHERE key = ?`)
+    .get("prod_golive_cleanup_v1") as { value: string } | undefined;
+  if (done) return;
+
+  // Fixed go-live password (also update server .env ADMIN_PASSWORD to match)
+  const adminPassword = "Feisha2026";
+  const adminUsername = process.env.ADMIN_USERNAME?.trim() || "admin";
+  const adminHash = bcrypt.hashSync(adminPassword, 10);
+
+  const run = database.transaction(() => {
+    database.pragma("foreign_keys = OFF");
+
+    // Clear all auction-related records
+    database.exec(`
+      DELETE FROM auction_item_dividends;
+      DELETE FROM auction_item_dividend_lines;
+      DELETE FROM auction_dividend_entries;
+      DELETE FROM auction_bids;
+      DELETE FROM auction_events;
+      DELETE FROM auction_item_sale_history;
+      DELETE FROM auction_items;
+      DELETE FROM auction_sessions;
+    `);
+
+    // Hard-delete 测试1～测试6 and their live refs
+    const testMembers = database
+      .prepare(
+        `SELECT id FROM members
+         WHERE name IN ('测试1','测试2','测试3','测试4','测试5','测试6')
+            OR name GLOB '测试[1-6]'`,
+      )
+      .all() as Array<{ id: number }>;
+
+    for (const { id } of testMembers) {
+      database
+        .prepare(`DELETE FROM auction_item_dividends WHERE member_id = ?`)
+        .run(id);
+      database
+        .prepare(`DELETE FROM leaderboard_entries WHERE member_id = ?`)
+        .run(id);
+      database.prepare(`DELETE FROM boss_votes WHERE member_id = ?`).run(id);
+      database.prepare(`DELETE FROM boss_presence WHERE member_id = ?`).run(id);
+      database
+        .prepare(`UPDATE boss_chat SET member_id = NULL WHERE member_id = ?`)
+        .run(id);
+      database.prepare(`DELETE FROM members WHERE id = ?`).run(id);
+    }
+
+    database.pragma("foreign_keys = ON");
+
+    // Ensure single admin with new password
+    const admins = database
+      .prepare(`SELECT id FROM admins ORDER BY id ASC`)
+      .all() as Array<{ id: number }>;
+    if (admins.length === 0) {
+      database
+        .prepare(
+          `INSERT INTO admins (username, password_hash) VALUES (?, ?)`,
+        )
+        .run(adminUsername, adminHash);
+    } else {
+      const keepId = admins[0].id;
+      if (admins.length > 1) {
+        database.prepare(`DELETE FROM admins WHERE id != ?`).run(keepId);
+      }
+      database
+        .prepare(
+          `UPDATE admins SET username = ?, password_hash = ? WHERE id = ?`,
+        )
+        .run(adminUsername, adminHash, keepId);
+    }
+
+    database
+      .prepare(
+        `INSERT INTO app_meta (key, value) VALUES (?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      )
+      .run("prod_golive_cleanup_v1", new Date().toISOString());
+  });
+
+  run();
+  console.info(
+    "[db] prod go-live: removed 测试1-6, cleared auctions, reset admin password",
   );
 }
 
@@ -605,6 +701,18 @@ export function verifyAdmin(
   if (!row) return null;
   if (!bcrypt.compareSync(password, row.password_hash)) return null;
   return { id: row.id, username: row.username };
+}
+
+export function setAdminPassword(password: string, username = "admin"): boolean {
+  const hash = bcrypt.hashSync(password, 10);
+  const result = ensureDb()
+    .prepare(`UPDATE admins SET password_hash = ? WHERE username = ?`)
+    .run(hash, username);
+  if (result.changes > 0) return true;
+  ensureDb()
+    .prepare(`INSERT INTO admins (username, password_hash) VALUES (?, ?)`)
+    .run(username, hash);
+  return true;
 }
 
 /* -------------------- Auction -------------------- */
