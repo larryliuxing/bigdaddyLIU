@@ -164,14 +164,16 @@ export async function recognizeCombatPowers(
     loadImageForOcr(image),
   ]);
 
-  let fallbackText = "";
-  let fallbackLayoutId: string | null = null;
-  let best: {
+  type PowerCandidate = {
     value: number;
     text: string;
     layoutId: string;
     labeled: boolean;
-  } | null = null;
+  };
+
+  let fallbackText = "";
+  let fallbackLayoutId: string | null = null;
+  let best: PowerCandidate | null = null;
 
   const consider = (
     value: number,
@@ -179,17 +181,30 @@ export async function recognizeCombatPowers(
     layoutId: string,
     labeled: boolean,
   ) => {
+    const next: PowerCandidate = { value, text, layoutId, labeled };
+    if (!best) {
+      best = next;
+      return;
+    }
+    const cur = best;
+    if (labeled && !cur.labeled) {
+      best = next;
+      return;
+    }
     if (
-      !best ||
-      (labeled && !best.labeled) ||
-      (labeled === best.labeled &&
-        isStrongPowerHit(value) &&
-        !isStrongPowerHit(best.value)) ||
-      (labeled === best.labeled &&
-        isStrongPowerHit(value) === isStrongPowerHit(best.value) &&
-        value < best.value)
+      labeled === cur.labeled &&
+      isStrongPowerHit(value) &&
+      !isStrongPowerHit(cur.value)
     ) {
-      best = { value, text, layoutId, labeled };
+      best = next;
+      return;
+    }
+    if (
+      labeled === cur.labeled &&
+      isStrongPowerHit(value) === isStrongPowerHit(cur.value) &&
+      value < cur.value
+    ) {
+      best = next;
     }
   };
 
