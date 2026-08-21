@@ -4,19 +4,21 @@ import { createWorker, PSM, type Worker } from "tesseract.js";
 import {
   buildNameClickCrops,
   buildNameClickPreview,
-  buildPowerCropSetFromImage,
-  loadImageForOcr,
+  buildPowerClickCrops,
+  buildPowerClickPreview,
 } from "./preprocess";
-import { extractCombatPower, extractDetectedName } from "./parse";
-import { POWER_LAYOUTS } from "./regions";
+import {
+  extractClickedCombatPower,
+  extractDetectedName,
+} from "./parse";
 
 export type PowerOcrResult = {
   ok: boolean;
   combatPower: number | null;
   powerTop: number | null;
-  layoutId: string | null;
   powerTopText: string;
   text: string;
+  previewDataUrl: string;
   error?: string;
 };
 
@@ -25,19 +27,9 @@ export type NameOcrResult = {
   previewDataUrl: string;
 };
 
-let powerWorkerPromise: Promise<Worker> | null = null;
 let digitWorkerPromise: Promise<Worker> | null = null;
 let nameWorkerPromise: Promise<Worker> | null = null;
 
-/** Mixed worker — reads 「战斗力」label + digits on the mid-bottom band. */
-async function getPowerWorker() {
-  if (!powerWorkerPromise) {
-    powerWorkerPromise = createWorker("chi_sim+eng");
-  }
-  return powerWorkerPromise;
-}
-
-/** Fast digits-only fallback for the right half of the band. */
 async function getDigitWorker() {
   if (!digitWorkerPromise) {
     digitWorkerPromise = createWorker("eng");
@@ -52,38 +44,29 @@ async function getNameWorker() {
   return nameWorkerPromise;
 }
 
-/** Warm name OCR when the upload panel opens (power uses server PP-OCR). */
+/** Warm OCR packs when the upload panel opens. */
 export function prewarmLeaderboardOcr() {
+  void getDigitWorker();
   void getNameWorker();
 }
 
-function isStrongPowerHit(value: number) {
-  const digits = String(value).length;
-  return value >= 2000 && value <= 99_999 && (digits === 4 || digits === 5);
-}
-
-function hasPowerLabel(text: string) {
-  return /战斗力|总战斗力|战力/.test(text);
-}
-
-async function recognizeLabeledBand(worker: Worker, dataUrl: string) {
-  await worker.setParameters({
-    tessedit_pageseg_mode: PSM.SINGLE_LINE,
-    preserve_interword_spaces: "1",
-    tessedit_char_whitelist: "",
-  });
-  const result = await worker.recognize(dataUrl);
-  return (result.data.text || "").trim();
-}
-
 async function recognizeDigits(worker: Worker, dataUrl: string) {
-  await worker.setParameters({
-    tessedit_pageseg_mode: PSM.SINGLE_LINE,
-    tessedit_char_whitelist: "0123456789",
-    preserve_interword_spaces: "0",
-  });
-  const result = await worker.recognize(dataUrl);
-  return (result.data.text || "").trim();
+  const chunks: string[] = [];
+  for (const psm of [PSM.SINGLE_LINE, PSM.RAW_LINE, PSM.SINGLE_WORD] as const) {
+    try {
+      await worker.setParameters({
+        tessedit_pageseg_mode: psm,
+        tessedit_char_whitelist: "0123456789",
+        preserve_interword_spaces: "0",
+      });
+      const result = await worker.recognize(dataUrl);
+      const text = (result.data.text || "").trim();
+      if (text) chunks.push(text);
+    } catch {
+      // next
+    }
+  }
+  return chunks;
 }
 
 async function recognizeNameCrop(
@@ -150,144 +133,33 @@ function uniqueJoinName(chunks: string[]) {
 }
 
 /**
- * Mid-bottom 「战斗力」+ number OCR.
- * Fast path: labeled band hit → return. Else digit crop, then next layout.
+ * OCR combat power from a user click on the number.
+ * Only accepts 4–6 digit values.
  */
-export async function recognizeCombatPowers(
+export async function recognizePowerAtClick(
   image: File | Blob | string,
+  xRatio: number,
+  yRatio: number,
 ): Promise<PowerOcrResult> {
-  const [labelWorker, digitWorker, img] = await Promise.all([
-    getPowerWorker(),
+  const [worker, crops, previewDataUrl] = await Promise.all([
     getDigitWorker(),
-    loadImageForOcr(image),
+    buildPowerClickCrops(image, xRatio, yRatio),
+    buildPowerClickPreview(image, xRatio, yRatio),
   ]);
 
-  type PowerCandidate = {
-    value: number;
-    text: string;
-    layoutId: string;
-    labeled: boolean;
-  };
-
-  let fallbackText = "";
-  let fallbackLayoutId: string | null = null;
-  const state: { best: PowerCandidate | null } = { best: null };
-
-  const consider = (
-    value: number,
-    text: string,
-    layoutId: string,
-    labeled: boolean,
-  ) => {
-    const next: PowerCandidate = { value, text, layoutId, labeled };
-    const cur = state.best;
-    if (!cur) {
-      state.best = next;
-      return;
-    }
-    if (labeled && !cur.labeled) {
-      state.best = next;
-      return;
-    }
-    if (
-      labeled === cur.labeled &&
-      isStrongPowerHit(value) &&
-      !isStrongPowerHit(cur.value)
-    ) {
-      state.best = next;
-      return;
-    }
-    if (
-      labeled === cur.labeled &&
-      isStrongPowerHit(value) === isStrongPowerHit(cur.value) &&
-      value < cur.value
-    ) {
-      state.best = next;
-    }
-  };
-
-  for (const layout of POWER_LAYOUTS) {
-    const set = buildPowerCropSetFromImage(img, layout);
-    // urls: [fullRaw, fullLight, numRaw, numLight]
-    const fullUrls = set.topDataUrls.slice(0, 2);
-    const numUrls = set.topDataUrls.slice(2);
-
-    for (const url of fullUrls) {
-      let text = "";
-      try {
-        text = await recognizeLabeledBand(labelWorker, url);
-      } catch {
-        continue;
-      }
-      if (!text) continue;
-      if (!fallbackText) {
-        fallbackText = text;
-        fallbackLayoutId = set.layoutId;
-      }
-
-      const value = extractCombatPower(text);
-      if (value == null) continue;
-      const labeled = hasPowerLabel(text);
-      consider(value, text, set.layoutId, labeled);
-
-      // 「战斗力」+ 4–5 digit → done
-      if (labeled && isStrongPowerHit(value)) {
-        try {
-          await labelWorker.setParameters({
-            tessedit_pageseg_mode: PSM.AUTO,
-            tessedit_char_whitelist: "",
-          });
-        } catch {
-          // ignore
-        }
-        return {
-          ok: true,
-          combatPower: value,
-          powerTop: value,
-          layoutId: set.layoutId,
-          powerTopText: text,
-          text,
-        };
-      }
-    }
-
-    // Digit-only right half (after sword icon) — one raw then light
-    for (const url of numUrls) {
-      let text = "";
-      try {
-        text = await recognizeDigits(digitWorker, url);
-      } catch {
-        continue;
-      }
-      if (!text) continue;
-      if (!fallbackText) {
-        fallbackText = text;
-        fallbackLayoutId = set.layoutId;
-      }
-      const value = extractCombatPower(text);
-      if (value == null) continue;
-      consider(value, text, set.layoutId, false);
-      if (isStrongPowerHit(value)) {
-        // Good enough from number crop — stop this layout's light pass chain
-        break;
-      }
-    }
-
-    if (state.best && state.best.labeled && isStrongPowerHit(state.best.value)) {
-      break;
-    }
-    if (state.best && isStrongPowerHit(state.best.value)) {
-      // Unlabeled but strong mid-bottom digit — accept without more layouts
-      break;
+  const chunks: string[] = [];
+  for (const url of crops) {
+    try {
+      chunks.push(...(await recognizeDigits(worker, url)));
+      const early = extractClickedCombatPower(uniqueJoin(chunks));
+      if (early != null) break;
+    } catch {
+      // continue
     }
   }
 
   try {
-    await labelWorker.setParameters({
-      tessedit_pageseg_mode: PSM.AUTO,
-      tessedit_char_whitelist: "",
-    });
-    await digitWorker.setParameters({
+    await worker.setParameters({
       tessedit_pageseg_mode: PSM.AUTO,
       tessedit_char_whitelist: "",
     });
@@ -295,25 +167,27 @@ export async function recognizeCombatPowers(
     // ignore
   }
 
-  if (state.best) {
+  const text = uniqueJoin(chunks);
+  const combatPower = extractClickedCombatPower(text);
+  if (combatPower == null) {
     return {
-      ok: true,
-      combatPower: state.best.value,
-      powerTop: state.best.value,
-      layoutId: state.best.layoutId,
-      powerTopText: state.best.text,
-      text: state.best.text,
+      ok: false,
+      combatPower: null,
+      powerTop: null,
+      powerTopText: text,
+      text,
+      previewDataUrl,
+      error: "未识别到 4–6 位战力数字，请对准战斗力数字再点一次",
     };
   }
 
   return {
-    ok: false,
-    combatPower: null,
-    powerTop: null,
-    layoutId: fallbackLayoutId,
-    powerTopText: fallbackText,
-    text: fallbackText,
-    error: "未识别到「战斗力」后的数字，请截取角色下方战斗力完整界面",
+    ok: true,
+    combatPower,
+    powerTop: combatPower,
+    powerTopText: text,
+    text,
+    previewDataUrl,
   };
 }
 

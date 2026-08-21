@@ -32,10 +32,10 @@ export function isPlausibleNameCandidate(token: string, expected: string) {
   return true;
 }
 
-/** Soft ceiling for unlabeled OCR digits — avoids joining HUD noise into 7-digit junk. */
-const POWER_MIN = 500;
+/** Soft ceiling for OCR digits — click path only accepts 4–6 digit values. */
+const POWER_MIN = 1000;
 const POWER_MAX_LABELED = 999_999;
-const POWER_MAX_UNLABELED = 99_999;
+const POWER_MAX_UNLABELED = 999_999;
 
 export function normalizeOcrText(text: string) {
   return text
@@ -63,16 +63,14 @@ function isPlausiblePower(value: number, labeled: boolean) {
   return value <= POWER_MAX_UNLABELED;
 }
 
-/** Prefer typical 4–5 digit combat powers over OCR-concatenated 6–7 digit junk. */
+/** Prefer typical 4–6 digit combat powers over OCR-concatenated junk. */
 function scorePowerCandidate(value: number, labeled: boolean) {
   const digits = String(value).length;
   let score = labeled ? 1000 : 0;
   if (digits === 4 || digits === 5) score += 80;
-  else if (digits === 3) score += 40;
-  else if (digits === 6) score += 10;
+  else if (digits === 6) score += 50;
   else score -= 40;
-  // Prefer mid-range guild powers over tiny/huge outliers
-  if (value >= 2000 && value <= 80_000) score += 20;
+  if (value >= 2000 && value <= 200_000) score += 20;
   return score;
 }
 
@@ -88,31 +86,33 @@ function pickBestPower(values: number[], labeled: boolean): number | null {
 }
 
 /**
- * Prefer the number immediately after 「战斗力」/「总战斗力」.
- * Unlabeled fallback picks the most plausible 4–5 digit value — never Math.max
- * of every OCR digit run (that caused 1万+ → 几十万/几百万).
+ * Prefer labeled 能力值/战斗力 when present.
+ * Clicked-power path should use extractClickedCombatPower (4–6 digits only).
  */
 export function extractCombatPower(text: string): number | null {
+  return extractClickedCombatPower(text);
+}
+
+/** Combat power from a user click: only accept 4–6 digit values. */
+export function extractClickedCombatPower(text: string): number | null {
   const normalized = normalizeOcrText(text);
 
   const patterns = [
-    // Allow sword-icon / junk between 战斗力 and digits
-    /战斗力\D{0,20}([0-9]{3,6})/,
-    /战力\D{0,12}([0-9]{3,6})/,
-    /能力值\D{0,12}([0-9]{3,6})/,
+    /战斗力\D{0,20}([0-9]{4,6})/,
+    /战力\D{0,12}([0-9]{4,6})/,
+    /能力值\D{0,12}([0-9]{4,6})/,
   ];
 
   for (const pattern of patterns) {
     const match = normalized.match(pattern);
     if (match) {
       const value = Number(match[1]);
-      if (isPlausiblePower(value, true)) return value;
+      if (value >= 1000 && value <= 999_999) return value;
     }
   }
 
   const labeledLineNums: number[] = [];
-  const lines = normalized.split(/\r?\n/);
-  for (const line of lines) {
+  for (const line of normalized.split(/\r?\n/)) {
     if (
       !line.includes("战斗力") &&
       !line.includes("战力") &&
@@ -120,20 +120,30 @@ export function extractCombatPower(text: string): number | null {
     ) {
       continue;
     }
-    // Prefer the first number after the label on that line
     const after = line.split(/战斗力|能力值|战力/)[1] ?? line;
-    for (const m of after.matchAll(/([0-9]{3,6})/g)) {
-      labeledLineNums.push(Number(m[1]));
-      break;
-    }
+    const m = after.match(/([0-9]{4,6})/);
+    if (m) labeledLineNums.push(Number(m[1]));
   }
-  const labeledPick = pickBestPower(labeledLineNums, true);
+  const labeledPick = pickBestPower(
+    labeledLineNums.filter((n) => n >= 1000 && n <= 999_999),
+    true,
+  );
   if (labeledPick != null) return labeledPick;
 
-  const all = [...normalized.matchAll(/([0-9]{3,6})/g)].map((m) =>
-    Number(m[1]),
-  );
+  const all = [...normalized.matchAll(/([0-9]{4,6})/g)]
+    .map((m) => Number(m[1]))
+    .filter((n) => n >= 1000 && n <= 999_999);
   return pickBestPower(all, false);
+}
+
+function isFourToSixDigitPower(value: number) {
+  return (
+    Number.isFinite(value) &&
+    value >= 1000 &&
+    value <= 999_999 &&
+    String(Math.trunc(value)).length >= 4 &&
+    String(Math.trunc(value)).length <= 6
+  );
 }
 
 function tokenize(text: string) {
@@ -286,9 +296,13 @@ export function parseCombatPowerScreenshot(
   error?: string;
 } {
   const nameText = input.nameText ?? "";
-  const powerTop =
+  const powerTopRaw =
     input.powerTop ??
-    (input.powerTopText ? extractCombatPower(input.powerTopText) : null);
+    (input.powerTopText ? extractClickedCombatPower(input.powerTopText) : null);
+  const powerTop =
+    powerTopRaw != null && isFourToSixDigitPower(powerTopRaw)
+      ? powerTopRaw
+      : null;
 
   const nameResult = extractDetectedName(nameText, expectedName);
 
@@ -320,7 +334,7 @@ export function parseCombatPowerScreenshot(
       combatPower: null,
       powerTop,
       detectedName: nameResult.detectedName,
-      error: "未识别到「战斗力」后的数字，请截取角色下方战斗力完整界面",
+      error: "请先点击战斗力数字完成识别（仅接受 4–6 位）",
     };
   }
 

@@ -6,14 +6,10 @@
 import {
   NAME_CLICK_CROP,
   NAME_CLICK_CROP_WIDE,
-  POWER_LAYOUTS,
+  POWER_CLICK_CROP,
+  POWER_CLICK_CROP_WIDE,
   type RatioRect,
 } from "./regions";
-
-export type PowerCropSet = {
-  layoutId: string;
-  topDataUrls: string[];
-};
 
 const MAX_OCR_EDGE = 1600;
 
@@ -413,59 +409,50 @@ function variantsFromBounds(
   return urls;
 }
 
-/** Right half of the 战斗力 strip — usually just the digits after the sword icon. */
-function numberOnlyRect(full: RatioRect): RatioRect {
+export function powerRectAroundClick(
+  xRatio: number,
+  yRatio: number,
+  size: { w: number; h: number } = POWER_CLICK_CROP,
+): RatioRect {
   return {
-    x: full.x + full.w * 0.4,
-    y: full.y,
-    w: full.w * 0.6,
-    h: full.h,
+    x: clamp01(xRatio - size.w / 2),
+    y: clamp01(yRatio - size.h / 2),
+    w: size.w,
+    h: size.h,
   };
 }
 
-/** Build mid-bottom 战斗力 crops for a single layout (lazy / early-exit). */
-export function buildPowerCropSetFromImage(
-  img: HTMLImageElement,
-  layout: (typeof POWER_LAYOUTS)[number],
-): PowerCropSet {
-  const fullRaw = cropRatio(img, layout.top, 2.8);
-  const fullLight = cropRatio(img, layout.top, 2.8);
-  enhanceLightText(fullLight);
-
-  const numRect = numberOnlyRect(layout.top);
-  const numRaw = cropRatio(img, numRect, 3.0);
-  const numLight = cropRatio(img, numRect, 3.0);
-  enhanceLightText(numLight);
-
-  return {
-    layoutId: layout.id,
-    // Full band first (can read 战斗力 label), then digit-only right side
-    topDataUrls: [
-      toDataUrl(padCanvas(fullRaw, 10)),
-      toDataUrl(padCanvas(fullLight, 10)),
-      toDataUrl(padCanvas(numRaw, 10)),
-      toDataUrl(padCanvas(numLight, 10)),
-    ],
-  };
-}
-
-export async function buildPowerCropSet(
-  source: File | Blob | string | HTMLImageElement,
-  layout: (typeof POWER_LAYOUTS)[number],
-): Promise<PowerCropSet> {
-  const img =
-    source instanceof HTMLImageElement
-      ? source
-      : await loadImageForOcr(source);
-  return buildPowerCropSetFromImage(img, layout);
-}
-
-/** Build power crop variants for every layout template. */
-export async function buildPowerCropSets(
+/** Crops around the combat-power digits the user clicked. */
+export async function buildPowerClickCrops(
   source: File | Blob | string,
-): Promise<PowerCropSet[]> {
+  xRatio: number,
+  yRatio: number,
+): Promise<string[]> {
   const img = await loadImageForOcr(source);
-  return POWER_LAYOUTS.map((layout) => buildPowerCropSetFromImage(img, layout));
+  const probes = [
+    powerRectAroundClick(xRatio, yRatio, POWER_CLICK_CROP),
+    powerRectAroundClick(xRatio, yRatio, POWER_CLICK_CROP_WIDE),
+  ];
+  const urls: string[] = [];
+  for (const probe of probes) {
+    const raw = cropRatio(img, probe, 3.2);
+    const light = cropRatio(img, probe, 3.2);
+    enhanceLightText(light);
+    urls.push(toDataUrl(padCanvas(raw, 12)));
+    urls.push(toDataUrl(padCanvas(light, 12)));
+  }
+  return urls;
+}
+
+export async function buildPowerClickPreview(
+  source: File | Blob | string,
+  xRatio: number,
+  yRatio: number,
+): Promise<string> {
+  const img = await loadImageForOcr(source);
+  const rect = powerRectAroundClick(xRatio, yRatio, POWER_CLICK_CROP);
+  const canvas = cropRatio(img, rect, 2.8);
+  return toDataUrl(padCanvas(canvas, 8));
 }
 
 /**
