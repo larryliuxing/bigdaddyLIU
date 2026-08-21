@@ -16,17 +16,17 @@
   <rect x="360" y="600" width="560" height="40" rx="8" fill="#101624" stroke="#2a3348"/>
   <rect x="990" y="150" width="190" height="300" rx="10" fill="#101624" stroke="#2a3348"/>
 
-  <!-- top-left CP -->
-  <rect x="90" y="150" width="240" height="64" fill="rgba(251,191,36,0.14)" stroke="#fbbf24" stroke-width="3" stroke-dasharray="7 5" rx="8"/>
-  <text x="108" y="178" fill="#fcd34d" font-size="18" font-family="sans-serif" font-weight="700">② 左上战力</text>
-  <text x="108" y="200" fill="#fde68a" font-size="15" font-family="sans-serif">服务端 PP-OCR 自动识别</text>
+  <!-- power click -->
+  <rect x="470" y="505" width="340" height="64" fill="rgba(251,191,36,0.14)" stroke="#fbbf24" stroke-width="3" stroke-dasharray="7 5" rx="8"/>
+  <text x="490" y="533" fill="#fcd34d" font-size="18" font-family="sans-serif" font-weight="700">① 点击战斗力数字</text>
+  <text x="490" y="555" fill="#fde68a" font-size="15" font-family="sans-serif">仅识别 4–6 位数字</text>
 
   <!-- blue name -->
   <rect x="520" y="155" width="240" height="58" fill="rgba(56,189,248,0.14)" stroke="#38bdf8" stroke-width="3" stroke-dasharray="7 5" rx="8"/>
-  <text x="540" y="180" fill="#7dd3fc" font-size="18" font-family="sans-serif" font-weight="700">① 蓝色角色名</text>
-  <text x="540" y="202" fill="#a5f3fc" font-size="14" font-family="sans-serif">头顶位置 · 点击此处</text>
+  <text x="540" y="180" fill="#7dd3fc" font-size="18" font-family="sans-serif" font-weight="700">② 点击蓝色角色名</text>
+  <text x="540" y="202" fill="#a5f3fc" font-size="14" font-family="sans-serif">头顶位置 · 点在字上</text>
   <line x1="640" y1="213" x2="640" y2="245" stroke="#38bdf8" stroke-width="2"/>
 
   <text x="60" y="48" fill="#e5e7eb" font-size="24" font-family="sans-serif" font-weight="700">截图识别结构示意</text>
-  <text x="340" y="48" fill="#9aa3b5" font-size="15" font-family="sans-serif">①蓝色名字（点击）　②左上战力（服务器 PP-OCR）</text>
+  <text x="340" y="48" fill="#9aa3b5" font-size="15" font-family="sans-serif">①先点战斗力数字　②再点蓝色名字</text>
 </svg>

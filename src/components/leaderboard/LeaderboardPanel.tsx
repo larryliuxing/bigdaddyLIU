@@ -11,6 +11,7 @@ import { extractDetectedName } from "@/lib/leaderboard/parse";
 import {
   prewarmLeaderboardOcr,
   recognizeNameAtClick,
+  recognizePowerAtClick,
 } from "@/lib/leaderboard/recognize";
 
 function formatPower(n: number) {
@@ -87,17 +88,22 @@ export function LeaderboardPanel({
   const [clickMark, setClickMark] = useState<{ x: number; y: number } | null>(
     null,
   );
+  const [powerMark, setPowerMark] = useState<{ x: number; y: number } | null>(
+    null,
+  );
+  const [clickStep, setClickStep] = useState<"power" | "name">("power");
   const [powerTop, setPowerTop] = useState<number | null>(null);
   const [combatPower, setCombatPower] = useState<number | null>(null);
   const [ocrPowerTopText, setOcrPowerTopText] = useState("");
   const [ocrText, setOcrText] = useState("");
+  const [powerPreview, setPowerPreview] = useState<string | null>(null);
   const [previewNameOk, setPreviewNameOk] = useState<boolean | null>(null);
   const [powersOk, setPowersOk] = useState<boolean | null>(null);
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
-  const [recognizingName, setRecognizingName] = useState(false);
+  const [recognizing, setRecognizing] = useState(false);
   const [viewer, setViewer] = useState<{
     name: string;
     power: number;
@@ -135,70 +141,81 @@ export function LeaderboardPanel({
     setPreviewNameOk(null);
   }
 
-  async function handleImage(file: File) {
-    setError("");
-    setMessage("");
-    setStatus("正在识别战力数字…");
+  function resetPowerState() {
     setPowerTop(null);
     setCombatPower(null);
     setPowersOk(null);
-    resetNameState();
     setOcrPowerTopText("");
     setOcrText("");
+    setPowerPreview(null);
+    setPowerMark(null);
+    setClickStep("power");
+  }
+
+  async function handleImage(file: File) {
+    setError("");
+    setMessage("");
+    resetPowerState();
+    resetNameState();
 
     const reader = new FileReader();
-    reader.onload = async () => {
+    reader.onload = () => {
       const dataUrl = String(reader.result || "");
       setImageData(dataUrl);
       setImageSource(file);
-      try {
-        const res = await fetch("/api/leaderboard/ocr-power", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ imageData: dataUrl }),
-        });
-        const powers = await res.json();
-        const ok = Boolean(res.ok && powers.ok && powers.combatPower != null);
-        setPowerTop(ok ? powers.powerTop : null);
-        setCombatPower(ok ? powers.combatPower : null);
-        setPowersOk(ok);
-        setOcrPowerTopText(String(powers.powerTopText || ""));
-        setOcrText(String(powers.text || powers.powerTopText || ""));
-
-        if (!ok) {
-          setStatus(
-            `${powers.error || "未识别到左上角战力"}。请更换截图后重试。`,
-          );
-        } else if (!member) {
-          setStatus(
-            `战力已识别：${powers.combatPower}。请登录成员身份后点击蓝色角色名。`,
-          );
-        } else {
-          setStatus(
-            `战力已识别：${powers.combatPower}。请点击截图中的蓝色角色名「${member.name}」。`,
-          );
-        }
-      } catch {
-        setStatus("战力识别失败，请重试或更换截图");
-        setPowersOk(false);
-      }
+      setStatus("请点击截图中的「战斗力」数字（4–6 位）");
     };
     reader.readAsDataURL(file);
   }
 
   async function onImageClick(e: React.MouseEvent<HTMLImageElement>) {
-    if (!member || !imageSource || !imageData) return;
+    if (!member || !imageSource || !imageData || recognizing) return;
     const ratio = clickToImageRatio(e);
     if (!ratio) {
       setStatus("请点在截图画面内");
       return;
     }
 
-    setRecognizingName(true);
+    setRecognizing(true);
     setError("");
-    setClickMark(ratio);
-    setStatus("正在识别你点击的蓝色名字…");
+
     try {
+      if (clickStep === "power" || !powersOk) {
+        setPowerMark(ratio);
+        setStatus("正在识别你点击的战斗力数字…");
+        const powerOcr = await recognizePowerAtClick(
+          imageSource,
+          ratio.x,
+          ratio.y,
+        );
+        setPowerPreview(powerOcr.previewDataUrl);
+        setOcrPowerTopText(powerOcr.powerTopText);
+        setOcrText(powerOcr.text);
+
+        if (!powerOcr.ok || powerOcr.combatPower == null) {
+          setPowersOk(false);
+          setPowerTop(null);
+          setCombatPower(null);
+          setStatus(
+            powerOcr.error ||
+              "未识别到 4–6 位战力，请对准战斗力数字再点一次",
+          );
+          return;
+        }
+
+        setPowersOk(true);
+        setPowerTop(powerOcr.combatPower);
+        setCombatPower(powerOcr.combatPower);
+        setClickStep("name");
+        resetNameState();
+        setStatus(
+          `战力已识别：${powerOcr.combatPower}。请再点击蓝色角色名「${member.name}」`,
+        );
+        return;
+      }
+
+      setClickMark(ratio);
+      setStatus("正在识别你点击的蓝色名字…");
       const nameOcr = await recognizeNameAtClick(
         imageSource,
         ratio.x,
@@ -226,15 +243,19 @@ export function LeaderboardPanel({
           `校验通过：${member.name} · 战力 ${powerTop}，可以提交上榜`,
         );
       } else {
-        setStatus(
-          `名字已确认是「${member.name}」，但左上角战力未识别（${powerTop ?? "-"}），请更换截图`,
-        );
+        setClickStep("power");
+        setStatus("名字已确认，但战力未识别，请先点击战斗力数字");
       }
     } catch {
-      setStatus("名字识别失败，请再对准蓝色字点击一次");
-      setPreviewNameOk(false);
+      setStatus(
+        clickStep === "power"
+          ? "战力识别失败，请再对准数字点击一次"
+          : "名字识别失败，请再对准蓝色字点击一次",
+      );
+      if (clickStep === "power") setPowersOk(false);
+      else setPreviewNameOk(false);
     } finally {
-      setRecognizingName(false);
+      setRecognizing(false);
     }
   }
 
@@ -269,7 +290,7 @@ export function LeaderboardPanel({
       return;
     }
     if (!canSubmit) {
-      setError("请先完成战力识别，并点击蓝色角色名通过校验");
+      setError("请先点选战斗力数字，再点选蓝色角色名通过校验");
       return;
     }
     setBusy(true);
@@ -448,11 +469,13 @@ export function LeaderboardPanel({
               上传本人战力截图
             </h2>
             <ol className="mt-2 list-decimal space-y-1 pl-5 text-xs leading-5 text-[var(--text-muted)]">
-              <li>上传完整游戏界面（服务端识别左上角战力）</li>
+              <li>上传完整游戏界面截图</li>
               <li>
-                在预览图上对准蓝色角色名「{member.name}」点击（尽量点在字上，不要点旁边图标）
+                先点击「战斗力」数字位置识别战力（仅接受 4–6 位）
               </li>
-              <li>确认「名字截取预览」里主要是名字本身后，再提交上榜</li>
+              <li>
+                再点击蓝色角色名「{member.name}」完成校验后提交
+              </li>
             </ol>
 
             <details className="mt-3 rounded-xl border border-[var(--border-soft)] bg-[#0f1320] p-3">
@@ -481,12 +504,34 @@ export function LeaderboardPanel({
                   <img
                     ref={shotRef}
                     src={imageData}
-                    alt="战力截图，点击蓝色角色名"
+                    alt="战力截图，先点战斗力数字再点蓝色名字"
                     className={`max-h-64 max-w-full rounded-lg object-contain ${
-                      recognizingName ? "opacity-70" : "cursor-crosshair"
+                      recognizing ? "opacity-70" : "cursor-crosshair"
                     }`}
                     onClick={onImageClick}
                   />
+                  {powerMark && shotRef.current && (
+                    <span
+                      className="pointer-events-none absolute h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-[#fbbf24] bg-[rgba(251,191,36,0.35)]"
+                      style={(() => {
+                        const img = shotRef.current!;
+                        const nw = img.naturalWidth || 1;
+                        const nh = img.naturalHeight || 1;
+                        const scale = Math.min(
+                          img.clientWidth / nw,
+                          img.clientHeight / nh,
+                        );
+                        const dispW = nw * scale;
+                        const dispH = nh * scale;
+                        const ox = (img.clientWidth - dispW) / 2;
+                        const oy = (img.clientHeight - dispH) / 2;
+                        return {
+                          left: ox + powerMark.x * dispW,
+                          top: oy + powerMark.y * dispH,
+                        };
+                      })()}
+                    />
+                  )}
                   {clickMark && shotRef.current && (
                     <span
                       className="pointer-events-none absolute h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-[#5eead4] bg-[rgba(94,234,212,0.35)]"
@@ -517,15 +562,30 @@ export function LeaderboardPanel({
               )}
             </div>
 
-            {namePreview && (
-              <div className="mt-3 flex items-center gap-3 text-xs text-[var(--text-muted)]">
-                <span>名字截取预览：</span>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={namePreview}
-                  alt="名字区域预览"
-                  className="h-10 rounded border border-[var(--border-soft)] bg-black object-contain"
-                />
+            {(powerPreview || namePreview) && (
+              <div className="mt-3 flex flex-wrap items-center gap-4 text-xs text-[var(--text-muted)]">
+                {powerPreview && (
+                  <div className="flex items-center gap-2">
+                    <span>战力截取预览：</span>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={powerPreview}
+                      alt="战力区域预览"
+                      className="h-10 rounded border border-[var(--border-soft)] bg-black object-contain"
+                    />
+                  </div>
+                )}
+                {namePreview && (
+                  <div className="flex items-center gap-2">
+                    <span>名字截取预览：</span>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={namePreview}
+                      alt="名字区域预览"
+                      className="h-10 rounded border border-[var(--border-soft)] bg-black object-contain"
+                    />
+                  </div>
+                )}
               </div>
             )}
 
@@ -539,6 +599,20 @@ export function LeaderboardPanel({
                   onChange={onFileChange}
                 />
               </label>
+              {imageData && (
+                <button
+                  type="button"
+                  className="btn-ghost text-sm"
+                  disabled={recognizing}
+                  onClick={() => {
+                    resetPowerState();
+                    resetNameState();
+                    setStatus("请重新点击「战斗力」数字（4–6 位）");
+                  }}
+                >
+                  重选战力
+                </button>
+              )}
               <button
                 type="button"
                 className="rounded-xl bg-[#e8a84a] px-4 py-2 text-sm font-semibold text-[#2a1c05] disabled:opacity-50"
@@ -571,7 +645,7 @@ export function LeaderboardPanel({
                   战力识别：
                   {powersOk
                     ? `已识别（${combatPower}）`
-                    : `未识别（左上 ${powerTop ?? "-"}）`}
+                    : `未识别（${powerTop ?? "-"}）`}
                 </span>
               )}
               {previewNameOk != null && (

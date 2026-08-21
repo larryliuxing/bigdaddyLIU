@@ -1,6 +1,6 @@
 /**
- * Mid-lower 「战斗力」+ number band (under the character).
- * Name uses a small click probe, then auto-trims to blue glyphs.
+ * Click-probe sizes for leaderboard OCR.
+ * Power and name are both user-clicked; no fixed HUD layout auto-scan.
  */
 
 export type RatioRect = {
@@ -10,37 +10,19 @@ export type RatioRect = {
   h: number;
 };
 
-export type PowerLayout = {
-  id: string;
-  label: string;
-  /** Full 「战斗力 … 数字」strip */
-  top: RatioRect;
-};
+/** Crop around the combat-power number the user clicks. */
+export const POWER_CLICK_CROP = {
+  w: 0.2,
+  h: 0.065,
+} as const;
+
+export const POWER_CLICK_CROP_WIDE = {
+  w: 0.28,
+  h: 0.09,
+} as const;
 
 /**
- * Center-bottom combat-power line under the character model.
- * Avoid the left 能力值 panel and top HUD so we don't pick junk digits.
- */
-export const POWER_LAYOUTS: PowerLayout[] = [
-  {
-    id: "mid-main",
-    label: "角色下方战斗力",
-    top: { x: 0.28, y: 0.55, w: 0.44, h: 0.12 },
-  },
-  {
-    id: "mid-tight",
-    label: "战斗力紧凑",
-    top: { x: 0.32, y: 0.58, w: 0.36, h: 0.09 },
-  },
-  {
-    id: "mid-low",
-    label: "战斗力偏下",
-    top: { x: 0.26, y: 0.6, w: 0.48, h: 0.12 },
-  },
-];
-
-/**
- * Initial probe around click — intentionally modest so we don't pull in
+ * Initial probe around name click — intentionally modest so we don't pull in
  * nearby +N badges / portraits / skill icons. Auto-trim expands/shrinks
  * to the blue name glyphs afterward.
  */
