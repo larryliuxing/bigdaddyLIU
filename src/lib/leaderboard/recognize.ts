@@ -52,10 +52,8 @@ async function getNameWorker() {
   return nameWorkerPromise;
 }
 
-/** Warm WASM + language packs when the upload panel opens. */
+/** Warm name OCR when the upload panel opens (power uses server PP-OCR). */
 export function prewarmLeaderboardOcr() {
-  void getPowerWorker();
-  void getDigitWorker();
   void getNameWorker();
 }
 

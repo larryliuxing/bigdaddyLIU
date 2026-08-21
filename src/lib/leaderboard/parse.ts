@@ -51,7 +51,9 @@ export function normalizeOcrText(text: string) {
     .replace(/[Ｂ]/g, "8")
     .replace(/[０-９]/g, (ch) =>
       String.fromCharCode(ch.charCodeAt(0) - 0xff10 + 0x30),
-    );
+    )
+    // OCR sometimes prefixes HUD zeros: 0013293 → 13293
+    .replace(/\b0+(\d{4,6})\b/g, "$1");
 }
 
 function isPlausiblePower(value: number, labeled: boolean) {
