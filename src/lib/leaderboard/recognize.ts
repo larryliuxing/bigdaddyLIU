@@ -4,9 +4,11 @@ import { createWorker, PSM, type Worker } from "tesseract.js";
 import {
   buildNameClickCrops,
   buildNameClickPreview,
-  buildPowerCropSets,
+  buildPowerCropSetFromImage,
+  loadImageForOcr,
 } from "./preprocess";
-import { extractCombatPower } from "./parse";
+import { extractCombatPower, extractDetectedName } from "./parse";
+import { POWER_LAYOUTS } from "./regions";
 
 export type PowerOcrResult = {
   ok: boolean;
@@ -23,14 +25,15 @@ export type NameOcrResult = {
   previewDataUrl: string;
 };
 
-let mixedWorkerPromise: Promise<Worker> | null = null;
+let powerWorkerPromise: Promise<Worker> | null = null;
 let nameWorkerPromise: Promise<Worker> | null = null;
 
-async function getMixedWorker() {
-  if (!mixedWorkerPromise) {
-    mixedWorkerPromise = createWorker("chi_sim+eng");
+/** Digits-only eng worker — much faster than chi_sim+eng for HUD numbers. */
+async function getPowerWorker() {
+  if (!powerWorkerPromise) {
+    powerWorkerPromise = createWorker("eng");
   }
-  return mixedWorkerPromise;
+  return powerWorkerPromise;
 }
 
 async function getNameWorker() {
@@ -40,49 +43,51 @@ async function getNameWorker() {
   return nameWorkerPromise;
 }
 
-async function recognizePowerCrop(worker: Worker, dataUrl: string) {
-  const chunks: string[] = [];
-  const passes: Array<{ psm: typeof PSM[keyof typeof PSM]; whitelist: string }> =
-    [
-      { psm: PSM.SINGLE_LINE, whitelist: "0123456789战斗力能力值:： " },
-      { psm: PSM.SINGLE_LINE, whitelist: "0123456789" },
-      { psm: PSM.RAW_LINE, whitelist: "0123456789战斗力能力值:： " },
-      { psm: PSM.SINGLE_BLOCK, whitelist: "" },
-    ];
-
-  for (const pass of passes) {
-    try {
-      await worker.setParameters({
-        tessedit_pageseg_mode: pass.psm,
-        preserve_interword_spaces: "1",
-        tessedit_char_whitelist: pass.whitelist,
-      });
-      const result = await worker.recognize(dataUrl);
-      const text = (result.data.text || "").trim();
-      if (text) chunks.push(text);
-    } catch {
-      // next
-    }
-  }
-  return chunks;
+/** Warm WASM + language packs when the upload panel opens. */
+export function prewarmLeaderboardOcr() {
+  void getPowerWorker();
+  void getNameWorker();
 }
 
-async function recognizeNameCrop(worker: Worker, dataUrl: string) {
+function isStrongPowerHit(value: number) {
+  const digits = String(value).length;
+  return value >= 2000 && value <= 99_999 && (digits === 4 || digits === 5);
+}
+
+/** One fast digit pass; returns text or "". */
+async function recognizeDigits(worker: Worker, dataUrl: string) {
+  await worker.setParameters({
+    tessedit_pageseg_mode: PSM.SINGLE_LINE,
+    tessedit_char_whitelist: "0123456789",
+    preserve_interword_spaces: "0",
+  });
+  const result = await worker.recognize(dataUrl);
+  return (result.data.text || "").trim();
+}
+
+async function recognizeNameCrop(
+  worker: Worker,
+  dataUrl: string,
+  expectedName?: string,
+) {
   const chunks: string[] = [];
-  for (const psm of [
-    PSM.SINGLE_LINE,
-    PSM.RAW_LINE,
-    PSM.SINGLE_WORD,
-    PSM.SPARSE_TEXT,
-  ] as const) {
+  for (const psm of [PSM.SINGLE_LINE, PSM.SINGLE_WORD, PSM.RAW_LINE] as const) {
     try {
       await worker.setParameters({
         tessedit_pageseg_mode: psm,
         preserve_interword_spaces: "1",
+        tessedit_char_whitelist: "",
       });
       const result = await worker.recognize(dataUrl);
       const text = (result.data.text || "").trim();
       if (text) chunks.push(text);
+      if (
+        expectedName &&
+        chunks.length &&
+        extractDetectedName(uniqueJoinName(chunks), expectedName).matched
+      ) {
+        break;
+      }
     } catch {
       // next
     }
@@ -102,7 +107,6 @@ function uniqueJoin(chunks: string[]) {
   return merged.join("\n");
 }
 
-/** Prefer CJK-heavy OCR lines for name matching (drop digit/+ noise). */
 function uniqueJoinName(chunks: string[]) {
   const cleaned = chunks
     .map((c) =>
@@ -115,7 +119,6 @@ function uniqueJoinName(chunks: string[]) {
     )
     .filter(Boolean);
 
-  // Put lines with more CJK first so parse sees the name sooner
   cleaned.sort((a, b) => {
     const ca = (a.match(/[\u4e00-\u9fff]/g) || []).length;
     const cb = (b.match(/[\u4e00-\u9fff]/g) || []).length;
@@ -126,57 +129,78 @@ function uniqueJoinName(chunks: string[]) {
 }
 
 /**
- * Auto-detect combat power from the top-left HUD / panel region.
- * Collects candidates across layouts and picks the most plausible value
- * (avoids accepting the first OCR digit-soup hit).
+ * Top-left combat power OCR — fast path:
+ * eng digits, raw crop first, stop on first strong 4–5 digit hit.
  */
 export async function recognizeCombatPowers(
   image: File | Blob | string,
 ): Promise<PowerOcrResult> {
-  const worker = await getMixedWorker();
-  const sets = await buildPowerCropSets(image);
+  const [worker, img] = await Promise.all([
+    getPowerWorker(),
+    loadImageForOcr(image),
+  ]);
 
-  type Candidate = {
+  let fallbackText = "";
+  let fallbackLayoutId: string | null = null;
+  let best: {
     value: number;
     text: string;
     layoutId: string;
-    labeled: boolean;
-  };
-  const candidates: Candidate[] = [];
-  let fallbackTopText = "";
-  let fallbackLayoutId: string | null = null;
+  } | null = null;
 
-  for (const set of sets) {
-    const topChunks: string[] = [];
+  for (const layout of POWER_LAYOUTS) {
+    const set = buildPowerCropSetFromImage(img, layout);
 
     for (const url of set.topDataUrls) {
+      let text = "";
       try {
-        topChunks.push(...(await recognizePowerCrop(worker, url)));
+        text = await recognizeDigits(worker, url);
       } catch {
-        // continue
+        continue;
+      }
+      if (!text) continue;
+
+      if (!fallbackText) {
+        fallbackText = text;
+        fallbackLayoutId = set.layoutId;
+      }
+
+      const value = extractCombatPower(text);
+      if (value == null) continue;
+
+      if (
+        !best ||
+        (isStrongPowerHit(value) && !isStrongPowerHit(best.value)) ||
+        (isStrongPowerHit(value) &&
+          isStrongPowerHit(best.value) &&
+          value < best.value)
+      ) {
+        best = { value, text, layoutId: set.layoutId };
+      }
+
+      // Raw crop + strong 4–5 digit → done (skip light + other layouts)
+      if (isStrongPowerHit(value) && url === set.topDataUrls[0]) {
+        try {
+          await worker.setParameters({
+            tessedit_pageseg_mode: PSM.AUTO,
+            tessedit_char_whitelist: "",
+          });
+        } catch {
+          // ignore
+        }
+        return {
+          ok: true,
+          combatPower: value,
+          powerTop: value,
+          layoutId: set.layoutId,
+          powerTopText: text,
+          text,
+        };
       }
     }
 
-    const powerTopText = uniqueJoin(topChunks);
-    if (powerTopText && fallbackTopText === "") {
-      fallbackTopText = powerTopText;
-      fallbackLayoutId = set.layoutId;
-    }
-
-    const powerTop = extractCombatPower(powerTopText);
-    if (powerTop != null) {
-      const labeled = /战斗力|能力值|战力/.test(powerTopText);
-      candidates.push({
-        value: powerTop,
-        text: powerTopText,
-        layoutId: set.layoutId,
-        labeled,
-      });
-      // Strong labeled 4–5 digit hit: stop early
-      const digits = String(powerTop).length;
-      if (labeled && (digits === 4 || digits === 5) && powerTop <= 99_999) {
-        break;
-      }
+    if (best && isStrongPowerHit(best.value)) {
+      break;
     }
   }
 
@@ -189,19 +213,7 @@ export async function recognizeCombatPowers(
     // ignore
   }
 
-  if (candidates.length) {
-    candidates.sort((a, b) => {
-      const score = (c: Candidate) => {
-        const digits = String(c.value).length;
-        let s = c.labeled ? 100 : 0;
-        if (digits === 4 || digits === 5) s += 50;
-        if (c.value >= 2000 && c.value <= 80_000) s += 20;
-        if (c.value > 99_999) s -= 80;
-        return s;
-      };
-      return score(b) - score(a) || a.value - b.value;
-    });
-    const best = candidates[0];
+  if (best) {
     return {
       ok: true,
       combatPower: best.value,
@@ -217,8 +229,8 @@ export async function recognizeCombatPowers(
     combatPower: null,
     powerTop: null,
     layoutId: fallbackLayoutId,
-    powerTopText: fallbackTopText,
-    text: fallbackTopText,
+    powerTopText: fallbackText,
+    text: fallbackText,
     error: "未识别到左上角战力数字，请截取包含左上战力的界面",
   };
 }
@@ -230,6 +242,7 @@ export async function recognizeNameAtClick(
   image: File | Blob | string,
   xRatio: number,
   yRatio: number,
+  expectedName?: string,
 ): Promise<NameOcrResult> {
   const [worker, crops, previewDataUrl] = await Promise.all([
     getNameWorker(),
@@ -240,14 +253,24 @@ export async function recognizeNameAtClick(
   const chunks: string[] = [];
   for (const url of crops) {
     try {
-      chunks.push(...(await recognizeNameCrop(worker, url)));
+      chunks.push(...(await recognizeNameCrop(worker, url, expectedName)));
+      if (
+        expectedName &&
+        chunks.length &&
+        extractDetectedName(uniqueJoinName(chunks), expectedName).matched
+      ) {
+        break;
+      }
     } catch {
       // continue
     }
   }
 
   try {
-    await worker.setParameters({ tessedit_pageseg_mode: PSM.AUTO });
+    await worker.setParameters({
+      tessedit_pageseg_mode: PSM.AUTO,
+      tessedit_char_whitelist: "",
+    });
   } catch {
     // ignore
   }

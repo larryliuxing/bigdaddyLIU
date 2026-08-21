@@ -16,10 +16,7 @@ export type PowerLayout = {
   top: RatioRect;
 };
 
-/**
- * Tight strips over the top-left 战斗力 HUD.
- * Keep short + high so we don't pull in blue names / other UI digits.
- */
+/** Few tight top-left strips — keep count low for OCR speed. */
 export const POWER_LAYOUTS: PowerLayout[] = [
   {
     id: "hud-bar",
@@ -32,19 +29,9 @@ export const POWER_LAYOUTS: PowerLayout[] = [
     top: { x: 0.0, y: 0.005, w: 0.26, h: 0.055 },
   },
   {
-    id: "hud-icon-num",
-    label: "图标+数字",
-    top: { x: 0.02, y: 0.01, w: 0.22, h: 0.06 },
-  },
-  {
     id: "char-panel",
     label: "角色面板",
-    top: { x: 0.01, y: 0.03, w: 0.2, h: 0.08 },
-  },
-  {
-    id: "wide",
-    label: "宽松兜底",
-    top: { x: 0.0, y: 0.0, w: 0.38, h: 0.1 },
+    top: { x: 0.01, y: 0.03, w: 0.22, h: 0.08 },
   },
 ];
 

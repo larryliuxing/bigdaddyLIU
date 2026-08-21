@@ -15,6 +15,8 @@ export type PowerCropSet = {
   topDataUrls: string[];
 };
 
+const MAX_OCR_EDGE = 1600;
+
 function loadImageElement(source: File | Blob | string): Promise<HTMLImageElement> {
   const url =
     typeof source === "string" ? source : URL.createObjectURL(source);
@@ -32,6 +34,32 @@ function loadImageElement(source: File | Blob | string): Promise<HTMLImageElemen
       reject(new Error("图片加载失败"));
     };
     img.src = url;
+  });
+}
+
+/** Downscale huge screenshots so OCR crops stay fast. */
+export async function loadImageForOcr(
+  source: File | Blob | string,
+): Promise<HTMLImageElement> {
+  const img = await loadImageElement(source);
+  const maxEdge = Math.max(img.width, img.height);
+  if (maxEdge <= MAX_OCR_EDGE) return img;
+
+  const scale = MAX_OCR_EDGE / maxEdge;
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(img.width * scale));
+  canvas.height = Math.max(1, Math.round(img.height * scale));
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return img;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+  return new Promise((resolve, reject) => {
+    const out = new Image();
+    out.onload = () => resolve(out);
+    out.onerror = () => reject(new Error("图片缩放失败"));
+    out.src = canvas.toDataURL("image/jpeg", 0.92);
   });
 }
 
@@ -385,27 +413,38 @@ function variantsFromBounds(
   return urls;
 }
 
+/** Build 1–2 top-left crops for a single layout (lazy / early-exit friendly). */
+export function buildPowerCropSetFromImage(
+  img: HTMLImageElement,
+  layout: (typeof POWER_LAYOUTS)[number],
+): PowerCropSet {
+  const topRaw = cropRatio(img, layout.top, 2.8);
+  const topLight = cropRatio(img, layout.top, 2.8);
+  enhanceLightText(topLight);
+  return {
+    layoutId: layout.id,
+    // Raw first — usually enough; light is fallback only
+    topDataUrls: [toDataUrl(padCanvas(topRaw, 10)), toDataUrl(padCanvas(topLight, 10))],
+  };
+}
+
+export async function buildPowerCropSet(
+  source: File | Blob | string | HTMLImageElement,
+  layout: (typeof POWER_LAYOUTS)[number],
+): Promise<PowerCropSet> {
+  const img =
+    source instanceof HTMLImageElement
+      ? source
+      : await loadImageForOcr(source);
+  return buildPowerCropSetFromImage(img, layout);
+}
+
 /** Build top-left power crop variants for every layout template. */
 export async function buildPowerCropSets(
   source: File | Blob | string,
 ): Promise<PowerCropSet[]> {
-  const img = await loadImageElement(source);
-  return POWER_LAYOUTS.map((layout) => {
-    const topRaw = cropRatio(img, layout.top, 3.2);
-    const topLight = cropRatio(img, layout.top, 3.2);
-    enhanceLightText(topLight);
-    const topPadded = padCanvas(topRaw, 12);
-    const topLightPadded = padCanvas(topLight, 12);
-    return {
-      layoutId: layout.id,
-      topDataUrls: [
-        toDataUrl(topPadded),
-        toDataUrl(topLightPadded),
-        toDataUrl(topRaw),
-        toDataUrl(topLight),
-      ],
-    };
-  });
+  const img = await loadImageForOcr(source);
+  return POWER_LAYOUTS.map((layout) => buildPowerCropSetFromImage(img, layout));
 }
 
 /**
@@ -416,7 +455,7 @@ export async function buildNameClickCrops(
   xRatio: number,
   yRatio: number,
 ): Promise<string[]> {
-  const img = await loadImageElement(source);
+  const img = await loadImageForOcr(source);
   const probes = [
     nameRectAroundClick(xRatio, yRatio, NAME_CLICK_CROP),
     nameRectAroundClick(xRatio, yRatio, NAME_CLICK_CROP_WIDE),
@@ -469,7 +508,7 @@ export async function buildNameClickPreview(
   xRatio: number,
   yRatio: number,
 ): Promise<string> {
-  const img = await loadImageElement(source);
+  const img = await loadImageForOcr(source);
   const probes = [
     nameRectAroundClick(xRatio, yRatio, NAME_CLICK_CROP),
     nameRectAroundClick(xRatio, yRatio, NAME_CLICK_CROP_WIDE),

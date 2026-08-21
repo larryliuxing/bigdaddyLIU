@@ -9,6 +9,7 @@ import type {
 } from "@/lib/types";
 import { extractDetectedName } from "@/lib/leaderboard/parse";
 import {
+  prewarmLeaderboardOcr,
   recognizeCombatPowers,
   recognizeNameAtClick,
 } from "@/lib/leaderboard/recognize";
@@ -124,6 +125,10 @@ export function LeaderboardPanel({
     };
   }, []);
 
+  useEffect(() => {
+    if (showUpload) prewarmLeaderboardOcr();
+  }, [showUpload]);
+
   function resetNameState() {
     setOcrNameText("");
     setNamePreview(null);
@@ -193,6 +198,7 @@ export function LeaderboardPanel({
         imageSource,
         ratio.x,
         ratio.y,
+        member.name,
       );
       setOcrNameText(nameOcr.nameText);
       setNamePreview(nameOcr.previewDataUrl);
