@@ -173,7 +173,7 @@ export async function recognizeCombatPowers(
 
   let fallbackText = "";
   let fallbackLayoutId: string | null = null;
-  let best: PowerCandidate | null = null;
+  const state: { best: PowerCandidate | null } = { best: null };
 
   const consider = (
     value: number,
@@ -182,13 +182,13 @@ export async function recognizeCombatPowers(
     labeled: boolean,
   ) => {
     const next: PowerCandidate = { value, text, layoutId, labeled };
-    if (!best) {
-      best = next;
+    const cur = state.best;
+    if (!cur) {
+      state.best = next;
       return;
     }
-    const cur = best;
     if (labeled && !cur.labeled) {
-      best = next;
+      state.best = next;
       return;
     }
     if (
@@ -196,7 +196,7 @@ export async function recognizeCombatPowers(
       isStrongPowerHit(value) &&
       !isStrongPowerHit(cur.value)
     ) {
-      best = next;
+      state.best = next;
       return;
     }
     if (
@@ -204,7 +204,7 @@ export async function recognizeCombatPowers(
       isStrongPowerHit(value) === isStrongPowerHit(cur.value) &&
       value < cur.value
     ) {
-      best = next;
+      state.best = next;
     }
   };
 
@@ -275,10 +275,10 @@ export async function recognizeCombatPowers(
       }
     }
 
-    if (best && best.labeled && isStrongPowerHit(best.value)) {
+    if (state.best && state.best.labeled && isStrongPowerHit(state.best.value)) {
       break;
     }
-    if (best && isStrongPowerHit(best.value)) {
+    if (state.best && isStrongPowerHit(state.best.value)) {
       // Unlabeled but strong mid-bottom digit — accept without more layouts
       break;
     }
@@ -297,14 +297,14 @@ export async function recognizeCombatPowers(
     // ignore
   }
 
-  if (best) {
+  if (state.best) {
     return {
       ok: true,
-      combatPower: best.value,
-      powerTop: best.value,
-      layoutId: best.layoutId,
-      powerTopText: best.text,
-      text: best.text,
+      combatPower: state.best.value,
+      powerTop: state.best.value,
+      layoutId: state.best.layoutId,
+      powerTopText: state.best.text,
+      text: state.best.text,
     };
   }
 
