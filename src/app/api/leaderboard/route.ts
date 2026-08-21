@@ -23,11 +23,8 @@ export async function POST(request: Request) {
   const ocrText = String(body?.ocrText ?? "");
   const ocrNameText = String(body?.ocrNameText ?? "");
   const ocrPowerTopText = String(body?.ocrPowerTopText ?? "");
-  const ocrPowerBottomText = String(body?.ocrPowerBottomText ?? "");
   const powerTop =
     typeof body?.powerTop === "number" ? body.powerTop : null;
-  const powerBottom =
-    typeof body?.powerBottom === "number" ? body.powerBottom : null;
   const imageData =
     typeof body?.imageData === "string" ? body.imageData : null;
 
@@ -42,9 +39,7 @@ export async function POST(request: Request) {
     {
       nameText: ocrNameText,
       powerTop,
-      powerBottom,
       powerTopText: ocrPowerTopText || ocrText,
-      powerBottomText: ocrPowerBottomText || ocrText,
     },
     member.name,
   );
@@ -55,7 +50,6 @@ export async function POST(request: Request) {
         detectedName: parsed.detectedName,
         combatPower: parsed.combatPower,
         powerTop: parsed.powerTop,
-        powerBottom: parsed.powerBottom,
       },
       { status: 400 },
     );

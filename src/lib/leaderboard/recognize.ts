@@ -12,10 +12,8 @@ export type PowerOcrResult = {
   ok: boolean;
   combatPower: number | null;
   powerTop: number | null;
-  powerBottom: number | null;
   layoutId: string | null;
   powerTopText: string;
-  powerBottomText: string;
   text: string;
   error?: string;
 };
@@ -110,8 +108,8 @@ function uniqueJoinName(chunks: string[]) {
 }
 
 /**
- * Auto-detect combat power from multiple HUD / panel layouts.
- * Succeeds only when a top-box number equals a bottom-box number.
+ * Auto-detect combat power from the top-left HUD / panel region.
+ * Succeeds when any layout crop yields a plausible power number.
  */
 export async function recognizeCombatPowers(
   image: File | Blob | string,
@@ -120,13 +118,11 @@ export async function recognizeCombatPowers(
   const sets = await buildPowerCropSets(image);
 
   let fallbackTop: number | null = null;
-  let fallbackBottom: number | null = null;
   let fallbackTopText = "";
-  let fallbackBottomText = "";
+  let fallbackLayoutId: string | null = null;
 
   for (const set of sets) {
     const topChunks: string[] = [];
-    const bottomChunks: string[] = [];
 
     for (const url of set.topDataUrls) {
       try {
@@ -136,30 +132,11 @@ export async function recognizeCombatPowers(
         // continue
       }
     }
-    for (const url of set.bottomDataUrls) {
-      try {
-        const text = await recognizeBlock(worker, url);
-        if (text) bottomChunks.push(text);
-      } catch {
-        // continue
-      }
-    }
 
     const powerTopText = uniqueJoin(topChunks);
-    const powerBottomText = uniqueJoin(bottomChunks);
     const powerTop = extractCombatPower(powerTopText);
-    const powerBottom = extractCombatPower(powerBottomText);
 
-    if (powerTop != null && fallbackTop == null) {
-      fallbackTop = powerTop;
-      fallbackTopText = powerTopText;
-    }
-    if (powerBottom != null && fallbackBottom == null) {
-      fallbackBottom = powerBottom;
-      fallbackBottomText = powerBottomText;
-    }
-
-    if (powerTop != null && powerBottom != null && powerTop === powerBottom) {
+    if (powerTop != null) {
       try {
         await worker.setParameters({ tessedit_pageseg_mode: PSM.AUTO });
       } catch {
@@ -169,12 +146,15 @@ export async function recognizeCombatPowers(
         ok: true,
         combatPower: powerTop,
         powerTop,
-        powerBottom,
         layoutId: set.layoutId,
         powerTopText,
-        powerBottomText,
-        text: uniqueJoin([powerTopText, powerBottomText]),
+        text: powerTopText,
       };
+    }
+
+    if (powerTopText && fallbackTopText === "") {
+      fallbackTopText = powerTopText;
+      fallbackLayoutId = set.layoutId;
     }
   }
 
@@ -184,51 +164,14 @@ export async function recognizeCombatPowers(
     // ignore
   }
 
-  if (fallbackTop == null && fallbackBottom == null) {
-    return {
-      ok: false,
-      combatPower: null,
-      powerTop: null,
-      powerBottom: null,
-      layoutId: null,
-      powerTopText: "",
-      powerBottomText: "",
-      text: "",
-      error: "未识别到战力数字，请截取包含左上与中下战力的完整界面",
-    };
-  }
-
-  if (
-    fallbackTop != null &&
-    fallbackBottom != null &&
-    fallbackTop !== fallbackBottom
-  ) {
-    return {
-      ok: false,
-      combatPower: null,
-      powerTop: fallbackTop,
-      powerBottom: fallbackBottom,
-      layoutId: null,
-      powerTopText: fallbackTopText,
-      powerBottomText: fallbackBottomText,
-      text: uniqueJoin([fallbackTopText, fallbackBottomText]),
-      error: `左上战力（${fallbackTop}）与中下战力（${fallbackBottom}）不一致`,
-    };
-  }
-
   return {
     ok: false,
-    combatPower: fallbackTop ?? fallbackBottom,
+    combatPower: fallbackTop,
     powerTop: fallbackTop,
-    powerBottom: fallbackBottom,
-    layoutId: null,
+    layoutId: fallbackLayoutId,
     powerTopText: fallbackTopText,
-    powerBottomText: fallbackBottomText,
-    text: uniqueJoin([fallbackTopText, fallbackBottomText]),
-    error:
-      fallbackTop == null
-        ? "未识别到左上战力"
-        : "未识别到中下战力",
+    text: fallbackTopText,
+    error: "未识别到左上角战力数字，请截取包含左上战力的界面",
   };
 }
 

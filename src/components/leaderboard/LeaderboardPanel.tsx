@@ -88,10 +88,8 @@ export function LeaderboardPanel({
     null,
   );
   const [powerTop, setPowerTop] = useState<number | null>(null);
-  const [powerBottom, setPowerBottom] = useState<number | null>(null);
   const [combatPower, setCombatPower] = useState<number | null>(null);
   const [ocrPowerTopText, setOcrPowerTopText] = useState("");
-  const [ocrPowerBottomText, setOcrPowerBottomText] = useState("");
   const [ocrText, setOcrText] = useState("");
   const [previewNameOk, setPreviewNameOk] = useState<boolean | null>(null);
   const [powersOk, setPowersOk] = useState<boolean | null>(null);
@@ -138,12 +136,10 @@ export function LeaderboardPanel({
     setMessage("");
     setStatus("正在识别战力数字…");
     setPowerTop(null);
-    setPowerBottom(null);
     setCombatPower(null);
     setPowersOk(null);
     resetNameState();
     setOcrPowerTopText("");
-    setOcrPowerBottomText("");
     setOcrText("");
 
     const reader = new FileReader();
@@ -154,16 +150,14 @@ export function LeaderboardPanel({
       try {
         const powers = await recognizeCombatPowers(file);
         setPowerTop(powers.powerTop);
-        setPowerBottom(powers.powerBottom);
         setCombatPower(powers.ok ? powers.combatPower : null);
         setPowersOk(powers.ok);
         setOcrPowerTopText(powers.powerTopText);
-        setOcrPowerBottomText(powers.powerBottomText);
         setOcrText(powers.text);
 
         if (!powers.ok) {
           setStatus(
-            `${powers.error || "战力识别未通过"}。仍可点击蓝色角色名，但需战力一致才能提交。`,
+            `${powers.error || "未识别到左上角战力"}。请更换截图后重试。`,
           );
         } else if (!member) {
           setStatus(
@@ -171,7 +165,7 @@ export function LeaderboardPanel({
           );
         } else {
           setStatus(
-            `战力已识别：${powers.combatPower}（两处一致）。请点击截图中的蓝色角色名「${member.name}」。`,
+            `战力已识别：${powers.combatPower}。请点击截图中的蓝色角色名「${member.name}」。`,
           );
         }
       } catch {
@@ -215,14 +209,14 @@ export function LeaderboardPanel({
         return;
       }
 
-      if (powersOk && powerTop != null && powerBottom === powerTop) {
+      if (powersOk && powerTop != null) {
         setCombatPower(powerTop);
         setStatus(
           `校验通过：${member.name} · 战力 ${powerTop}，可以提交上榜`,
         );
       } else {
         setStatus(
-          `名字已确认是「${member.name}」，但战力双校验未通过（左上 ${powerTop ?? "-"} / 中下 ${powerBottom ?? "-"}）`,
+          `名字已确认是「${member.name}」，但左上角战力未识别（${powerTop ?? "-"}），请更换截图`,
         );
       }
     } catch {
@@ -278,9 +272,7 @@ export function LeaderboardPanel({
           ocrText,
           ocrNameText,
           ocrPowerTopText,
-          ocrPowerBottomText,
           powerTop,
-          powerBottom,
           imageData,
         }),
       });
@@ -445,7 +437,7 @@ export function LeaderboardPanel({
               上传本人战力截图
             </h2>
             <ol className="mt-2 list-decimal space-y-1 pl-5 text-xs leading-5 text-[var(--text-muted)]">
-              <li>上传完整游戏界面（自动识别左上与中下战力，须一致）</li>
+              <li>上传完整游戏界面（自动识别左上角战力）</li>
               <li>
                 在预览图上对准蓝色角色名「{member.name}」点击（尽量点在字上，不要点旁边图标）
               </li>
@@ -565,10 +557,10 @@ export function LeaderboardPanel({
                     powersOk ? "text-emerald-400" : "text-[var(--accent-crimson)]"
                   }
                 >
-                  战力双校验：
+                  战力识别：
                   {powersOk
-                    ? `一致（${combatPower}）`
-                    : `未通过（左上 ${powerTop ?? "-"} / 中下 ${powerBottom ?? "-"}）`}
+                    ? `已识别（${combatPower}）`
+                    : `未识别（左上 ${powerTop ?? "-"}）`}
                 </span>
               )}
               {previewNameOk != null && (
