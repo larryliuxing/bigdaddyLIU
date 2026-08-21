@@ -10,7 +10,6 @@ import type {
 import { extractDetectedName } from "@/lib/leaderboard/parse";
 import {
   prewarmLeaderboardOcr,
-  recognizeCombatPowers,
   recognizeNameAtClick,
 } from "@/lib/leaderboard/recognize";
 
@@ -153,16 +152,22 @@ export function LeaderboardPanel({
       setImageData(dataUrl);
       setImageSource(file);
       try {
-        const powers = await recognizeCombatPowers(file);
-        setPowerTop(powers.powerTop);
-        setCombatPower(powers.ok ? powers.combatPower : null);
-        setPowersOk(powers.ok);
-        setOcrPowerTopText(powers.powerTopText);
-        setOcrText(powers.text);
+        const res = await fetch("/api/leaderboard/ocr-power", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ imageData: dataUrl }),
+        });
+        const powers = await res.json();
+        const ok = Boolean(res.ok && powers.ok && powers.combatPower != null);
+        setPowerTop(ok ? powers.powerTop : null);
+        setCombatPower(ok ? powers.combatPower : null);
+        setPowersOk(ok);
+        setOcrPowerTopText(String(powers.powerTopText || ""));
+        setOcrText(String(powers.text || powers.powerTopText || ""));
 
-        if (!powers.ok) {
+        if (!ok) {
           setStatus(
-            `${powers.error || "未识别到战斗力数字"}。请更换截图后重试。`,
+            `${powers.error || "未识别到左上角战力"}。请更换截图后重试。`,
           );
         } else if (!member) {
           setStatus(
@@ -222,7 +227,7 @@ export function LeaderboardPanel({
         );
       } else {
         setStatus(
-          `名字已确认是「${member.name}」，但战斗力未识别（${powerTop ?? "-"}），请更换截图`,
+          `名字已确认是「${member.name}」，但左上角战力未识别（${powerTop ?? "-"}），请更换截图`,
         );
       }
     } catch {
@@ -443,7 +448,7 @@ export function LeaderboardPanel({
               上传本人战力截图
             </h2>
             <ol className="mt-2 list-decimal space-y-1 pl-5 text-xs leading-5 text-[var(--text-muted)]">
-              <li>上传完整游戏界面（自动识别角色下方「战斗力」后的数字）</li>
+              <li>上传完整游戏界面（服务端识别左上角战力）</li>
               <li>
                 在预览图上对准蓝色角色名「{member.name}」点击（尽量点在字上，不要点旁边图标）
               </li>
@@ -566,7 +571,7 @@ export function LeaderboardPanel({
                   战力识别：
                   {powersOk
                     ? `已识别（${combatPower}）`
-                    : `未识别（战斗力 ${powerTop ?? "-"}）`}
+                    : `未识别（左上 ${powerTop ?? "-"}）`}
                 </span>
               )}
               {previewNameOk != null && (
