@@ -13,7 +13,6 @@ import {
 export type PowerCropSet = {
   layoutId: string;
   topDataUrls: string[];
-  bottomDataUrls: string[];
 };
 
 function loadImageElement(source: File | Blob | string): Promise<HTMLImageElement> {
@@ -386,7 +385,7 @@ function variantsFromBounds(
   return urls;
 }
 
-/** Build power crop variants for every layout template. */
+/** Build top-left power crop variants for every layout template. */
 export async function buildPowerCropSets(
   source: File | Blob | string,
 ): Promise<PowerCropSet[]> {
@@ -395,13 +394,9 @@ export async function buildPowerCropSets(
     const topRaw = cropRatio(img, layout.top, 2.8);
     const topLight = cropRatio(img, layout.top, 2.8);
     enhanceLightText(topLight);
-    const bottomRaw = cropRatio(img, layout.bottom, 2.6);
-    const bottomLight = cropRatio(img, layout.bottom, 2.6);
-    enhanceLightText(bottomLight);
     return {
       layoutId: layout.id,
       topDataUrls: [toDataUrl(topRaw), toDataUrl(topLight)],
-      bottomDataUrls: [toDataUrl(bottomRaw), toDataUrl(bottomLight)],
     };
   });
 }

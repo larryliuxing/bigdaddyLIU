@@ -1,6 +1,6 @@
 /**
  * Validate OCR texts for leaderboard upload.
- * Name comes from a user click crop; powers from dual-layout OCR.
+ * Name comes from a user click crop; combat power from top-left OCR.
  */
 
 const UI_SKIP =
@@ -224,9 +224,7 @@ export function parseCombatPowerScreenshot(
   input: {
     nameText?: string;
     powerTop?: number | null;
-    powerBottom?: number | null;
     powerTopText?: string;
-    powerBottomText?: string;
     nameConfirmed?: boolean;
   },
   expectedName: string,
@@ -234,7 +232,6 @@ export function parseCombatPowerScreenshot(
   ok: boolean;
   combatPower: number | null;
   powerTop: number | null;
-  powerBottom: number | null;
   detectedName: string | null;
   error?: string;
 } {
@@ -242,18 +239,14 @@ export function parseCombatPowerScreenshot(
   const powerTop =
     input.powerTop ??
     (input.powerTopText ? extractCombatPower(input.powerTopText) : null);
-  const powerBottom =
-    input.powerBottom ??
-    (input.powerBottomText ? extractCombatPower(input.powerBottomText) : null);
 
   const nameResult = extractDetectedName(nameText, expectedName);
 
   if (!nameText.trim()) {
     return {
       ok: false,
-      combatPower: powerTop ?? powerBottom,
+      combatPower: powerTop,
       powerTop,
-      powerBottom,
       detectedName: null,
       error: "请先在截图上点击蓝色角色名",
     };
@@ -262,9 +255,8 @@ export function parseCombatPowerScreenshot(
   if (!nameResult.matched) {
     return {
       ok: false,
-      combatPower: powerTop ?? powerBottom,
+      combatPower: powerTop,
       powerTop,
-      powerBottom,
       detectedName: nameResult.detectedName,
       error: nameResult.detectedName
         ? `点击区域识别为「${nameResult.detectedName}」，与账号「${expectedName}」不一致，请点准本人蓝色名字`
@@ -272,25 +264,13 @@ export function parseCombatPowerScreenshot(
     };
   }
 
-  if (powerTop == null || powerBottom == null) {
+  if (powerTop == null) {
     return {
       ok: false,
       combatPower: null,
       powerTop,
-      powerBottom,
       detectedName: nameResult.detectedName,
-      error: "战力识别不完整，请截取同时包含左上与中下战力的界面",
-    };
-  }
-
-  if (powerTop !== powerBottom) {
-    return {
-      ok: false,
-      combatPower: null,
-      powerTop,
-      powerBottom,
-      detectedName: nameResult.detectedName,
-      error: `左上战力（${powerTop}）与中下战力（${powerBottom}）不一致`,
+      error: "未识别到左上角战力，请截取包含左上战力的界面",
     };
   }
 
@@ -298,7 +278,6 @@ export function parseCombatPowerScreenshot(
     ok: true,
     combatPower: powerTop,
     powerTop,
-    powerBottom,
     detectedName: nameResult.detectedName,
   };
 }
