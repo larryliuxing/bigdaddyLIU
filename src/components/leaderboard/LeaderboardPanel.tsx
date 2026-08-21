@@ -9,6 +9,7 @@ import type {
 } from "@/lib/types";
 import { extractDetectedName } from "@/lib/leaderboard/parse";
 import {
+  prewarmLeaderboardOcr,
   recognizeCombatPowers,
   recognizeNameAtClick,
 } from "@/lib/leaderboard/recognize";
@@ -124,6 +125,10 @@ export function LeaderboardPanel({
     };
   }, []);
 
+  useEffect(() => {
+    if (showUpload) prewarmLeaderboardOcr();
+  }, [showUpload]);
+
   function resetNameState() {
     setOcrNameText("");
     setNamePreview(null);
@@ -157,7 +162,7 @@ export function LeaderboardPanel({
 
         if (!powers.ok) {
           setStatus(
-            `${powers.error || "未识别到左上角战力"}。请更换截图后重试。`,
+            `${powers.error || "未识别到战斗力数字"}。请更换截图后重试。`,
           );
         } else if (!member) {
           setStatus(
@@ -193,6 +198,7 @@ export function LeaderboardPanel({
         imageSource,
         ratio.x,
         ratio.y,
+        member.name,
       );
       setOcrNameText(nameOcr.nameText);
       setNamePreview(nameOcr.previewDataUrl);
@@ -216,7 +222,7 @@ export function LeaderboardPanel({
         );
       } else {
         setStatus(
-          `名字已确认是「${member.name}」，但左上角战力未识别（${powerTop ?? "-"}），请更换截图`,
+          `名字已确认是「${member.name}」，但战斗力未识别（${powerTop ?? "-"}），请更换截图`,
         );
       }
     } catch {
@@ -437,7 +443,7 @@ export function LeaderboardPanel({
               上传本人战力截图
             </h2>
             <ol className="mt-2 list-decimal space-y-1 pl-5 text-xs leading-5 text-[var(--text-muted)]">
-              <li>上传完整游戏界面（自动识别左上角战力）</li>
+              <li>上传完整游戏界面（自动识别角色下方「战斗力」后的数字）</li>
               <li>
                 在预览图上对准蓝色角色名「{member.name}」点击（尽量点在字上，不要点旁边图标）
               </li>
@@ -560,7 +566,7 @@ export function LeaderboardPanel({
                   战力识别：
                   {powersOk
                     ? `已识别（${combatPower}）`
-                    : `未识别（左上 ${powerTop ?? "-"}）`}
+                    : `未识别（战斗力 ${powerTop ?? "-"}）`}
                 </span>
               )}
               {previewNameOk != null && (

@@ -15,6 +15,8 @@ export type PowerCropSet = {
   topDataUrls: string[];
 };
 
+const MAX_OCR_EDGE = 1600;
+
 function loadImageElement(source: File | Blob | string): Promise<HTMLImageElement> {
   const url =
     typeof source === "string" ? source : URL.createObjectURL(source);
@@ -32,6 +34,32 @@ function loadImageElement(source: File | Blob | string): Promise<HTMLImageElemen
       reject(new Error("图片加载失败"));
     };
     img.src = url;
+  });
+}
+
+/** Downscale huge screenshots so OCR crops stay fast. */
+export async function loadImageForOcr(
+  source: File | Blob | string,
+): Promise<HTMLImageElement> {
+  const img = await loadImageElement(source);
+  const maxEdge = Math.max(img.width, img.height);
+  if (maxEdge <= MAX_OCR_EDGE) return img;
+
+  const scale = MAX_OCR_EDGE / maxEdge;
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(img.width * scale));
+  canvas.height = Math.max(1, Math.round(img.height * scale));
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return img;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+  return new Promise((resolve, reject) => {
+    const out = new Image();
+    out.onload = () => resolve(out);
+    out.onerror = () => reject(new Error("图片缩放失败"));
+    out.src = canvas.toDataURL("image/jpeg", 0.92);
   });
 }
 
@@ -385,20 +413,59 @@ function variantsFromBounds(
   return urls;
 }
 
-/** Build top-left power crop variants for every layout template. */
+/** Right half of the 战斗力 strip — usually just the digits after the sword icon. */
+function numberOnlyRect(full: RatioRect): RatioRect {
+  return {
+    x: full.x + full.w * 0.4,
+    y: full.y,
+    w: full.w * 0.6,
+    h: full.h,
+  };
+}
+
+/** Build mid-bottom 战斗力 crops for a single layout (lazy / early-exit). */
+export function buildPowerCropSetFromImage(
+  img: HTMLImageElement,
+  layout: (typeof POWER_LAYOUTS)[number],
+): PowerCropSet {
+  const fullRaw = cropRatio(img, layout.top, 2.8);
+  const fullLight = cropRatio(img, layout.top, 2.8);
+  enhanceLightText(fullLight);
+
+  const numRect = numberOnlyRect(layout.top);
+  const numRaw = cropRatio(img, numRect, 3.0);
+  const numLight = cropRatio(img, numRect, 3.0);
+  enhanceLightText(numLight);
+
+  return {
+    layoutId: layout.id,
+    // Full band first (can read 战斗力 label), then digit-only right side
+    topDataUrls: [
+      toDataUrl(padCanvas(fullRaw, 10)),
+      toDataUrl(padCanvas(fullLight, 10)),
+      toDataUrl(padCanvas(numRaw, 10)),
+      toDataUrl(padCanvas(numLight, 10)),
+    ],
+  };
+}
+
+export async function buildPowerCropSet(
+  source: File | Blob | string | HTMLImageElement,
+  layout: (typeof POWER_LAYOUTS)[number],
+): Promise<PowerCropSet> {
+  const img =
+    source instanceof HTMLImageElement
+      ? source
+      : await loadImageForOcr(source);
+  return buildPowerCropSetFromImage(img, layout);
+}
+
+/** Build power crop variants for every layout template. */
 export async function buildPowerCropSets(
   source: File | Blob | string,
 ): Promise<PowerCropSet[]> {
-  const img = await loadImageElement(source);
-  return POWER_LAYOUTS.map((layout) => {
-    const topRaw = cropRatio(img, layout.top, 2.8);
-    const topLight = cropRatio(img, layout.top, 2.8);
-    enhanceLightText(topLight);
-    return {
-      layoutId: layout.id,
-      topDataUrls: [toDataUrl(topRaw), toDataUrl(topLight)],
-    };
-  });
+  const img = await loadImageForOcr(source);
+  return POWER_LAYOUTS.map((layout) => buildPowerCropSetFromImage(img, layout));
 }
 
 /**
@@ -409,7 +476,7 @@ export async function buildNameClickCrops(
   xRatio: number,
   yRatio: number,
 ): Promise<string[]> {
-  const img = await loadImageElement(source);
+  const img = await loadImageForOcr(source);
   const probes = [
     nameRectAroundClick(xRatio, yRatio, NAME_CLICK_CROP),
     nameRectAroundClick(xRatio, yRatio, NAME_CLICK_CROP_WIDE),
@@ -462,7 +529,7 @@ export async function buildNameClickPreview(
   xRatio: number,
   yRatio: number,
 ): Promise<string> {
-  const img = await loadImageElement(source);
+  const img = await loadImageForOcr(source);
   const probes = [
     nameRectAroundClick(xRatio, yRatio, NAME_CLICK_CROP),
     nameRectAroundClick(xRatio, yRatio, NAME_CLICK_CROP_WIDE),
