@@ -1,5 +1,5 @@
 /**
- * Proportional regions for combat-power OCR (top-left only).
+ * Proportional regions for combat-power OCR (top-left HUD only).
  * Name uses a small click probe, then auto-trims to blue glyphs.
  */
 
@@ -16,32 +16,35 @@ export type PowerLayout = {
   top: RatioRect;
 };
 
-/** Top-left combat-power HUD / panel crops only. */
+/**
+ * Tight strips over the top-left 战斗力 HUD.
+ * Keep short + high so we don't pull in blue names / other UI digits.
+ */
 export const POWER_LAYOUTS: PowerLayout[] = [
   {
-    id: "char-center",
+    id: "hud-bar",
+    label: "顶栏战力",
+    top: { x: 0.0, y: 0.0, w: 0.34, h: 0.07 },
+  },
+  {
+    id: "hud-tight",
+    label: "顶栏紧凑",
+    top: { x: 0.0, y: 0.005, w: 0.26, h: 0.055 },
+  },
+  {
+    id: "hud-icon-num",
+    label: "图标+数字",
+    top: { x: 0.02, y: 0.01, w: 0.22, h: 0.06 },
+  },
+  {
+    id: "char-panel",
     label: "角色面板",
-    top: { x: 0.01, y: 0.08, w: 0.18, h: 0.10 },
-  },
-  {
-    id: "char-panel-tight",
-    label: "角色面板紧凑",
-    top: { x: 0.01, y: 0.05, w: 0.16, h: 0.08 },
-  },
-  {
-    id: "ability-open",
-    label: "能力值面板",
-    top: { x: 0.01, y: 0.10, w: 0.20, h: 0.10 },
-  },
-  {
-    id: "hud",
-    label: "主界面 HUD",
-    top: { x: 0.02, y: 0.05, w: 0.26, h: 0.11 },
+    top: { x: 0.01, y: 0.03, w: 0.2, h: 0.08 },
   },
   {
     id: "wide",
     label: "宽松兜底",
-    top: { x: 0.01, y: 0.02, w: 0.28, h: 0.16 },
+    top: { x: 0.0, y: 0.0, w: 0.38, h: 0.1 },
   },
 ];
 

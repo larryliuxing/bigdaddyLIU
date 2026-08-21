@@ -12,6 +12,11 @@ assert.equal(extractDetectedName("入多避胡证基于双生1", "唐小虎").ma
 
 assert.equal(extractCombatPower("能力值 47176"), 47176);
 assert.equal(extractCombatPower("战斗力 4776"), 4776);
+assert.equal(extractCombatPower("战斗力 13293"), 13293);
+// OCR digit-soup must not win via Math.max
+assert.equal(extractCombatPower("2749274 13270 88"), 13270);
+assert.equal(extractCombatPower("战斗力13270\n2749274"), 13270);
+assert.equal(extractCombatPower("abc 2749274"), null);
 
 const needClick = parseCombatPowerScreenshot(
   { nameText: "", powerTop: 4776 },

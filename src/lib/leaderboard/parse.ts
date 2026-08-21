@@ -32,6 +32,11 @@ export function isPlausibleNameCandidate(token: string, expected: string) {
   return true;
 }
 
+/** Soft ceiling for unlabeled OCR digits — avoids joining HUD noise into 7-digit junk. */
+const POWER_MIN = 500;
+const POWER_MAX_LABELED = 999_999;
+const POWER_MAX_UNLABELED = 99_999;
+
 export function normalizeOcrText(text: string) {
   return text
     .replace(/\u00a0/g, " ")
@@ -39,31 +44,71 @@ export function normalizeOcrText(text: string) {
     .replace(/[，]/g, ",")
     .replace(/战\s*斗\s*力/g, "战斗力")
     .replace(/能\s*力\s*值/g, "能力值")
+    .replace(/[OoΟо〇]/g, "0")
+    .replace(/[Il|！]/g, "1")
+    .replace(/[ＳS]/g, "5")
+    .replace(/[Ｂ]/g, "8")
     .replace(/[０-９]/g, (ch) =>
       String.fromCharCode(ch.charCodeAt(0) - 0xff10 + 0x30),
     );
 }
 
-/** Prefer labeled 能力值/战斗力; else largest plausible number in the crop. */
+function isPlausiblePower(value: number, labeled: boolean) {
+  if (!Number.isFinite(value)) return false;
+  if (value < POWER_MIN) return false;
+  if (labeled) return value <= POWER_MAX_LABELED;
+  return value <= POWER_MAX_UNLABELED;
+}
+
+/** Prefer typical 4–5 digit combat powers over OCR-concatenated 6–7 digit junk. */
+function scorePowerCandidate(value: number, labeled: boolean) {
+  const digits = String(value).length;
+  let score = labeled ? 1000 : 0;
+  if (digits === 4 || digits === 5) score += 80;
+  else if (digits === 3) score += 40;
+  else if (digits === 6) score += 10;
+  else score -= 40;
+  // Prefer mid-range guild powers over tiny/huge outliers
+  if (value >= 2000 && value <= 80_000) score += 20;
+  return score;
+}
+
+function pickBestPower(values: number[], labeled: boolean): number | null {
+  const filtered = values.filter((v) => isPlausiblePower(v, labeled));
+  if (!filtered.length) return null;
+  filtered.sort(
+    (a, b) =>
+      scorePowerCandidate(b, labeled) - scorePowerCandidate(a, labeled) ||
+      a - b,
+  );
+  return filtered[0];
+}
+
+/**
+ * Prefer labeled 能力值/战斗力 (first nearby number).
+ * Unlabeled fallback picks the most plausible 4–5 digit value — never Math.max
+ * of every OCR digit run (that caused 1万+ → 几十万/几百万).
+ */
 export function extractCombatPower(text: string): number | null {
   const normalized = normalizeOcrText(text);
 
   const patterns = [
-    /能力值\s*[:\-]?\s*([0-9]{3,7})/,
-    /能力值[^\d]{0,10}([0-9]{3,7})/,
-    /战斗力\s*[:\-]?\s*([0-9]{3,7})/,
-    /战斗力[^\d]{0,8}([0-9]{3,7})/,
-    /战力\s*[:\-]?\s*([0-9]{3,7})/,
+    /能力值\s*[:\-]?\s*([0-9]{3,6})/,
+    /能力值[^\d]{0,10}([0-9]{3,6})/,
+    /战斗力\s*[:\-]?\s*([0-9]{3,6})/,
+    /战斗力[^\d]{0,8}([0-9]{3,6})/,
+    /战力\s*[:\-]?\s*([0-9]{3,6})/,
   ];
 
   for (const pattern of patterns) {
     const match = normalized.match(pattern);
     if (match) {
       const value = Number(match[1]);
-      if (value >= 100 && value <= 9_999_999) return value;
+      if (isPlausiblePower(value, true)) return value;
     }
   }
 
+  const labeledLineNums: number[] = [];
   const lines = normalized.split(/\r?\n/);
   for (const line of lines) {
     if (
@@ -73,17 +118,17 @@ export function extractCombatPower(text: string): number | null {
     ) {
       continue;
     }
-    const nums = [...line.matchAll(/([0-9]{3,7})/g)].map((m) => Number(m[1]));
-    const candidates = nums.filter((n) => n >= 100 && n <= 9_999_999);
-    if (candidates.length) return Math.max(...candidates);
+    for (const m of line.matchAll(/([0-9]{3,6})/g)) {
+      labeledLineNums.push(Number(m[1]));
+    }
   }
+  const labeledPick = pickBestPower(labeledLineNums, true);
+  if (labeledPick != null) return labeledPick;
 
-  const all = [...normalized.matchAll(/([0-9]{3,7})/g)]
-    .map((m) => Number(m[1]))
-    .filter((n) => n >= 100 && n <= 9_999_999);
-  if (all.length) return Math.max(...all);
-
-  return null;
+  const all = [...normalized.matchAll(/([0-9]{3,6})/g)].map((m) =>
+    Number(m[1]),
+  );
+  return pickBestPower(all, false);
 }
 
 function tokenize(text: string) {

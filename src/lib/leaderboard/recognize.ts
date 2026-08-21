@@ -40,13 +40,31 @@ async function getNameWorker() {
   return nameWorkerPromise;
 }
 
-async function recognizeBlock(worker: Worker, dataUrl: string) {
-  await worker.setParameters({
-    tessedit_pageseg_mode: PSM.SINGLE_BLOCK,
-    preserve_interword_spaces: "1",
-  });
-  const result = await worker.recognize(dataUrl);
-  return (result.data.text || "").trim();
+async function recognizePowerCrop(worker: Worker, dataUrl: string) {
+  const chunks: string[] = [];
+  const passes: Array<{ psm: typeof PSM[keyof typeof PSM]; whitelist: string }> =
+    [
+      { psm: PSM.SINGLE_LINE, whitelist: "0123456789战斗力能力值:： " },
+      { psm: PSM.SINGLE_LINE, whitelist: "0123456789" },
+      { psm: PSM.RAW_LINE, whitelist: "0123456789战斗力能力值:： " },
+      { psm: PSM.SINGLE_BLOCK, whitelist: "" },
+    ];
+
+  for (const pass of passes) {
+    try {
+      await worker.setParameters({
+        tessedit_pageseg_mode: pass.psm,
+        preserve_interword_spaces: "1",
+        tessedit_char_whitelist: pass.whitelist,
+      });
+      const result = await worker.recognize(dataUrl);
+      const text = (result.data.text || "").trim();
+      if (text) chunks.push(text);
+    } catch {
+      // next
+    }
+  }
+  return chunks;
 }
 
 async function recognizeNameCrop(worker: Worker, dataUrl: string) {
@@ -109,7 +127,8 @@ function uniqueJoinName(chunks: string[]) {
 
 /**
  * Auto-detect combat power from the top-left HUD / panel region.
- * Succeeds when any layout crop yields a plausible power number.
+ * Collects candidates across layouts and picks the most plausible value
+ * (avoids accepting the first OCR digit-soup hit).
  */
 export async function recognizeCombatPowers(
   image: File | Blob | string,
@@ -117,7 +136,13 @@ export async function recognizeCombatPowers(
   const worker = await getMixedWorker();
   const sets = await buildPowerCropSets(image);
 
-  let fallbackTop: number | null = null;
+  type Candidate = {
+    value: number;
+    text: string;
+    layoutId: string;
+    labeled: boolean;
+  };
+  const candidates: Candidate[] = [];
   let fallbackTopText = "";
   let fallbackLayoutId: string | null = null;
 
@@ -126,48 +151,71 @@ export async function recognizeCombatPowers(
 
     for (const url of set.topDataUrls) {
       try {
-        const text = await recognizeBlock(worker, url);
-        if (text) topChunks.push(text);
+        topChunks.push(...(await recognizePowerCrop(worker, url)));
       } catch {
         // continue
       }
     }
 
     const powerTopText = uniqueJoin(topChunks);
-    const powerTop = extractCombatPower(powerTopText);
-
-    if (powerTop != null) {
-      try {
-        await worker.setParameters({ tessedit_pageseg_mode: PSM.AUTO });
-      } catch {
-        // ignore
-      }
-      return {
-        ok: true,
-        combatPower: powerTop,
-        powerTop,
-        layoutId: set.layoutId,
-        powerTopText,
-        text: powerTopText,
-      };
-    }
-
     if (powerTopText && fallbackTopText === "") {
       fallbackTopText = powerTopText;
       fallbackLayoutId = set.layoutId;
     }
+
+    const powerTop = extractCombatPower(powerTopText);
+    if (powerTop != null) {
+      const labeled = /战斗力|能力值|战力/.test(powerTopText);
+      candidates.push({
+        value: powerTop,
+        text: powerTopText,
+        layoutId: set.layoutId,
+        labeled,
+      });
+      // Strong labeled 4–5 digit hit: stop early
+      const digits = String(powerTop).length;
+      if (labeled && (digits === 4 || digits === 5) && powerTop <= 99_999) {
+        break;
+      }
+    }
   }
 
   try {
-    await worker.setParameters({ tessedit_pageseg_mode: PSM.AUTO });
+    await worker.setParameters({
+      tessedit_pageseg_mode: PSM.AUTO,
+      tessedit_char_whitelist: "",
+    });
   } catch {
     // ignore
   }
 
+  if (candidates.length) {
+    candidates.sort((a, b) => {
+      const score = (c: Candidate) => {
+        const digits = String(c.value).length;
+        let s = c.labeled ? 100 : 0;
+        if (digits === 4 || digits === 5) s += 50;
+        if (c.value >= 2000 && c.value <= 80_000) s += 20;
+        if (c.value > 99_999) s -= 80;
+        return s;
+      };
+      return score(b) - score(a) || a.value - b.value;
+    });
+    const best = candidates[0];
+    return {
+      ok: true,
+      combatPower: best.value,
+      powerTop: best.value,
+      layoutId: best.layoutId,
+      powerTopText: best.text,
+      text: best.text,
+    };
+  }
+
   return {
     ok: false,
-    combatPower: fallbackTop,
-    powerTop: fallbackTop,
+    combatPower: null,
+    powerTop: null,
     layoutId: fallbackLayoutId,
     powerTopText: fallbackTopText,
     text: fallbackTopText,

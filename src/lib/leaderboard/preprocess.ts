@@ -391,12 +391,19 @@ export async function buildPowerCropSets(
 ): Promise<PowerCropSet[]> {
   const img = await loadImageElement(source);
   return POWER_LAYOUTS.map((layout) => {
-    const topRaw = cropRatio(img, layout.top, 2.8);
-    const topLight = cropRatio(img, layout.top, 2.8);
+    const topRaw = cropRatio(img, layout.top, 3.2);
+    const topLight = cropRatio(img, layout.top, 3.2);
     enhanceLightText(topLight);
+    const topPadded = padCanvas(topRaw, 12);
+    const topLightPadded = padCanvas(topLight, 12);
     return {
       layoutId: layout.id,
-      topDataUrls: [toDataUrl(topRaw), toDataUrl(topLight)],
+      topDataUrls: [
+        toDataUrl(topPadded),
+        toDataUrl(topLightPadded),
+        toDataUrl(topRaw),
+        toDataUrl(topLight),
+      ],
     };
   });
 }
