@@ -1,5 +1,5 @@
 /**
- * Proportional regions for combat-power OCR (top-left HUD only).
+ * Mid-lower 「战斗力」+ number band (under the character).
  * Name uses a small click probe, then auto-trims to blue glyphs.
  */
 
@@ -13,25 +13,29 @@ export type RatioRect = {
 export type PowerLayout = {
   id: string;
   label: string;
+  /** Full 「战斗力 … 数字」strip */
   top: RatioRect;
 };
 
-/** Few tight top-left strips — keep count low for OCR speed. */
+/**
+ * Center-bottom combat-power line under the character model.
+ * Avoid the left 能力值 panel and top HUD so we don't pick junk digits.
+ */
 export const POWER_LAYOUTS: PowerLayout[] = [
   {
-    id: "hud-bar",
-    label: "顶栏战力",
-    top: { x: 0.0, y: 0.0, w: 0.34, h: 0.07 },
+    id: "mid-main",
+    label: "角色下方战斗力",
+    top: { x: 0.28, y: 0.55, w: 0.44, h: 0.12 },
   },
   {
-    id: "hud-tight",
-    label: "顶栏紧凑",
-    top: { x: 0.0, y: 0.005, w: 0.26, h: 0.055 },
+    id: "mid-tight",
+    label: "战斗力紧凑",
+    top: { x: 0.32, y: 0.58, w: 0.36, h: 0.09 },
   },
   {
-    id: "char-panel",
-    label: "角色面板",
-    top: { x: 0.01, y: 0.03, w: 0.22, h: 0.08 },
+    id: "mid-low",
+    label: "战斗力偏下",
+    top: { x: 0.26, y: 0.6, w: 0.48, h: 0.12 },
   },
 ];
 

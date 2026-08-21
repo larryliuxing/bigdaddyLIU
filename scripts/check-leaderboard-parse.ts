@@ -13,6 +13,9 @@ assert.equal(extractDetectedName("入多避胡证基于双生1", "唐小虎").ma
 assert.equal(extractCombatPower("能力值 47176"), 47176);
 assert.equal(extractCombatPower("战斗力 4776"), 4776);
 assert.equal(extractCombatPower("战斗力 13293"), 13293);
+assert.equal(extractCombatPower("总战斗力 13248"), 13248);
+assert.equal(extractCombatPower("战斗力xx9348"), 9348);
+assert.equal(extractCombatPower("战斗力 ⚔️ 9348"), 9348);
 // OCR digit-soup must not win via Math.max
 assert.equal(extractCombatPower("2749274 13270 88"), 13270);
 assert.equal(extractCombatPower("战斗力13270\n2749274"), 13270);
@@ -37,6 +40,6 @@ const missingPower = parseCombatPowerScreenshot(
   "唐小虎",
 );
 assert.equal(missingPower.ok, false);
-assert.match(String(missingPower.error), /战力/);
+assert.match(String(missingPower.error), /战斗力/);
 
 console.log("leaderboard click-name redesign checks passed");

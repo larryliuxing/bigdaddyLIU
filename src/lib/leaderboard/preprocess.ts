@@ -413,18 +413,39 @@ function variantsFromBounds(
   return urls;
 }
 
-/** Build 1–2 top-left crops for a single layout (lazy / early-exit friendly). */
+/** Right half of the 战斗力 strip — usually just the digits after the sword icon. */
+function numberOnlyRect(full: RatioRect): RatioRect {
+  return {
+    x: full.x + full.w * 0.4,
+    y: full.y,
+    w: full.w * 0.6,
+    h: full.h,
+  };
+}
+
+/** Build mid-bottom 战斗力 crops for a single layout (lazy / early-exit). */
 export function buildPowerCropSetFromImage(
   img: HTMLImageElement,
   layout: (typeof POWER_LAYOUTS)[number],
 ): PowerCropSet {
-  const topRaw = cropRatio(img, layout.top, 2.8);
-  const topLight = cropRatio(img, layout.top, 2.8);
-  enhanceLightText(topLight);
+  const fullRaw = cropRatio(img, layout.top, 2.8);
+  const fullLight = cropRatio(img, layout.top, 2.8);
+  enhanceLightText(fullLight);
+
+  const numRect = numberOnlyRect(layout.top);
+  const numRaw = cropRatio(img, numRect, 3.0);
+  const numLight = cropRatio(img, numRect, 3.0);
+  enhanceLightText(numLight);
+
   return {
     layoutId: layout.id,
-    // Raw first — usually enough; light is fallback only
-    topDataUrls: [toDataUrl(padCanvas(topRaw, 10)), toDataUrl(padCanvas(topLight, 10))],
+    // Full band first (can read 战斗力 label), then digit-only right side
+    topDataUrls: [
+      toDataUrl(padCanvas(fullRaw, 10)),
+      toDataUrl(padCanvas(fullLight, 10)),
+      toDataUrl(padCanvas(numRaw, 10)),
+      toDataUrl(padCanvas(numLight, 10)),
+    ],
   };
 }
 
@@ -439,7 +460,7 @@ export async function buildPowerCropSet(
   return buildPowerCropSetFromImage(img, layout);
 }
 
-/** Build top-left power crop variants for every layout template. */
+/** Build power crop variants for every layout template. */
 export async function buildPowerCropSets(
   source: File | Blob | string,
 ): Promise<PowerCropSet[]> {

@@ -26,14 +26,23 @@ export type NameOcrResult = {
 };
 
 let powerWorkerPromise: Promise<Worker> | null = null;
+let digitWorkerPromise: Promise<Worker> | null = null;
 let nameWorkerPromise: Promise<Worker> | null = null;
 
-/** Digits-only eng worker — much faster than chi_sim+eng for HUD numbers. */
+/** Mixed worker — reads 「战斗力」label + digits on the mid-bottom band. */
 async function getPowerWorker() {
   if (!powerWorkerPromise) {
-    powerWorkerPromise = createWorker("eng");
+    powerWorkerPromise = createWorker("chi_sim+eng");
   }
   return powerWorkerPromise;
+}
+
+/** Fast digits-only fallback for the right half of the band. */
+async function getDigitWorker() {
+  if (!digitWorkerPromise) {
+    digitWorkerPromise = createWorker("eng");
+  }
+  return digitWorkerPromise;
 }
 
 async function getNameWorker() {
@@ -46,6 +55,7 @@ async function getNameWorker() {
 /** Warm WASM + language packs when the upload panel opens. */
 export function prewarmLeaderboardOcr() {
   void getPowerWorker();
+  void getDigitWorker();
   void getNameWorker();
 }
 
@@ -54,7 +64,20 @@ function isStrongPowerHit(value: number) {
   return value >= 2000 && value <= 99_999 && (digits === 4 || digits === 5);
 }
 
-/** One fast digit pass; returns text or "". */
+function hasPowerLabel(text: string) {
+  return /战斗力|总战斗力|战力/.test(text);
+}
+
+async function recognizeLabeledBand(worker: Worker, dataUrl: string) {
+  await worker.setParameters({
+    tessedit_pageseg_mode: PSM.SINGLE_LINE,
+    preserve_interword_spaces: "1",
+    tessedit_char_whitelist: "",
+  });
+  const result = await worker.recognize(dataUrl);
+  return (result.data.text || "").trim();
+}
+
 async function recognizeDigits(worker: Worker, dataUrl: string) {
   await worker.setParameters({
     tessedit_pageseg_mode: PSM.SINGLE_LINE,
@@ -129,14 +152,15 @@ function uniqueJoinName(chunks: string[]) {
 }
 
 /**
- * Top-left combat power OCR — fast path:
- * eng digits, raw crop first, stop on first strong 4–5 digit hit.
+ * Mid-bottom 「战斗力」+ number OCR.
+ * Fast path: labeled band hit → return. Else digit crop, then next layout.
  */
 export async function recognizeCombatPowers(
   image: File | Blob | string,
 ): Promise<PowerOcrResult> {
-  const [worker, img] = await Promise.all([
+  const [labelWorker, digitWorker, img] = await Promise.all([
     getPowerWorker(),
+    getDigitWorker(),
     loadImageForOcr(image),
   ]);
 
@@ -146,20 +170,43 @@ export async function recognizeCombatPowers(
     value: number;
     text: string;
     layoutId: string;
+    labeled: boolean;
   } | null = null;
+
+  const consider = (
+    value: number,
+    text: string,
+    layoutId: string,
+    labeled: boolean,
+  ) => {
+    if (
+      !best ||
+      (labeled && !best.labeled) ||
+      (labeled === best.labeled &&
+        isStrongPowerHit(value) &&
+        !isStrongPowerHit(best.value)) ||
+      (labeled === best.labeled &&
+        isStrongPowerHit(value) === isStrongPowerHit(best.value) &&
+        value < best.value)
+    ) {
+      best = { value, text, layoutId, labeled };
+    }
+  };
 
   for (const layout of POWER_LAYOUTS) {
     const set = buildPowerCropSetFromImage(img, layout);
+    // urls: [fullRaw, fullLight, numRaw, numLight]
+    const fullUrls = set.topDataUrls.slice(0, 2);
+    const numUrls = set.topDataUrls.slice(2);
 
-    for (const url of set.topDataUrls) {
+    for (const url of fullUrls) {
       let text = "";
       try {
-        text = await recognizeDigits(worker, url);
+        text = await recognizeLabeledBand(labelWorker, url);
       } catch {
         continue;
       }
       if (!text) continue;
-
       if (!fallbackText) {
         fallbackText = text;
         fallbackLayoutId = set.layoutId;
@@ -167,21 +214,13 @@ export async function recognizeCombatPowers(
 
       const value = extractCombatPower(text);
       if (value == null) continue;
+      const labeled = hasPowerLabel(text);
+      consider(value, text, set.layoutId, labeled);
 
-      if (
-        !best ||
-        (isStrongPowerHit(value) && !isStrongPowerHit(best.value)) ||
-        (isStrongPowerHit(value) &&
-          isStrongPowerHit(best.value) &&
-          value < best.value)
-      ) {
-        best = { value, text, layoutId: set.layoutId };
-      }
-
-      // Raw crop + strong 4–5 digit → done (skip light + other layouts)
-      if (isStrongPowerHit(value) && url === set.topDataUrls[0]) {
+      // 「战斗力」+ 4–5 digit → done
+      if (labeled && isStrongPowerHit(value)) {
         try {
-          await worker.setParameters({
+          await labelWorker.setParameters({
             tessedit_pageseg_mode: PSM.AUTO,
             tessedit_char_whitelist: "",
           });
@@ -199,13 +238,43 @@ export async function recognizeCombatPowers(
       }
     }
 
+    // Digit-only right half (after sword icon) — one raw then light
+    for (const url of numUrls) {
+      let text = "";
+      try {
+        text = await recognizeDigits(digitWorker, url);
+      } catch {
+        continue;
+      }
+      if (!text) continue;
+      if (!fallbackText) {
+        fallbackText = text;
+        fallbackLayoutId = set.layoutId;
+      }
+      const value = extractCombatPower(text);
+      if (value == null) continue;
+      consider(value, text, set.layoutId, false);
+      if (isStrongPowerHit(value)) {
+        // Good enough from number crop — stop this layout's light pass chain
+        break;
+      }
+    }
+
+    if (best && best.labeled && isStrongPowerHit(best.value)) {
+      break;
+    }
     if (best && isStrongPowerHit(best.value)) {
+      // Unlabeled but strong mid-bottom digit — accept without more layouts
       break;
     }
   }
 
   try {
-    await worker.setParameters({
+    await labelWorker.setParameters({
+      tessedit_pageseg_mode: PSM.AUTO,
+      tessedit_char_whitelist: "",
+    });
+    await digitWorker.setParameters({
       tessedit_pageseg_mode: PSM.AUTO,
       tessedit_char_whitelist: "",
     });
@@ -231,7 +300,7 @@ export async function recognizeCombatPowers(
     layoutId: fallbackLayoutId,
     powerTopText: fallbackText,
     text: fallbackText,
-    error: "未识别到左上角战力数字，请截取包含左上战力的界面",
+    error: "未识别到「战斗力」后的数字，请截取角色下方战斗力完整界面",
   };
 }
 

@@ -42,6 +42,7 @@ export function normalizeOcrText(text: string) {
     .replace(/\u00a0/g, " ")
     .replace(/[：]/g, ":")
     .replace(/[，]/g, ",")
+    .replace(/总\s*战\s*斗\s*力/g, "战斗力")
     .replace(/战\s*斗\s*力/g, "战斗力")
     .replace(/能\s*力\s*值/g, "能力值")
     .replace(/[OoΟо〇]/g, "0")
@@ -85,7 +86,7 @@ function pickBestPower(values: number[], labeled: boolean): number | null {
 }
 
 /**
- * Prefer labeled 能力值/战斗力 (first nearby number).
+ * Prefer the number immediately after 「战斗力」/「总战斗力」.
  * Unlabeled fallback picks the most plausible 4–5 digit value — never Math.max
  * of every OCR digit run (that caused 1万+ → 几十万/几百万).
  */
@@ -93,11 +94,10 @@ export function extractCombatPower(text: string): number | null {
   const normalized = normalizeOcrText(text);
 
   const patterns = [
-    /能力值\s*[:\-]?\s*([0-9]{3,6})/,
-    /能力值[^\d]{0,10}([0-9]{3,6})/,
-    /战斗力\s*[:\-]?\s*([0-9]{3,6})/,
-    /战斗力[^\d]{0,8}([0-9]{3,6})/,
-    /战力\s*[:\-]?\s*([0-9]{3,6})/,
+    // Allow sword-icon / junk between 战斗力 and digits
+    /战斗力\D{0,20}([0-9]{3,6})/,
+    /战力\D{0,12}([0-9]{3,6})/,
+    /能力值\D{0,12}([0-9]{3,6})/,
   ];
 
   for (const pattern of patterns) {
@@ -118,8 +118,11 @@ export function extractCombatPower(text: string): number | null {
     ) {
       continue;
     }
-    for (const m of line.matchAll(/([0-9]{3,6})/g)) {
+    // Prefer the first number after the label on that line
+    const after = line.split(/战斗力|能力值|战力/)[1] ?? line;
+    for (const m of after.matchAll(/([0-9]{3,6})/g)) {
       labeledLineNums.push(Number(m[1]));
+      break;
     }
   }
   const labeledPick = pickBestPower(labeledLineNums, true);
@@ -315,7 +318,7 @@ export function parseCombatPowerScreenshot(
       combatPower: null,
       powerTop,
       detectedName: nameResult.detectedName,
-      error: "未识别到左上角战力，请截取包含左上战力的界面",
+      error: "未识别到「战斗力」后的数字，请截取角色下方战斗力完整界面",
     };
   }
 
