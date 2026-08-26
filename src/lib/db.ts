@@ -149,6 +149,15 @@ export function ensureDb(): Database.Database {
       is_temporary INTEGER NOT NULL DEFAULT 0
     );
 
+    CREATE INDEX IF NOT EXISTS idx_auction_items_session
+      ON auction_items(session_id, sort_order, id);
+    CREATE INDEX IF NOT EXISTS idx_auction_item_dividends_item
+      ON auction_item_dividends(item_id, member_id);
+    CREATE INDEX IF NOT EXISTS idx_auction_bids_session_item
+      ON auction_bids(session_id, item_id, id);
+    CREATE INDEX IF NOT EXISTS idx_auction_events_session
+      ON auction_events(session_id, id);
+
     CREATE TABLE IF NOT EXISTS auction_item_sale_history (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       item_id INTEGER,
@@ -780,17 +789,22 @@ function getItemDividendIds(itemId: number): number[] {
 
 function toItem(
   row: ItemRow,
-  opts?: { includeImages?: boolean; includeDividends?: boolean },
+  opts?: {
+    includeImages?: boolean;
+    includeDividends?: boolean;
+    dividendRoster?: { ids: number[]; names: string[] };
+  },
 ): AuctionItem {
   const includeImages = opts?.includeImages !== false;
   const includeDividends = opts?.includeDividends !== false;
   const dividendMemberIds = includeDividends
-    ? getItemDividendIds(row.id)
+    ? (opts?.dividendRoster?.ids ?? getItemDividendIds(row.id))
     : [];
   const dividendMemberNames = includeDividends
-    ? (dividendMemberIds
+    ? (opts?.dividendRoster?.names ??
+      (dividendMemberIds
         .map((id) => getMemberById(id)?.name)
-        .filter(Boolean) as string[])
+        .filter(Boolean) as string[]))
     : [];
 
   let winnerName: string | null = null;
@@ -1081,12 +1095,62 @@ export function listItems(
   sessionId: number,
   opts?: { includeImages?: boolean; includeDividends?: boolean },
 ): AuctionItem[] {
-  const rows = ensureDb()
+  const database = ensureDb();
+  const rows = database
     .prepare(
       `SELECT * FROM auction_items WHERE session_id = ? ORDER BY sort_order ASC, id ASC`,
     )
     .all(sessionId) as ItemRow[];
-  return rows.map((row) => toItem(row, opts));
+
+  const rosters = new Map<number, { ids: number[]; names: string[] }>();
+  if (opts?.includeDividends !== false && rows.length > 0) {
+    const rosterRows = database
+      .prepare(
+        `SELECT d.item_id, d.member_id, m.name AS member_name
+         FROM auction_item_dividends d
+         INNER JOIN auction_items i ON i.id = d.item_id
+         LEFT JOIN members m ON m.id = d.member_id
+         WHERE i.session_id = ?
+         ORDER BY d.item_id ASC, d.rowid ASC`,
+      )
+      .all(sessionId) as Array<{
+      item_id: number;
+      member_id: number;
+      member_name: string | null;
+    }>;
+    for (const rosterRow of rosterRows) {
+      const roster = rosters.get(rosterRow.item_id) ?? { ids: [], names: [] };
+      roster.ids.push(rosterRow.member_id);
+      if (rosterRow.member_name) roster.names.push(rosterRow.member_name);
+      rosters.set(rosterRow.item_id, roster);
+    }
+  }
+
+  return rows.map((row) =>
+    toItem(row, {
+      ...opts,
+      dividendRoster:
+        opts?.includeDividends === false
+          ? undefined
+          : (rosters.get(row.id) ?? { ids: [], names: [] }),
+    }),
+  );
+}
+
+export function listItemImages(
+  sessionId: number,
+): Array<{ id: number; imageData: string | null }> {
+  return ensureDb()
+    .prepare(
+      `SELECT id, image_data FROM auction_items
+       WHERE session_id = ?
+       ORDER BY sort_order ASC, id ASC`,
+    )
+    .all(sessionId)
+    .map((row) => {
+      const typed = row as { id: number; image_data: string | null };
+      return { id: typed.id, imageData: typed.image_data };
+    });
 }
 
 /** Latest high bidder per item in a session (by max bid id = current price). */

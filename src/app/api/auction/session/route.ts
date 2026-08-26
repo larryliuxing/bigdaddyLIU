@@ -4,7 +4,9 @@ import {
   createDraftSession,
   deleteAuctionSession,
   endAuctionSession,
+  getPublicAuctionSession,
   getSessionById,
+  listItemImages,
   listSessionSummaries,
   startAuctionSession,
   updateSessionSchedule,
@@ -18,14 +20,31 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const sessionId = Number(searchParams.get("sessionId"));
   const lite = searchParams.get("lite") === "1";
+  const bootstrap = searchParams.get("bootstrap") === "1";
+  const includeSessions = searchParams.get("sessions") !== "0";
+  if (searchParams.get("images") === "1") {
+    const session =
+      Number.isFinite(sessionId) && sessionId > 0
+        ? getSessionById(sessionId)
+        : getPublicAuctionSession();
+    return NextResponse.json({
+      sessionId: session?.id ?? null,
+      images: session ? listItemImages(session.id) : [],
+    });
+  }
   const room = buildRoomState(
     Number.isFinite(sessionId) && sessionId > 0 ? sessionId : undefined,
-    { lite },
+    {
+      lite: lite || bootstrap,
+      includeDividends: bootstrap ? true : undefined,
+      includePriceStats: bootstrap ? true : undefined,
+    },
   );
-  return NextResponse.json({
-    room,
-    sessions: listSessionSummaries(),
-  });
+  return NextResponse.json(
+    includeSessions
+      ? { room, sessions: listSessionSummaries() }
+      : { room },
+  );
 }
 
 export async function POST(request: Request) {
