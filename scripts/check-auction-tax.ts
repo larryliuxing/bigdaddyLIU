@@ -22,31 +22,35 @@ assert.equal(normalizeAuctionTaxRate(-1), 0);
 assert.equal(normalizeAuctionTaxRate(1), 0.1);
 assert.equal(formatAuctionTaxPercent(0.075), 7.5);
 
-const originalCwd = process.cwd();
-const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "guild-auction-tax-"));
-try {
-  process.chdir(tempDir);
-  const { createDraftSession, updateSessionSchedule, updateSessionTaxRate } =
-    await import("../src/lib/db");
+async function main() {
+  const originalCwd = process.cwd();
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "guild-auction-tax-"));
+  try {
+    process.chdir(tempDir);
+    const { createDraftSession, updateSessionSchedule, updateSessionTaxRate } =
+      await import("../src/lib/db");
 
-  const created = createDraftSession({
-    scheduledStart: null,
-    durationMinutes: 30,
-    taxRate: 0.075,
-  });
-  assert.equal(created.taxRate, 0.075);
+    const created = createDraftSession({
+      scheduledStart: null,
+      durationMinutes: 30,
+      taxRate: 0.075,
+    });
+    assert.equal(created.taxRate, 0.075);
 
-  const updated = updateSessionSchedule(created.id, {
-    scheduledStart: null,
-    taxRate: 0.1,
-  });
-  assert.equal(updated?.taxRate, 0.1);
+    const updated = updateSessionSchedule(created.id, {
+      scheduledStart: null,
+      taxRate: 0.1,
+    });
+    assert.equal(updated?.taxRate, 0.1);
 
-  const reset = updateSessionTaxRate(created.id, 0);
-  assert.equal(reset.taxRate, 0);
-} finally {
-  process.chdir(originalCwd);
-  fs.rmSync(tempDir, { recursive: true, force: true });
+    const reset = updateSessionTaxRate(created.id, 0);
+    assert.equal(reset.taxRate, 0);
+  } finally {
+    process.chdir(originalCwd);
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+
+  console.log("auction session tax checks passed");
 }
 
-console.log("auction session tax checks passed");
+void main();
