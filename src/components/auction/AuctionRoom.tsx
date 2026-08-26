@@ -48,6 +48,149 @@ function itemStatusLabel(status: AuctionItem["status"]) {
   return "待开拍";
 }
 
+function AuctionLotCard({
+  item,
+  canBid,
+  memberName,
+  memberId,
+  minBid,
+  draftValue,
+  bidding,
+  onDraftChange,
+  onBid,
+  onOpenImage,
+}: {
+  item: AuctionItem;
+  canBid: boolean;
+  memberName?: string | null;
+  memberId?: number | null;
+  minBid: number;
+  draftValue: string;
+  bidding: boolean;
+  onDraftChange: (value: string) => void;
+  onBid: () => void;
+  onOpenImage: (payload: {
+    imageData: string;
+    name: string;
+    quality?: ItemQuality | null;
+  }) => void;
+}) {
+  const q = qualityMeta(item.quality);
+  const isMine = memberId != null && item.leadingBidderId === memberId;
+  return (
+    <article className="rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)] p-4">
+      <div className="flex flex-col gap-4 sm:flex-row">
+        <AuctionItemThumb
+          imageData={item.imageData}
+          name={item.name}
+          quality={item.quality}
+          className="mx-auto h-28 w-28 sm:mx-0"
+          onOpen={(payload) =>
+            onOpenImage({
+              ...payload,
+              quality: item.quality,
+            })
+          }
+        />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <h3 className="text-lg font-bold">
+                <span
+                  className="mr-2 inline-block h-2.5 w-2.5 rounded-full"
+                  style={{ background: q.color }}
+                />
+                {item.name}
+              </h3>
+              <p className="mt-1 text-xs text-[var(--text-muted)]">
+                起拍 ¥{item.startPrice} · 加价 ¥{item.bidIncrement}
+              </p>
+              <ItemPriceStatsLine stats={item.priceStats} className="mt-1" />
+              <p className="mt-1 text-xs text-[var(--text-muted)]">
+                分红人员：
+                {item.dividendMemberNames.length > 0
+                  ? item.dividendMemberNames.join("、")
+                  : "未设置"}
+              </p>
+            </div>
+            <span
+              className={
+                canBid
+                  ? "rounded-full bg-emerald-500/15 px-2.5 py-1 text-xs text-emerald-300"
+                  : "rounded-full bg-amber-500/15 px-2.5 py-1 text-xs text-amber-200"
+              }
+            >
+              {canBid ? "竞拍中" : "待开拍"}
+            </span>
+          </div>
+          <p className="mt-3 text-2xl font-bold text-[var(--accent-gold)]">
+            ¥{item.currentPrice}
+          </p>
+          {canBid ? (
+            <p className="mt-1 text-sm text-[var(--text-muted)]">
+              {item.leadingBidderName ? (
+                <>
+                  当前出价：
+                  <span
+                    className={
+                      isMine
+                        ? "font-medium text-[var(--accent-gold)]"
+                        : "font-medium text-[var(--text-primary)]"
+                    }
+                  >
+                    {item.leadingBidderName}
+                    {isMine ? "（我）" : ""}
+                  </span>
+                </>
+              ) : (
+                "暂无出价"
+              )}
+            </p>
+          ) : (
+            <p className="mt-1 text-sm text-[var(--text-muted)]">
+              开拍前可查看拍品，到点后才能出价
+            </p>
+          )}
+          {canBid ? (
+            memberName ? (
+              <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                <input
+                  className="field"
+                  type="number"
+                  min={minBid}
+                  step={item.bidIncrement}
+                  value={draftValue}
+                  onChange={(e) => onDraftChange(e.target.value)}
+                />
+                <button
+                  type="button"
+                  className="rounded-xl bg-[#e23d4a] px-5 py-3 text-sm font-semibold sm:min-w-[120px] disabled:opacity-50"
+                  disabled={bidding}
+                  onClick={onBid}
+                >
+                  {bidding ? "出价中…" : "出价"}
+                </button>
+              </div>
+            ) : (
+              <p className="mt-3 text-sm text-[var(--text-muted)]">
+                请以成员身份登录后出价
+              </p>
+            )
+          ) : (
+            <button
+              type="button"
+              className="mt-3 rounded-xl bg-[#e23d4a] px-5 py-3 text-sm font-semibold opacity-40 sm:min-w-[120px]"
+              disabled
+            >
+              未开拍，暂不可出价
+            </button>
+          )}
+        </div>
+      </div>
+    </article>
+  );
+}
+
 /** Keep previously loaded images when applying a lite room payload. */
 function mergeRoomKeepImages(
   prev: AuctionRoomState | null,
@@ -276,6 +419,7 @@ export function AuctionRoom({
   const waiting =
     !session || session.status === "draft" || session.status === "scheduled";
   const activeItems = room?.activeItems ?? [];
+  const previewItems = room?.items ?? [];
 
   function draftValue(item: AuctionItem) {
     const min = room?.minNextBids?.[item.id] ?? item.startPrice;
@@ -480,22 +624,54 @@ export function AuctionRoom({
 
         <section className="relative z-10 space-y-3">
           {waiting && (
-            <div className="flex flex-col items-center justify-center rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)] py-16 text-center">
-              <HourglassIcon />
-              <p className="mt-4 text-lg font-medium">暂无进行中的拍卖</p>
-              <p className="mt-2 max-w-sm text-sm text-[var(--text-muted)]">
-                请等待管理员开始拍卖，或查看历史记录
-                {session?.status === "scheduled" && session.scheduledStart
-                  ? `（预约 ${formatBeijingDateTime(session.scheduledStart)} 北京时间）`
-                  : ""}
+            <div
+              className={`flex flex-col items-center justify-center rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)] text-center ${
+                previewItems.length > 0 ? "px-5 py-6" : "py-16"
+              }`}
+            >
+              {previewItems.length === 0 && <HourglassIcon />}
+              <p
+                className={`font-medium ${
+                  previewItems.length > 0 ? "text-base" : "mt-4 text-lg"
+                }`}
+              >
+                {previewItems.length > 0 ? "拍卖尚未开始" : "暂无进行中的拍卖"}
               </p>
-              {(room?.items?.length ?? 0) > 0 && (
-                <p className="mt-3 text-xs text-[var(--text-muted)]">
-                  本场已备拍品 {room!.items.length} 件，开拍后将同时竞拍
+              <p className="mt-2 max-w-md text-sm text-[var(--text-muted)]">
+                {session?.status === "scheduled" && session.scheduledStart
+                  ? `预约 ${formatBeijingDateTime(session.scheduledStart)} 北京时间`
+                  : "请等待管理员开始拍卖，或查看历史记录"}
+              </p>
+              {previewItems.length > 0 && (
+                <p className="mt-2 text-xs text-[var(--text-muted)]">
+                  本场 {previewItems.length}{" "}
+                  件拍品可先查看，开拍后将同时竞拍，到点才能出价
                 </p>
               )}
             </div>
           )}
+
+          {waiting &&
+            previewItems.map((item) => (
+              <AuctionLotCard
+                key={item.id}
+                item={item}
+                canBid={false}
+                memberName={member?.name}
+                memberId={member?.id}
+                minBid={item.startPrice}
+                draftValue={String(item.startPrice)}
+                bidding={false}
+                onDraftChange={() => undefined}
+                onBid={() => undefined}
+                onOpenImage={(payload) =>
+                  setViewer({
+                    ...payload,
+                    detail: `起拍 ¥${item.startPrice} · 待开拍`,
+                  })
+                }
+              />
+            ))}
 
           {live && activeItems.length === 0 && (
             <div className="rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)] py-10 text-center text-[var(--text-muted)]">
@@ -505,115 +681,35 @@ export function AuctionRoom({
 
           {live &&
             activeItems.map((item) => {
-              const q = qualityMeta(item.quality);
               const min = room?.minNextBids?.[item.id] ?? item.startPrice;
-              const isMine =
-                member != null && item.leadingBidderId === member.id;
               return (
-                <article
+                <AuctionLotCard
                   key={item.id}
-                  className="rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)] p-4"
-                >
-                  <div className="flex flex-col gap-4 sm:flex-row">
-                    <AuctionItemThumb
-                      imageData={item.imageData}
-                      name={item.name}
-                      quality={item.quality}
-                      className="mx-auto h-28 w-28 sm:mx-0"
-                      onOpen={(payload) =>
-                        setViewer({
-                          ...payload,
-                          detail: `当前 ¥${item.currentPrice}${
-                            item.leadingBidderName
-                              ? ` · ${item.leadingBidderName}`
-                              : ""
-                          }`,
-                        })
-                      }
-                    />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-start justify-between gap-2">
-                        <div>
-                          <h3 className="text-lg font-bold">
-                            <span
-                              className="mr-2 inline-block h-2.5 w-2.5 rounded-full"
-                              style={{ background: q.color }}
-                            />
-                            {item.name}
-                          </h3>
-                          <p className="mt-1 text-xs text-[var(--text-muted)]">
-                            起拍 ¥{item.startPrice} · 加价 ¥{item.bidIncrement}
-                          </p>
-                          <ItemPriceStatsLine
-                            stats={item.priceStats}
-                            className="mt-1"
-                          />
-                          <p className="mt-1 text-xs text-[var(--text-muted)]">
-                            分红人员：
-                            {item.dividendMemberNames.length > 0
-                              ? item.dividendMemberNames.join("、")
-                              : "未设置"}
-                          </p>
-                        </div>
-                        <span className="rounded-full bg-emerald-500/15 px-2.5 py-1 text-xs text-emerald-300">
-                          竞拍中
-                        </span>
-                      </div>
-                      <p className="mt-3 text-2xl font-bold text-[var(--accent-gold)]">
-                        ¥{item.currentPrice}
-                      </p>
-                      <p className="mt-1 text-sm text-[var(--text-muted)]">
-                        {item.leadingBidderName
-                          ? <>
-                              当前出价：
-                              <span
-                                className={
-                                  isMine
-                                    ? "font-medium text-[var(--accent-gold)]"
-                                    : "font-medium text-[var(--text-primary)]"
-                                }
-                              >
-                                {item.leadingBidderName}
-                                {isMine ? "（我）" : ""}
-                              </span>
-                            </>
-                          : "暂无出价"}
-                      </p>
-                      {member ? (
-                        <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-                          <input
-                            className="field"
-                            type="number"
-                            min={min}
-                            step={item.bidIncrement}
-                            value={draftValue(item)}
-                            onChange={(e) =>
-                              setBidDrafts((prev) => ({
-                                ...prev,
-                                [item.id]: {
-                                  value: e.target.value,
-                                  touched: true,
-                                },
-                              }))
-                            }
-                          />
-                          <button
-                            type="button"
-                            className="rounded-xl bg-[#e23d4a] px-5 py-3 text-sm font-semibold sm:min-w-[120px] disabled:opacity-50"
-                            disabled={biddingId === item.id}
-                            onClick={() => placeBid(item.id)}
-                          >
-                            {biddingId === item.id ? "出价中…" : "出价"}
-                          </button>
-                        </div>
-                      ) : (
-                        <p className="mt-3 text-sm text-[var(--text-muted)]">
-                          请以成员身份登录后出价
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                </article>
+                  item={item}
+                  canBid
+                  memberName={member?.name}
+                  memberId={member?.id}
+                  minBid={min}
+                  draftValue={draftValue(item)}
+                  bidding={biddingId === item.id}
+                  onDraftChange={(value) =>
+                    setBidDrafts((prev) => ({
+                      ...prev,
+                      [item.id]: { value, touched: true },
+                    }))
+                  }
+                  onBid={() => placeBid(item.id)}
+                  onOpenImage={(payload) =>
+                    setViewer({
+                      ...payload,
+                      detail: `当前 ¥${item.currentPrice}${
+                        item.leadingBidderName
+                          ? ` · ${item.leadingBidderName}`
+                          : ""
+                      }`,
+                    })
+                  }
+                />
               );
             })}
 
