@@ -37,6 +37,34 @@ const FEATURES = [
   },
 ] as const;
 
+const CHANGELOG = [
+  {
+    date: "8月26日",
+    items: [
+      "首页增加更新日志看板，方便查看最近修复",
+      "拍卖动态改为可滚动回看，出价记录不再刷过去就消失",
+      "拍卖结束后拍品结果与分红公示提到上方一起展示",
+      "排行榜点选蓝色角色名时识别框加大，三字名不容易被裁掉",
+      "后台可配置合格战力线（排行榜均值百分比，默认 85%）",
+      "紫、粉拍品最后一分钟出价会加时（紫 +30 秒，粉 +1 分钟）",
+      "预约未开拍时可先查看拍品，到点才能出价",
+      "拍卖大厅加载加快，开拍后自动刷新分红名单",
+      "本场拍卖可单独设置税率（0%–10%）",
+    ],
+  },
+  {
+    date: "8月21日",
+    items: [
+      "排行榜战力认证改为先点战斗力数字，再点蓝色角色名",
+      "战力识别改为读取界面左上角战斗力，减少读错",
+    ],
+  },
+  {
+    date: "8月13日",
+    items: ["BOSS 计时器按倒计时排序，名称更大，可配置需票数"],
+  },
+] as const;
+
 export function HomeHub({ user }: { user: Extract<SessionUser, { type: "member" }> }) {
   const router = useRouter();
   const [showAdmin, setShowAdmin] = useState(false);
@@ -100,7 +128,31 @@ export function HomeHub({ user }: { user: Extract<SessionUser, { type: "member" 
           </div>
         </header>
 
-        <section className="animate-fade-up-delay relative z-10 mt-10 space-y-3">
+        <section className="animate-fade-up-delay relative z-10 mt-8 overflow-hidden rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.92)]">
+          <div className="flex items-center justify-between border-b border-[var(--border-soft)] px-4 py-3">
+            <h2 className="text-sm font-medium">更新日志</h2>
+            <span className="text-xs text-[var(--text-muted)]">最近修复</span>
+          </div>
+          <div className="max-h-56 space-y-4 overflow-y-auto overscroll-contain px-4 py-3 sm:max-h-64">
+            {CHANGELOG.map((group) => (
+              <div key={group.date}>
+                <p className="text-xs font-medium text-[var(--accent-gold)]">
+                  {group.date}
+                </p>
+                <ul className="mt-1.5 space-y-1.5 text-sm text-[var(--text-muted)]">
+                  {group.items.map((item) => (
+                    <li key={item} className="flex gap-2">
+                      <span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-[var(--accent-gold)] opacity-70" />
+                      <span>{item}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="animate-fade-up-delay relative z-10 mt-6 space-y-3">
           {FEATURES.map((feature, index) => (
             <button
               key={feature.key}

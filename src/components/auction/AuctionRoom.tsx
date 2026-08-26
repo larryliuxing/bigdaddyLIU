@@ -579,7 +579,10 @@ export function AuctionRoom({
 
         <section className="relative z-10 mb-4 rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.92)] p-4">
           <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-sm font-medium">动态</h2>
+            <div className="flex items-baseline gap-2">
+              <h2 className="text-sm font-medium">动态</h2>
+              <span className="text-xs text-[var(--text-muted)]">可滚动回看</span>
+            </div>
             <div className="flex flex-wrap items-center gap-3">
               {(live || session?.status === "scheduled") && (
                 <span className="rounded-lg border border-[var(--border-soft)] px-2.5 py-1 text-sm tabular-nums">
@@ -600,7 +603,7 @@ export function AuctionRoom({
               </label>
             </div>
           </div>
-          <ul className="space-y-1.5 text-sm text-[var(--text-muted)]">
+          <ul className="max-h-56 space-y-1.5 overflow-y-auto overscroll-contain pr-1 text-sm text-[var(--text-muted)] sm:max-h-72">
             {(room?.recentEvents ?? []).length === 0 && <li>暂无动态</li>}
             {(room?.recentEvents ?? []).map((ev) => (
               <li
@@ -725,14 +728,9 @@ export function AuctionRoom({
               <div className="rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)] p-5 text-center">
                 <p className="text-lg font-medium">本场拍卖已结束</p>
                 <p className="mt-2 text-sm text-[var(--text-muted)]">
-                  下方为本场分红公示，所有人打开本场即可查看自己的分红。
+                  下方为本场拍品结果与分红公示，打开本场即可查看成交与自己的分红。
                 </p>
               </div>
-              <DividendReportView
-                report={room?.dividendReport ?? null}
-                editable={false}
-                highlightMemberId={member?.id ?? null}
-              />
               {(room?.items?.length ?? 0) > 0 && (
                 <section className="overflow-hidden rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)]">
                   <div className="border-b border-[var(--border-soft)] px-4 py-3 text-sm font-medium">
@@ -786,6 +784,11 @@ export function AuctionRoom({
                   </ul>
                 </section>
               )}
+              <DividendReportView
+                report={room?.dividendReport ?? null}
+                editable={false}
+                highlightMemberId={member?.id ?? null}
+              />
             </div>
           )}
         </section>
