@@ -13,7 +13,8 @@
   --accent-violet: #7b6cff;
   --border-soft: rgba(255, 255, 255, 0.08);
   --shadow-glow: 0 0 24px rgba(123, 108, 255, 0.18);
-  --font-display: var(--font-noto-sans-sc), "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-display: "Noto Sans CJK SC", "Source Han Sans SC", "PingFang SC",
+    "Microsoft YaHei", "WenQuanYi Micro Hei", Arial, sans-serif;
 }
 
 @theme inline {
