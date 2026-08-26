@@ -6,6 +6,7 @@
 import {
   NAME_CLICK_CROP,
   NAME_CLICK_CROP_WIDE,
+  NAME_CLICK_CROP_XL,
   POWER_CLICK_CROP,
   POWER_CLICK_CROP_WIDE,
   type RatioRect,
@@ -231,6 +232,38 @@ export function enhanceNameSoft(canvas: HTMLCanvasElement): HTMLCanvasElement {
   return canvas;
 }
 
+/**
+ * Mild grayscale: keep stroke anti-aliasing instead of hard binary.
+ * Better for stylized CJK HUD fonts that fall apart when thresholded.
+ */
+export function enhanceNameGray(canvas: HTMLCanvasElement): HTMLCanvasElement {
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return canvas;
+  const { width, height } = canvas;
+  const imageData = ctx.getImageData(0, 0, width, height);
+  const d = imageData.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const r = d[i];
+    const g = d[i + 1];
+    const b = d[i + 2];
+    const score = blueInkScore(r, g, b);
+    const brightness = (r + g + b) / 3;
+    const v =
+      score >= 12
+        ? Math.max(
+            0,
+            Math.min(210, Math.round(255 - brightness * 0.85 - score * 1.1)),
+          )
+        : Math.min(255, Math.round(220 + brightness * 0.14));
+    d[i] = v;
+    d[i + 1] = v;
+    d[i + 2] = v;
+    d[i + 3] = 255;
+  }
+  ctx.putImageData(imageData, 0, 0);
+  return canvas;
+}
+
 export function enhanceLightText(canvas: HTMLCanvasElement): HTMLCanvasElement {
   const ctx = canvas.getContext("2d");
   if (!ctx) return canvas;
@@ -274,11 +307,13 @@ export function nameRectAroundClick(
   yRatio: number,
   size: { w: number; h: number } = NAME_CLICK_CROP,
 ): RatioRect {
+  const x = clamp01(xRatio - size.w / 2);
+  const y = clamp01(yRatio - size.h / 2);
   return {
-    x: clamp01(xRatio - size.w / 2),
-    y: clamp01(yRatio - size.h / 2),
-    w: size.w,
-    h: size.h,
+    x,
+    y,
+    w: Math.min(size.w, 1 - x),
+    h: Math.min(size.h, 1 - y),
   };
 }
 
@@ -368,8 +403,8 @@ export function findBlueNameBoundsInProbe(
     if (maxX <= minX || maxY <= minY) return null;
   }
 
-  const padX = Math.max(4, Math.floor((maxX - minX) * 0.12));
-  const padY = Math.max(3, Math.floor((maxY - minY) * 0.45));
+  const padX = Math.max(10, Math.floor((maxX - minX) * 0.32));
+  const padY = Math.max(8, Math.floor((maxY - minY) * 0.85));
 
   return {
     x: sx + Math.max(0, minX - padX),
@@ -379,32 +414,42 @@ export function findBlueNameBoundsInProbe(
   };
 }
 
+function expandBounds(
+  bounds: { x: number; y: number; w: number; h: number },
+  img: HTMLImageElement,
+  padXRatio: number,
+  padYRatio: number,
+) {
+  const padX = Math.max(8, Math.round(bounds.w * padXRatio));
+  const padY = Math.max(6, Math.round(bounds.h * padYRatio));
+  const x = Math.max(0, bounds.x - padX);
+  const y = Math.max(0, bounds.y - padY);
+  return {
+    x,
+    y,
+    w: Math.min(img.width - x, bounds.w + padX * 2),
+    h: Math.min(img.height - y, bounds.h + padY * 2),
+  };
+}
+
 function variantsFromBounds(
   img: HTMLImageElement,
   bounds: { x: number; y: number; w: number; h: number },
 ): string[] {
   const urls: string[] = [];
-  const scale = bounds.w < 120 ? 5 : 4;
+  const scale = bounds.w < 140 ? 5.2 : 4.2;
+
+  const gray = cropAbsolute(img, bounds.x, bounds.y, bounds.w, bounds.h, scale);
+  enhanceNameGray(gray);
+  urls.push(toDataUrl(padCanvas(gray, 22)));
 
   const soft = cropAbsolute(img, bounds.x, bounds.y, bounds.w, bounds.h, scale);
   enhanceNameSoft(soft);
-  urls.push(toDataUrl(padCanvas(soft, 12)));
+  urls.push(toDataUrl(padCanvas(soft, 22)));
 
   const hard = cropAbsolute(img, bounds.x, bounds.y, bounds.w, bounds.h, scale);
   enhanceNameBlue(hard);
-  urls.push(toDataUrl(padCanvas(hard, 12)));
-
-  // Extra upscale of hard mask for small CJK
-  const hard2 = cropAbsolute(
-    img,
-    bounds.x,
-    bounds.y,
-    bounds.w,
-    bounds.h,
-    scale + 1.2,
-  );
-  enhanceNameBlue(hard2);
-  urls.push(toDataUrl(padCanvas(hard2, 16)));
+  urls.push(toDataUrl(padCanvas(hard, 22)));
 
   return urls;
 }
@@ -456,7 +501,9 @@ export async function buildPowerClickPreview(
 }
 
 /**
- * Tight cyan-name crops around a click (auto-trimmed to glyph band).
+ * Cyan-name crops around a click. Probe is large; auto-trim still
+ * prefers the blue glyph band, then we OCR both a padded trim and the
+ * wider probe so edge characters like「周」are less likely to be cut off.
  */
 export async function buildNameClickCrops(
   source: File | Blob | string,
@@ -467,50 +514,51 @@ export async function buildNameClickCrops(
   const probes = [
     nameRectAroundClick(xRatio, yRatio, NAME_CLICK_CROP),
     nameRectAroundClick(xRatio, yRatio, NAME_CLICK_CROP_WIDE),
+    nameRectAroundClick(xRatio, yRatio, NAME_CLICK_CROP_XL),
   ];
 
   const urls: string[] = [];
   let bestBounds: { x: number; y: number; w: number; h: number } | null = null;
+  let bestScore = -1;
 
   for (const probe of probes) {
     const bounds = findBlueNameBoundsInProbe(img, probe);
     if (!bounds) continue;
-    if (
-      !bestBounds ||
-      bounds.w * bounds.h < bestBounds.w * bestBounds.h * 0.9 ||
-      (bounds.w / Math.max(1, bounds.h) >
-        bestBounds.w / Math.max(1, bestBounds.h) &&
-        bounds.w > bestBounds.w * 0.7)
-    ) {
-      // Prefer wider-than-tall (text) and reasonably compact
-      const score =
-        (bounds.w / Math.max(1, bounds.h)) * 10 +
-        Math.min(bounds.w, img.width * 0.2);
-      const bestScore = bestBounds
-        ? (bestBounds.w / Math.max(1, bestBounds.h)) * 10 +
-          Math.min(bestBounds.w, img.width * 0.2)
-        : -1;
-      if (score >= bestScore) bestBounds = bounds;
+    const aspect = bounds.w / Math.max(1, bounds.h);
+    const score =
+      Math.min(bounds.w, img.width * 0.45) +
+      (aspect >= 1.6 ? 24 : aspect >= 1.2 ? 10 : -8);
+    if (score > bestScore) {
+      bestScore = score;
+      bestBounds = bounds;
     }
   }
 
   if (bestBounds) {
     urls.push(...variantsFromBounds(img, bestBounds));
-  } else {
-    // Fallback: small probe with blue enhance only
-    const rect = probes[0];
-    const blue = cropRatio(img, rect, 4.5);
+    urls.push(
+      ...variantsFromBounds(img, expandBounds(bestBounds, img, 0.28, 0.7)),
+    );
+  }
+
+  const probeForOcr = probes[1] ?? probes[0];
+  const gray = cropRatio(img, probeForOcr, 3.4);
+  enhanceNameGray(gray);
+  urls.push(toDataUrl(padCanvas(gray, 20)));
+  const soft = cropRatio(img, probeForOcr, 3.4);
+  enhanceNameSoft(soft);
+  urls.push(toDataUrl(padCanvas(soft, 20)));
+
+  if (!bestBounds) {
+    const blue = cropRatio(img, probes[0], 4.2);
     enhanceNameBlue(blue);
-    urls.push(toDataUrl(padCanvas(blue, 14)));
-    const soft = cropRatio(img, rect, 4.5);
-    enhanceNameSoft(soft);
-    urls.push(toDataUrl(padCanvas(soft, 14)));
+    urls.push(toDataUrl(padCanvas(blue, 20)));
   }
 
   return urls;
 }
 
-/** Preview shows the trimmed blue-name crop (what OCR actually sees). */
+/** Preview shows a padded name crop so the full CJK string is visible. */
 export async function buildNameClickPreview(
   source: File | Blob | string,
   xRatio: number,
@@ -520,24 +568,26 @@ export async function buildNameClickPreview(
   const probes = [
     nameRectAroundClick(xRatio, yRatio, NAME_CLICK_CROP),
     nameRectAroundClick(xRatio, yRatio, NAME_CLICK_CROP_WIDE),
+    nameRectAroundClick(xRatio, yRatio, NAME_CLICK_CROP_XL),
   ];
 
   for (const probe of probes) {
     const bounds = findBlueNameBoundsInProbe(img, probe);
     if (!bounds) continue;
+    const padded = expandBounds(bounds, img, 0.3, 0.75);
     const canvas = cropAbsolute(
       img,
-      bounds.x,
-      bounds.y,
-      bounds.w,
-      bounds.h,
-      3,
+      padded.x,
+      padded.y,
+      padded.w,
+      padded.h,
+      3.2,
     );
-    enhanceNameSoft(canvas);
-    return toDataUrl(padCanvas(canvas, 8));
+    enhanceNameGray(canvas);
+    return toDataUrl(padCanvas(canvas, 16));
   }
 
-  const fallback = cropRatio(img, probes[0], 2.5);
-  enhanceNameSoft(fallback);
-  return toDataUrl(padCanvas(fallback, 8));
+  const fallback = cropRatio(img, probes[1] ?? probes[0], 2.8);
+  enhanceNameGray(fallback);
+  return toDataUrl(padCanvas(fallback, 16));
 }

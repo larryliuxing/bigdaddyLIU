@@ -22,17 +22,22 @@ export const POWER_CLICK_CROP_WIDE = {
 } as const;
 
 /**
- * Initial probe around name click — intentionally modest so we don't pull in
- * nearby +N badges / portraits / skill icons. Auto-trim expands/shrinks
- * to the blue name glyphs afterward.
+ * Initial probe around name click. Wide enough to cover 2–4 CJK glyphs
+ * even if the tap is a bit off-center; auto-trim still drops nearby UI.
  */
 export const NAME_CLICK_CROP = {
-  w: 0.16,
-  h: 0.055,
+  w: 0.28,
+  h: 0.1,
 } as const;
 
-/** Wider probe if the first trim finds too little blue ink. */
+/** Wider probe when the name is long or the first trim finds little blue ink. */
 export const NAME_CLICK_CROP_WIDE = {
-  w: 0.22,
-  h: 0.07,
+  w: 0.4,
+  h: 0.14,
+} as const;
+
+/** Extra-wide fallback for small HUD names on busy screenshots. */
+export const NAME_CLICK_CROP_XL = {
+  w: 0.5,
+  h: 0.18,
 } as const;
