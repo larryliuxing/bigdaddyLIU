@@ -9,6 +9,9 @@ import {
 
 assert.equal(isPlausibleNameCandidate("CT", "唐小虎"), false);
 assert.equal(extractDetectedName("唐小虎", "唐小虎").matched, true);
+assert.equal(extractDetectedName("周杰伦", "周杰伦").matched, true);
+assert.equal(extractDetectedName("杰伦", "周杰伦").matched, true);
+assert.equal(extractDetectedName("周 杰 伦", "周杰伦").matched, true);
 assert.equal(extractDetectedName("入多避胡证基于双生1", "唐小虎").matched, false);
 
 assert.equal(extractCombatPower("能力值 47176"), 47176);
