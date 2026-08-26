@@ -478,7 +478,7 @@ export function LeaderboardPanel({
                 先点击「战斗力」数字位置识别战力（仅接受 4–6 位）
               </li>
               <li>
-                再点蓝色角色名「{member.name}」中间（识别框会大一些，三个字尽量都圈进去）
+                再点击蓝色角色名「{member.name}」完成校验后提交
               </li>
             </ol>
 
