@@ -1,5 +1,4 @@
 import {
-  countBidsForItem,
   getAuctionSettings,
   getDividendReport,
   getPublicAuctionSession,
@@ -22,6 +21,10 @@ export type BuildRoomOptions = {
    * Used for bid responses and live polling so updates stay fast.
    */
   lite?: boolean;
+  /** Override roster loading (bootstrap needs rosters without images). */
+  includeDividends?: boolean;
+  /** Override historical price-stat loading. */
+  includePriceStats?: boolean;
 };
 
 function withLeadingBidders(
@@ -63,24 +66,26 @@ export function buildRoomState(
     session = maybeAutoProgress(session.id) ?? session;
   }
 
-  const live = session?.status === "live";
   const ended = session?.status === "ended";
+  const includeDividends = options.includeDividends ?? !lite;
+  const includePriceStats = options.includePriceStats ?? !lite;
 
   const itemsRaw = session
     ? listItems(session.id, {
         includeImages: !lite,
-        includeDividends: !lite && !live,
+        includeDividends,
       })
     : [];
 
   const leaders = session ? mapLeadingBidders(session.id) : new Map();
-  const items = withPriceStats(withLeadingBidders(itemsRaw, leaders));
+  const bidderItems = withLeadingBidders(itemsRaw, leaders);
+  const items = includePriceStats ? withPriceStats(bidderItems) : bidderItems;
   const activeItems = items.filter((i) => i.status === "active");
   const activeItem = activeItems[0] ?? null;
 
   const minNextBids: Record<number, number> = {};
   for (const item of activeItems) {
-    const hasBids = countBidsForItem(item.id) > 0;
+    const hasBids = leaders.has(item.id);
     minNextBids[item.id] = hasBids
       ? item.currentPrice + item.bidIncrement
       : item.startPrice;

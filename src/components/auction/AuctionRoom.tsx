@@ -54,14 +54,24 @@ function mergeRoomKeepImages(
   next: AuctionRoomState,
 ): AuctionRoomState {
   if (!prev) return next;
-  const imageMap = new Map(
-    prev.items.map((item) => [item.id, item.imageData] as const),
-  );
+  const previousMap = new Map(prev.items.map((item) => [item.id, item]));
   const patch = (items: AuctionItem[]) =>
-    items.map((item) => ({
-      ...item,
-      imageData: item.imageData ?? imageMap.get(item.id) ?? null,
-    }));
+    items.map((item) => {
+      const previous = previousMap.get(item.id);
+      return {
+        ...item,
+        imageData: item.imageData ?? previous?.imageData ?? null,
+        dividendMemberIds:
+          item.dividendMemberIds.length > 0
+            ? item.dividendMemberIds
+            : (previous?.dividendMemberIds ?? []),
+        dividendMemberNames:
+          item.dividendMemberNames.length > 0
+            ? item.dividendMemberNames
+            : (previous?.dividendMemberNames ?? []),
+        priceStats: item.priceStats ?? previous?.priceStats ?? null,
+      };
+    });
   return {
     ...next,
     items: patch(next.items),
@@ -96,7 +106,8 @@ export function AuctionRoom({
   const [danmaku, setDanmaku] = useState<
     Array<{ id: string; text: string; top: number; variant: "bid" | "track" }>
   >([]);
-  const hasImagesRef = useRef(false);
+  const staticItemsKeyRef = useRef("");
+  const staticSessionStatusRef = useRef<string | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const lastEventIdRef = useRef(0);
   const eventsBootstrapped = useRef(false);
@@ -161,28 +172,88 @@ export function AuctionRoom({
     let timer: number | null = null;
     const liveRef = { current: false };
 
-    const tick = async (forceFull = false) => {
-      const lite = !forceFull && hasImagesRef.current;
+    const loadImages = async (sessionId: number) => {
       const res = await fetch(
-        `/api/auction/session${lite ? "?lite=1" : ""}`,
+        `/api/auction/session?sessions=0&images=1&sessionId=${sessionId}`,
+      );
+      const data = await res.json();
+      if (!alive || !res.ok || data.sessionId !== sessionId) return;
+      const imageMap = new Map<number, string | null>(
+        (data.images || []).map(
+          (image: { id: number; imageData: string | null }) => [
+            image.id,
+            image.imageData,
+          ],
+        ),
+      );
+      setRoom((prev) => {
+        if (!prev || prev.session?.id !== sessionId) return prev;
+        const patch = (items: AuctionItem[]) =>
+          items.map((item) => ({
+            ...item,
+            imageData: imageMap.get(item.id) ?? item.imageData,
+          }));
+        return {
+          ...prev,
+          items: patch(prev.items),
+          activeItems: patch(prev.activeItems),
+          activeItem: prev.activeItem
+            ? patch([prev.activeItem])[0]
+            : null,
+        };
+      });
+    };
+
+    const bootstrap = async () => {
+      const res = await fetch(
+        "/api/auction/session?sessions=0&bootstrap=1",
+      );
+      const data = await res.json();
+      if (!alive || !res.ok) return null;
+      liveRef.current = data.room?.session?.status === "live";
+      staticItemsKeyRef.current = (data.room?.items ?? [])
+        .map((item: AuctionItem) => item.id)
+        .join(",");
+      staticSessionStatusRef.current = data.room?.session?.status ?? null;
+      setRoom(data.room);
+      setRemaining(data.room.remainingSeconds);
+      if (data.room?.session?.id) {
+        void loadImages(data.room.session.id);
+      }
+      return data.room as AuctionRoomState;
+    };
+
+    const tick = async () => {
+      const res = await fetch(
+        "/api/auction/session?sessions=0&lite=1",
       );
       const data = await res.json();
       if (!alive || !res.ok) return;
+      const nextKey = (data.room?.items ?? [])
+        .map((item: AuctionItem) => item.id)
+        .join(",");
+      const nextStatus = data.room?.session?.status ?? null;
+      if (
+        nextKey !== staticItemsKeyRef.current ||
+        nextStatus !== staticSessionStatusRef.current
+      ) {
+        await bootstrap();
+        return;
+      }
       liveRef.current = data.room?.session?.status === "live";
       setRoom((prev) => mergeRoomKeepImages(prev, data.room));
       setRemaining(data.room.remainingSeconds);
-      if (!lite) hasImagesRef.current = true;
     };
 
     const schedule = () => {
       timer = window.setTimeout(() => {
-        void tick(false).finally(() => {
+        void tick().finally(() => {
           if (alive) schedule();
         });
       }, liveRef.current ? 800 : 2500);
     };
 
-    void tick(true).finally(() => {
+    void bootstrap().finally(() => {
       if (alive) schedule();
     });
 
@@ -287,7 +358,9 @@ export function AuctionRoom({
       if (!res.ok) {
         setError(data.error || "出价失败");
         // Refresh authoritative state after rejected optimistic update
-        const refresh = await fetch("/api/auction/session?lite=1");
+        const refresh = await fetch(
+          "/api/auction/session?sessions=0&lite=1",
+        );
         const refreshData = await refresh.json();
         if (refresh.ok) {
           setRoom((prev) => mergeRoomKeepImages(prev, refreshData.room));
@@ -475,6 +548,12 @@ export function AuctionRoom({
                             stats={item.priceStats}
                             className="mt-1"
                           />
+                          <p className="mt-1 text-xs text-[var(--text-muted)]">
+                            分红人员：
+                            {item.dividendMemberNames.length > 0
+                              ? item.dividendMemberNames.join("、")
+                              : "未设置"}
+                          </p>
                         </div>
                         <span className="rounded-full bg-emerald-500/15 px-2.5 py-1 text-xs text-emerald-300">
                           竞拍中

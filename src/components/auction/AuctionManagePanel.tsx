@@ -49,6 +49,7 @@ export function AuctionManagePanel({
   const [createDate, setCreateDate] = useState(beijingTodayDate);
   const [createTime, setCreateTime] = useState("15:00");
   const [createDuration, setCreateDuration] = useState(30);
+  const [createTaxPercent, setCreateTaxPercent] = useState(5);
   const [editDate, setEditDate] = useState(beijingTodayDate);
   const [editTime, setEditTime] = useState("15:00");
   const [editDuration, setEditDuration] = useState(30);
@@ -75,6 +76,7 @@ export function AuctionManagePanel({
       setEditTime(beijingHmFromIso(start));
     }
     setEditDuration(session.durationMinutes || 30);
+    setTaxPercent(Number((session.taxRate * 100).toFixed(1)));
   }, []);
 
   const loadList = useCallback(async () => {
@@ -95,13 +97,6 @@ export function AuctionManagePanel({
       const report =
         (data.room?.dividendReport as DividendReport | null) ?? null;
       setDividendReport(report);
-      if (report?.taxRate != null) {
-        setTaxPercent(Number((report.taxRate * 100).toFixed(1)));
-      } else if (data.room?.settings?.taxRate != null) {
-        setTaxPercent(
-          Number((Number(data.room.settings.taxRate) * 100).toFixed(1)),
-        );
-      }
     },
     [syncEditFields],
   );
@@ -125,9 +120,6 @@ export function AuctionManagePanel({
       const report =
         (data.room?.dividendReport as DividendReport | null) ?? null;
       setDividendReport(report);
-      if (report?.taxRate != null) {
-        setTaxPercent(Number((report.taxRate * 100).toFixed(1)));
-      }
     };
     const timeout = window.setTimeout(() => {
       void tick();
@@ -155,6 +147,7 @@ export function AuctionManagePanel({
           action: "create",
           scheduledStart,
           durationMinutes: createDuration,
+          taxPercent: createTaxPercent,
         }),
       });
       const data = await res.json();
@@ -164,11 +157,12 @@ export function AuctionManagePanel({
       }
       setSessions(data.sessions || []);
       setMessage(
-        `已新建场次：${formatBeijingSessionLabel(scheduledStart)}（北京时间）`,
+        `已新建场次：${formatBeijingSessionLabel(scheduledStart)} · 税率 ${createTaxPercent}%`,
       );
       setCreateDate(beijingTodayDate());
       setCreateTime("15:00");
       setCreateDuration(30);
+      setCreateTaxPercent(5);
     } catch {
       setError("网络错误");
     } finally {
@@ -191,6 +185,7 @@ export function AuctionManagePanel({
           sessionId: selectedId,
           scheduledStart,
           durationMinutes: editDuration,
+          taxPercent,
         }),
       });
       const data = await res.json();
@@ -201,7 +196,7 @@ export function AuctionManagePanel({
       setSessions(data.sessions || []);
       setRoom(data.room);
       syncEditFields(data.room);
-      setMessage("场次时间已更新");
+      setMessage(`场次设置已更新 · 税率 ${taxPercent}%`);
     } catch {
       setError("网络错误");
     } finally {
@@ -458,6 +453,20 @@ export function AuctionManagePanel({
                     onChange={(e) => setCreateDuration(Number(e.target.value))}
                   />
                 </label>
+                <label className="block flex-1 space-y-1.5">
+                  <span className="text-xs text-[var(--text-muted)]">
+                    本场税率（0%–10%）
+                  </span>
+                  <input
+                    className="field"
+                    type="number"
+                    min={0}
+                    max={10}
+                    step={0.1}
+                    value={createTaxPercent}
+                    onChange={(e) => setCreateTaxPercent(Number(e.target.value))}
+                  />
+                </label>
                 <button
                   type="button"
                   className="btn-primary sm:max-w-[140px]"
@@ -499,7 +508,7 @@ export function AuctionManagePanel({
                         </p>
                         <p className="mt-1 text-xs text-[var(--text-muted)]">
                           时长 {s.durationMinutes} 分钟 · 拍品 {s.itemCount} 件
-                          · 点击进入
+                          · 税率 {(s.taxRate * 100).toFixed(1)}% · 点击进入
                         </p>
                       </button>
                       <div className="flex flex-wrap items-center gap-2">
@@ -581,6 +590,20 @@ export function AuctionManagePanel({
                       onChange={(e) => setEditDuration(Number(e.target.value))}
                     />
                   </label>
+                  <label className="block flex-1 space-y-1.5">
+                    <span className="text-xs text-[var(--text-muted)]">
+                      本场税率（0%–10%）
+                    </span>
+                    <input
+                      className="field"
+                      type="number"
+                      min={0}
+                      max={10}
+                      step={0.1}
+                      value={taxPercent}
+                      onChange={(e) => setTaxPercent(Number(e.target.value))}
+                    />
+                  </label>
                   <button
                     type="button"
                     className="btn-primary sm:max-w-[140px]"
@@ -592,7 +615,9 @@ export function AuctionManagePanel({
                 </div>
               ) : (
                 <p className="mt-3 text-sm text-[var(--text-muted)]">
-                  进行中 / 已完成场次不可更改，仅作记录保留。
+                  本场税率{" "}
+                  {((session?.taxRate ?? 0) * 100).toFixed(1)}%。
+                  进行中 / 已完成场次的时间设置不可更改。
                   {session?.status === "live" && (
                     <span className="ml-2">
                       剩余 {formatCountdown(room?.remainingSeconds ?? null)}

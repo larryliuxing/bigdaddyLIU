@@ -2,16 +2,16 @@ import { NextResponse } from "next/server";
 import { requireAdminSession } from "@/lib/auth";
 import {
   calculateDividends,
-  getAuctionSettings,
   getDividendReport,
   getLatestSession,
   getSessionById,
   listDividends,
   listSessions,
   setItemDividendMembers,
-  updateAuctionSettings,
+  updateSessionTaxRate,
 } from "@/lib/db";
 import { buildRoomState } from "@/lib/auction/room";
+import { parseAuctionTaxPercent } from "@/lib/auction/tax";
 
 export const runtime = "nodejs";
 
@@ -37,7 +37,6 @@ export async function GET(request: Request) {
   return NextResponse.json({
     sessions: listSessions(),
     session,
-    settings: getAuctionSettings(),
     dividends: session ? listDividends(session.id) : [],
     report,
     room: buildRoomState(session?.id),
@@ -54,43 +53,52 @@ export async function POST(request: Request) {
   const action = String(body?.action ?? "calculate");
 
   try {
-    if (action === "setTaxRate") {
-      const taxPercent = Number(body?.taxPercent ?? body?.taxRate);
-      const taxRate =
-        body?.taxRate != null && Number(body.taxRate) <= 1
-          ? Number(body.taxRate)
-          : taxPercent / 100;
-      if (!Number.isFinite(taxRate) || taxRate < 0 || taxRate > 0.5) {
-        return NextResponse.json(
-          { error: "税率需在 0%–50% 之间" },
-          { status: 400 },
-        );
-      }
-      const settings = updateAuctionSettings({ taxRate });
-      return NextResponse.json({ settings });
-    }
-
     const session = resolveTargetSession(body?.sessionId);
     if (!session) {
       return NextResponse.json({ error: "暂无场次" }, { status: 400 });
     }
 
+    if (action === "setTaxRate") {
+      const taxRate = parseAuctionTaxPercent(body?.taxPercent);
+      if (taxRate == null) {
+        return NextResponse.json(
+          { error: "税率需在 0%–10% 之间" },
+          { status: 400 },
+        );
+      }
+      if (session.status === "ended") {
+        const report = calculateDividends(session.id, taxRate);
+        return NextResponse.json({
+          session: report.session,
+          report,
+          room: buildRoomState(session.id),
+        });
+      }
+      const updated = updateSessionTaxRate(session.id, taxRate);
+      return NextResponse.json({
+        session: updated,
+        report: getDividendReport(session.id),
+        room: buildRoomState(session.id),
+      });
+    }
+
     if (action === "calculate") {
-      const taxPercent =
-        body?.taxPercent != null ? Number(body.taxPercent) : null;
       const taxRate =
-        taxPercent != null && Number.isFinite(taxPercent)
-          ? taxPercent / 100
-          : body?.taxRate != null
-            ? Number(body.taxRate)
-            : undefined;
+        body?.taxPercent == null
+          ? session.taxRate
+          : parseAuctionTaxPercent(body.taxPercent);
+      if (taxRate == null) {
+        return NextResponse.json(
+          { error: "税率需在 0%–10% 之间" },
+          { status: 400 },
+        );
+      }
       const report = calculateDividends(session.id, taxRate);
       return NextResponse.json({
         report,
         dividends: report.totals,
         session,
         room: buildRoomState(session.id),
-        settings: getAuctionSettings(),
       });
     }
 

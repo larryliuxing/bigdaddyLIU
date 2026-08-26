@@ -52,8 +52,6 @@ export interface AuctionSettings {
   durationMinutes: number;
   bidExtensionSeconds: number;
   soundEnabledDefault: boolean;
-  /** Fraction of sold price taken as tax, e.g. 0.05 = 5%. */
-  taxRate: number;
 }
 
 export interface AuctionSession {
@@ -63,6 +61,8 @@ export interface AuctionSession {
   startedAt: string | null;
   endsAt: string | null;
   durationMinutes: number;
+  /** Fraction of sold price taken as tax for this session (0–0.1). */
+  taxRate: number;
   currentItemId: number | null;
   note: string | null;
   createdAt: string;
