@@ -87,13 +87,13 @@ export function DividendReportView({
             <div className="flex flex-wrap items-end gap-2">
               <label className="block space-y-1">
                 <span className="text-xs text-[var(--text-muted)]">
-                  税率 %
+                  本场税率 %（0–10）
                 </span>
                 <input
                   className="field !w-24"
                   type="number"
                   min={0}
-                  max={50}
+                  max={10}
                   step={0.1}
                   value={taxPercent ?? summary.taxRate * 100}
                   onChange={(e) =>

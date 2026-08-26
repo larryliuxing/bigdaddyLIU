@@ -22,6 +22,10 @@ import type {
   MemberRole,
   MemberRow,
 } from "./types";
+import {
+  DEFAULT_AUCTION_TAX_RATE,
+  normalizeAuctionTaxRate,
+} from "./auction/tax";
 
 const dataDir = path.join(process.cwd(), "data");
 const dbPath = path.join(dataDir, "guild.db");
@@ -70,6 +74,7 @@ export function ensureDb(): Database.Database {
       started_at TEXT,
       ends_at TEXT,
       duration_minutes INTEGER NOT NULL DEFAULT 30,
+      tax_rate REAL NOT NULL DEFAULT 0.05,
       current_item_id INTEGER,
       note TEXT,
       dividends_calculated INTEGER NOT NULL DEFAULT 0,
@@ -275,7 +280,7 @@ function seedIfEmpty(database: Database.Database) {
 
   ensureColumn(
     database,
-    "auction_settings",
+    "auction_sessions",
     "tax_rate",
     "REAL NOT NULL DEFAULT 0.05",
   );
@@ -724,6 +729,7 @@ type SessionRow = {
   started_at: string | null;
   ends_at: string | null;
   duration_minutes: number;
+  tax_rate: number | null;
   current_item_id: number | null;
   note: string | null;
   dividends_calculated: number;
@@ -755,6 +761,10 @@ function toSession(row: SessionRow): AuctionSession {
     startedAt: row.started_at,
     endsAt: row.ends_at,
     durationMinutes: row.duration_minutes,
+    taxRate: normalizeAuctionTaxRate(
+      row.tax_rate,
+      DEFAULT_AUCTION_TAX_RATE,
+    ),
     currentItemId: row.current_item_id,
     note: row.note,
     createdAt: row.created_at,
@@ -815,7 +825,7 @@ export function getAuctionSettings(): AuctionSettings {
   const row = ensureDb()
     .prepare(
       `SELECT id, default_start_time, duration_minutes, bid_extension_seconds,
-              sound_enabled_default, tax_rate
+              sound_enabled_default
        FROM auction_settings WHERE id = 1`,
     )
     .get() as {
@@ -824,13 +834,7 @@ export function getAuctionSettings(): AuctionSettings {
     duration_minutes: number;
     bid_extension_seconds: number;
     sound_enabled_default: number;
-    tax_rate: number | null;
   };
-
-  const taxRate =
-    typeof row.tax_rate === "number" && Number.isFinite(row.tax_rate)
-      ? Math.min(0.5, Math.max(0, row.tax_rate))
-      : 0.05;
 
   return {
     id: row.id,
@@ -838,7 +842,6 @@ export function getAuctionSettings(): AuctionSettings {
     durationMinutes: row.duration_minutes,
     bidExtensionSeconds: row.bid_extension_seconds,
     soundEnabledDefault: Boolean(row.sound_enabled_default),
-    taxRate,
   };
 }
 
@@ -846,24 +849,18 @@ export function updateAuctionSettings(data: {
   defaultStartTime?: string;
   durationMinutes?: number;
   bidExtensionSeconds?: number;
-  taxRate?: number;
 }): AuctionSettings {
   const current = getAuctionSettings();
-  const taxRate =
-    data.taxRate != null && Number.isFinite(Number(data.taxRate))
-      ? Math.min(0.5, Math.max(0, Number(data.taxRate)))
-      : current.taxRate;
   ensureDb()
     .prepare(
       `UPDATE auction_settings
-       SET default_start_time = ?, duration_minutes = ?, bid_extension_seconds = ?, tax_rate = ?
+       SET default_start_time = ?, duration_minutes = ?, bid_extension_seconds = ?
        WHERE id = 1`,
     )
     .run(
       data.defaultStartTime ?? current.defaultStartTime,
       data.durationMinutes ?? current.durationMinutes,
       data.bidExtensionSeconds ?? current.bidExtensionSeconds,
-      taxRate,
     );
   return getAuctionSettings();
 }
@@ -952,10 +949,15 @@ export function isDividendsCalculated(sessionId: number): boolean {
 export function createDraftSession(input?: {
   scheduledStart?: string | null;
   durationMinutes?: number;
+  taxRate?: number;
   note?: string;
 }): AuctionSession {
   const settings = getAuctionSettings();
   const duration = input?.durationMinutes ?? settings.durationMinutes;
+  const taxRate = normalizeAuctionTaxRate(
+    input?.taxRate,
+    DEFAULT_AUCTION_TAX_RATE,
+  );
   let status: AuctionSessionStatus = "draft";
   if (input?.scheduledStart) {
     const startMs = new Date(input.scheduledStart).getTime();
@@ -965,13 +967,15 @@ export function createDraftSession(input?: {
   }
   const result = ensureDb()
     .prepare(
-      `INSERT INTO auction_sessions (status, scheduled_start, duration_minutes, note)
-       VALUES (?, ?, ?, ?)`,
+      `INSERT INTO auction_sessions
+       (status, scheduled_start, duration_minutes, tax_rate, note)
+       VALUES (?, ?, ?, ?, ?)`,
     )
     .run(
       status,
       input?.scheduledStart ?? null,
       duration,
+      taxRate,
       input?.note ?? null,
     );
   return getSessionById(Number(result.lastInsertRowid))!;
@@ -990,7 +994,12 @@ export function getOrCreateEditableSession(): AuctionSession {
 
 export function updateSessionSchedule(
   sessionId: number,
-  data: { scheduledStart: string | null; durationMinutes?: number; note?: string },
+  data: {
+    scheduledStart: string | null;
+    durationMinutes?: number;
+    taxRate?: number;
+    note?: string;
+  },
 ): AuctionSession | null {
   const session = getSessionById(sessionId);
   if (!session || session.status === "live" || session.status === "ended") {
@@ -1010,17 +1019,31 @@ export function updateSessionSchedule(
   ensureDb()
     .prepare(
       `UPDATE auction_sessions
-       SET scheduled_start = ?, duration_minutes = ?, note = ?, status = ?
+       SET scheduled_start = ?, duration_minutes = ?, tax_rate = ?, note = ?, status = ?
        WHERE id = ?`,
     )
     .run(
       data.scheduledStart,
       data.durationMinutes ?? session.durationMinutes,
+      normalizeAuctionTaxRate(data.taxRate, session.taxRate),
       data.note ?? session.note,
       status,
       sessionId,
     );
   return getSessionById(sessionId);
+}
+
+export function updateSessionTaxRate(
+  sessionId: number,
+  taxRate: number,
+): AuctionSession {
+  const session = getSessionById(sessionId);
+  if (!session) throw new Error("场次不存在");
+  const normalized = normalizeAuctionTaxRate(taxRate, session.taxRate);
+  ensureDb()
+    .prepare(`UPDATE auction_sessions SET tax_rate = ? WHERE id = ?`)
+    .run(normalized, sessionId);
+  return getSessionById(sessionId)!;
 }
 
 /** Delete a not-started session and all related records. Irreversible. */
@@ -1870,7 +1893,6 @@ export function listItemDividendLines(sessionId: number): ItemDividendLine[] {
 
 export function getDividendReport(sessionId: number): DividendReport {
   const session = getSessionById(sessionId);
-  const settings = getAuctionSettings();
   const lines = listItemDividendLines(sessionId);
   const belowThresholdMemberIds = getBelowThresholdMemberIds();
   const below = new Set(belowThresholdMemberIds);
@@ -1897,7 +1919,8 @@ export function getDividendReport(sessionId: number): DividendReport {
   const calculated =
     rawCalculated && (lines.length > 0 || soldItems.length === 0);
 
-  const taxRateHint = lines[0]?.taxRate ?? settings.taxRate;
+  const taxRateHint =
+    lines[0]?.taxRate ?? session?.taxRate ?? DEFAULT_AUCTION_TAX_RATE;
   const itemGroups: ItemDividendGroup[] = [];
 
   if (calculated) {
@@ -1944,7 +1967,8 @@ export function getDividendReport(sessionId: number): DividendReport {
     .filter((t) => t.isTemporary)
     .reduce((s, t) => s + t.amount, 0);
   const payoutTotal = totals.reduce((s, t) => s + t.amount, 0);
-  const taxRate = itemGroups[0]?.taxRate ?? settings.taxRate;
+  const taxRate =
+    itemGroups[0]?.taxRate ?? session?.taxRate ?? DEFAULT_AUCTION_TAX_RATE;
 
   const summary: DividendSummary = {
     soldCount: itemGroups.length,
@@ -1977,14 +2001,13 @@ export function calculateDividends(
     throw new Error("请先结束拍卖再计算分红");
   }
 
-  const settings = getAuctionSettings();
   const taxRate =
     taxRateOverride != null && Number.isFinite(taxRateOverride)
-      ? Math.min(0.5, Math.max(0, taxRateOverride))
-      : settings.taxRate;
+      ? normalizeAuctionTaxRate(taxRateOverride, session.taxRate)
+      : session.taxRate;
 
   if (taxRateOverride != null) {
-    updateAuctionSettings({ taxRate });
+    updateSessionTaxRate(sessionId, taxRate);
   }
 
   const items = listItems(sessionId).filter(
@@ -2082,11 +2105,12 @@ export function setItemDividendMembers(
     return getDividendReport(item.sessionId);
   }
 
-  const settings = getAuctionSettings();
+  const session = getSessionById(item.sessionId);
   const existing = listItemDividendLines(item.sessionId).find(
     (l) => l.itemId === itemId,
   );
-  const taxRate = existing?.taxRate ?? settings.taxRate;
+  const taxRate =
+    existing?.taxRate ?? session?.taxRate ?? DEFAULT_AUCTION_TAX_RATE;
   const soldPrice = Number(item.soldPrice) || 0;
   const taxAmount = roundMoney(soldPrice * taxRate);
   const poolAmount = roundMoney(soldPrice - taxAmount);
