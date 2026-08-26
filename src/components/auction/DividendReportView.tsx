@@ -10,11 +10,19 @@ function NameText({
   name,
   belowThreshold,
   isSelf,
+  thresholdPercent,
 }: {
   name: string;
   belowThreshold?: boolean;
   isSelf?: boolean;
+  thresholdPercent?: number;
 }) {
+  const percentLabel =
+    thresholdPercent != null && Number.isFinite(thresholdPercent)
+      ? Number.isInteger(thresholdPercent)
+        ? String(thresholdPercent)
+        : thresholdPercent.toFixed(1)
+      : null;
   return (
     <span
       className={
@@ -24,7 +32,13 @@ function NameText({
             ? "font-medium text-[var(--accent-gold)]"
             : "font-medium"
       }
-      title={belowThreshold ? "战力低于合格线（排行榜 85% 均值）" : undefined}
+      title={
+        belowThreshold
+          ? percentLabel
+            ? `战力低于合格线（排行榜 ${percentLabel}% 均值）`
+            : "战力低于排行榜合格线"
+          : undefined
+      }
     >
       {name}
       {isSelf ? "（我）" : ""}
@@ -65,6 +79,13 @@ export function DividendReportView({
 
   const below = new Set(report.belowThresholdMemberIds);
   const summary = report.summary;
+  const thresholdPercent = report.thresholdPercent;
+  const thresholdLabel =
+    thresholdPercent != null && Number.isFinite(thresholdPercent)
+      ? Number.isInteger(thresholdPercent)
+        ? String(thresholdPercent)
+        : thresholdPercent.toFixed(1)
+      : null;
   const myTotal =
     highlightMemberId != null
       ? report.totals.find((t) => t.memberId === highlightMemberId)
@@ -147,7 +168,9 @@ export function DividendReportView({
         )}
         {below.size > 0 && (
           <p className="mt-3 text-xs text-[var(--accent-crimson)]">
-            标红名字为战力低于排行榜合格线（均值 85%），方便管理员核对是否纳入分红。
+            标红名字为战力低于排行榜合格线
+            {thresholdLabel ? `（均值 ${thresholdLabel}%）` : ""}
+            ，方便管理员核对是否纳入分红。
           </p>
         )}
       </section>
@@ -191,6 +214,7 @@ export function DividendReportView({
                       name={line.memberName}
                       belowThreshold={line.belowThreshold}
                       isSelf={isSelf}
+                      thresholdPercent={thresholdPercent}
                     />
                     <span className="tabular-nums text-[var(--accent-gold)]">
                       {money(line.shareAmount)}
@@ -273,6 +297,7 @@ export function DividendReportView({
                   name={entry.memberName}
                   belowThreshold={entry.belowThreshold}
                   isSelf={isSelf}
+                  thresholdPercent={thresholdPercent}
                 />
                 <span className="text-lg font-semibold text-[var(--accent-gold)]">
                   {money(entry.amount)}

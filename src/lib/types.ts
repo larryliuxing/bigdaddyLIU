@@ -181,6 +181,8 @@ export interface DividendReport {
   totals: DividendEntry[];
   summary: DividendSummary;
   belowThresholdMemberIds: number[];
+  /** Leaderboard passing line as percent of average combat power. */
+  thresholdPercent?: number;
 }
 
 export interface AuctionRoomState {
@@ -221,7 +223,7 @@ export interface LeaderboardEntry {
 export interface LeaderboardStats {
   count: number;
   average: number;
-  threshold: number; // average * 0.85
+  threshold: number;
   thresholdRatio: number;
 }
 
