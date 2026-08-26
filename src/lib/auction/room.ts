@@ -118,7 +118,7 @@ export function buildRoomState(
     activeItem,
     minNextBids,
     minNextBid: activeItem ? (minNextBids[activeItem.id] ?? null) : null,
-    recentEvents: session ? listEvents(session.id, 8) : [],
+    recentEvents: session ? listEvents(session.id, 120) : [],
     recentBids: session ? listBids(session.id, 20) : [],
     serverNow: new Date().toISOString(),
     remainingSeconds,
