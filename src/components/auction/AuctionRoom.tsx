@@ -107,6 +107,7 @@ export function AuctionRoom({
     Array<{ id: string; text: string; top: number; variant: "bid" | "track" }>
   >([]);
   const staticItemsKeyRef = useRef("");
+  const staticSessionStatusRef = useRef<string | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const lastEventIdRef = useRef(0);
   const eventsBootstrapped = useRef(false);
@@ -213,6 +214,7 @@ export function AuctionRoom({
       staticItemsKeyRef.current = (data.room?.items ?? [])
         .map((item: AuctionItem) => item.id)
         .join(",");
+      staticSessionStatusRef.current = data.room?.session?.status ?? null;
       setRoom(data.room);
       setRemaining(data.room.remainingSeconds);
       if (data.room?.session?.id) {
@@ -230,7 +232,11 @@ export function AuctionRoom({
       const nextKey = (data.room?.items ?? [])
         .map((item: AuctionItem) => item.id)
         .join(",");
-      if (nextKey !== staticItemsKeyRef.current) {
+      const nextStatus = data.room?.session?.status ?? null;
+      if (
+        nextKey !== staticItemsKeyRef.current ||
+        nextStatus !== staticSessionStatusRef.current
+      ) {
         await bootstrap();
         return;
       }
