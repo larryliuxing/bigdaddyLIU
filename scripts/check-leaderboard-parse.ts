@@ -6,6 +6,15 @@ import {
   isPlausibleNameCandidate,
   parseCombatPowerScreenshot,
 } from "../src/lib/leaderboard/parse";
+import {
+  NAME_CLICK_CROP,
+  NAME_CLICK_CROP_WIDE,
+} from "../src/lib/leaderboard/regions";
+
+assert.ok(NAME_CLICK_CROP.w > 0.16 && NAME_CLICK_CROP.w <= 0.22);
+assert.ok(NAME_CLICK_CROP.h > 0.055 && NAME_CLICK_CROP.h <= 0.08);
+assert.ok(NAME_CLICK_CROP_WIDE.w > 0.22 && NAME_CLICK_CROP_WIDE.w <= 0.28);
+assert.ok(NAME_CLICK_CROP_WIDE.h > 0.07 && NAME_CLICK_CROP_WIDE.h <= 0.09);
 
 assert.equal(isPlausibleNameCandidate("CT", "唐小虎"), false);
 assert.equal(extractDetectedName("唐小虎", "唐小虎").matched, true);

@@ -3,7 +3,6 @@
 import { createWorker, PSM, type Worker } from "tesseract.js";
 import {
   buildNameClickCrops,
-  buildNameClickPreview,
   buildPowerClickCrops,
   buildPowerClickPreview,
 } from "./preprocess";
@@ -69,34 +68,18 @@ async function recognizeDigits(worker: Worker, dataUrl: string) {
   return chunks;
 }
 
-async function recognizeNameCrop(
+async function recognizeNameOnce(
   worker: Worker,
   dataUrl: string,
-  expectedName?: string,
+  psm: PSM,
 ) {
-  const chunks: string[] = [];
-  for (const psm of [PSM.SINGLE_LINE, PSM.SINGLE_WORD, PSM.RAW_LINE] as const) {
-    try {
-      await worker.setParameters({
-        tessedit_pageseg_mode: psm,
-        preserve_interword_spaces: "1",
-        tessedit_char_whitelist: "",
-      });
-      const result = await worker.recognize(dataUrl);
-      const text = (result.data.text || "").trim();
-      if (text) chunks.push(text);
-      if (
-        expectedName &&
-        chunks.length &&
-        extractDetectedName(uniqueJoinName(chunks), expectedName).matched
-      ) {
-        break;
-      }
-    } catch {
-      // next
-    }
-  }
-  return chunks;
+  await worker.setParameters({
+    tessedit_pageseg_mode: psm,
+    preserve_interword_spaces: "1",
+    tessedit_char_whitelist: "",
+  });
+  const result = await worker.recognize(dataUrl);
+  return (result.data.text || "").trim();
 }
 
 function uniqueJoin(chunks: string[]) {
@@ -200,25 +183,29 @@ export async function recognizeNameAtClick(
   yRatio: number,
   expectedName?: string,
 ): Promise<NameOcrResult> {
-  const [worker, crops, previewDataUrl] = await Promise.all([
+  const [worker, bundle] = await Promise.all([
     getNameWorker(),
     buildNameClickCrops(image, xRatio, yRatio),
-    buildNameClickPreview(image, xRatio, yRatio),
   ]);
+  const { crops, previewDataUrl } = bundle;
 
   const chunks: string[] = [];
-  for (const url of crops) {
-    try {
-      chunks.push(...(await recognizeNameCrop(worker, url, expectedName)));
-      if (
-        expectedName &&
-        chunks.length &&
-        extractDetectedName(uniqueJoinName(chunks), expectedName).matched
-      ) {
-        break;
+  const modes = [PSM.SINGLE_LINE, PSM.RAW_LINE] as const;
+  outer: for (const psm of modes) {
+    for (const url of crops) {
+      try {
+        const text = await recognizeNameOnce(worker, url, psm);
+        if (text) chunks.push(text);
+        if (
+          expectedName &&
+          chunks.length &&
+          extractDetectedName(uniqueJoinName(chunks), expectedName).matched
+        ) {
+          break outer;
+        }
+      } catch {
+        // continue
       }
-    } catch {
-      // continue
     }
   }
 
