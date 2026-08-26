@@ -5,7 +5,7 @@ import {
   parseLeaderboardThresholdPercent,
   percentToRatio,
   ratioToPercent,
-} from "../src/lib/leaderboard/threshold.ts";
+} from "../src/lib/leaderboard/threshold";
 
 assert.equal(parseLeaderboardThresholdPercent(85), 85);
 assert.equal(parseLeaderboardThresholdPercent("82.5"), 82.5);

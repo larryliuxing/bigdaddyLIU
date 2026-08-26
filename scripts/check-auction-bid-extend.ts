@@ -5,7 +5,7 @@ import {
   qualityExtendHint,
   PINK_EXTEND_MS,
   PURPLE_EXTEND_MS,
-} from "../src/lib/auction/bidExtend.ts";
+} from "../src/lib/auction/bidExtend";
 
 assert.equal(extraMsForQualityBid("purple", 61_000), 0);
 assert.equal(extraMsForQualityBid("pink", 61_000), 0);
