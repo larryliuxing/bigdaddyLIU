@@ -23,6 +23,10 @@ import type {
   MemberRow,
 } from "./types";
 import {
+  extraMsForQualityBid,
+  formatExtendLabel,
+} from "./auction/bidExtend";
+import {
   DEFAULT_AUCTION_TAX_RATE,
   normalizeAuctionTaxRate,
 } from "./auction/tax";
@@ -1743,15 +1747,24 @@ export function placeBid(input: {
     .prepare(`UPDATE auction_items SET current_price = ? WHERE id = ?`)
     .run(input.amount, item.id);
 
-  // Soft extend session near the end when bids come in
+  // Soft extend: purple/pink add time in the last minute; other colors
+  // keep the short anti-snipe window from settings.
   const settings = getAuctionSettings();
+  let extendLabel: string | null = null;
   if (session.endsAt) {
     const ends = new Date(session.endsAt).getTime();
     const remain = ends - Date.now();
-    if (remain < settings.bidExtensionSeconds * 1000) {
-      const newEnds = new Date(
+    const qualityExtra = extraMsForQualityBid(item.quality, remain);
+    let newEnds: string | null = null;
+    if (qualityExtra > 0) {
+      newEnds = new Date(ends + qualityExtra).toISOString();
+      extendLabel = formatExtendLabel(qualityExtra);
+    } else if (remain < settings.bidExtensionSeconds * 1000) {
+      newEnds = new Date(
         Date.now() + settings.bidExtensionSeconds * 1000,
       ).toISOString();
+    }
+    if (newEnds) {
       ensureDb()
         .prepare(`UPDATE auction_sessions SET ends_at = ? WHERE id = ?`)
         .run(newEnds, input.sessionId);
@@ -1763,6 +1776,13 @@ export function placeBid(input: {
     "bid",
     `${member.name} 出价 ¥${input.amount}（${item.name}）`,
   );
+  if (extendLabel) {
+    addEvent(
+      input.sessionId,
+      "system",
+      `${item.name} 最后一分钟出价，本场延长 ${extendLabel}`,
+    );
+  }
 
   // High-bid fanfare for the whole room (highest matching tier only)
   if (input.amount > 1000) {

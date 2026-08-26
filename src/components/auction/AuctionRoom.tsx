@@ -13,6 +13,7 @@ import {
   qualityMeta,
   formatBeijingDateTime,
 } from "@/lib/auction/client";
+import { qualityExtendHint } from "@/lib/auction/bidExtend";
 import { GavelIcon } from "@/components/Icons";
 import { DividendReportView } from "./DividendReportView";
 import {
@@ -77,6 +78,7 @@ function AuctionLotCard({
 }) {
   const q = qualityMeta(item.quality);
   const isMine = memberId != null && item.leadingBidderId === memberId;
+  const extendHint = qualityExtendHint(item.quality);
   return (
     <article className="rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)] p-4">
       <div className="flex flex-col gap-4 sm:flex-row">
@@ -112,6 +114,11 @@ function AuctionLotCard({
                   ? item.dividendMemberNames.join("、")
                   : "未设置"}
               </p>
+              {extendHint && (
+                <p className="mt-1 text-xs text-[var(--accent-gold)]">
+                  {extendHint}
+                </p>
+              )}
             </div>
             <span
               className={
