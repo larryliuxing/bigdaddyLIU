@@ -129,31 +129,7 @@ export function HomeHub({ user }: { user: Extract<SessionUser, { type: "member" 
           </div>
         </header>
 
-        <section className="animate-fade-up-delay relative z-10 mt-8 overflow-hidden rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.92)]">
-          <div className="flex items-center justify-between border-b border-[var(--border-soft)] px-4 py-3">
-            <h2 className="text-sm font-medium">更新日志</h2>
-            <span className="text-xs text-[var(--text-muted)]">最近修复</span>
-          </div>
-          <div className="max-h-56 space-y-4 overflow-y-auto overscroll-contain px-4 py-3 sm:max-h-64">
-            {CHANGELOG.map((group) => (
-              <div key={group.date}>
-                <p className="text-xs font-medium text-[var(--accent-gold)]">
-                  {group.date}
-                </p>
-                <ul className="mt-1.5 space-y-1.5 text-sm text-[var(--text-muted)]">
-                  {group.items.map((item) => (
-                    <li key={item} className="flex gap-2">
-                      <span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-[var(--accent-gold)] opacity-70" />
-                      <span>{item}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <section className="animate-fade-up-delay relative z-10 mt-6 space-y-3">
+        <section className="animate-fade-up-delay relative z-10 mt-10 space-y-3">
           {FEATURES.map((feature, index) => (
             <button
               key={feature.key}
@@ -175,6 +151,30 @@ export function HomeHub({ user }: { user: Extract<SessionUser, { type: "member" 
               </span>
             </button>
           ))}
+        </section>
+
+        <section className="animate-fade-up-delay-2 relative z-10 mt-6 overflow-hidden rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.92)]">
+          <div className="flex items-center justify-between border-b border-[var(--border-soft)] px-4 py-3">
+            <h2 className="text-sm font-medium">更新日志</h2>
+            <span className="text-xs text-[var(--text-muted)]">最近修复</span>
+          </div>
+          <div className="max-h-56 space-y-4 overflow-y-auto overscroll-contain px-4 py-3 sm:max-h-64">
+            {CHANGELOG.map((group) => (
+              <div key={group.date}>
+                <p className="text-xs font-medium text-[var(--accent-gold)]">
+                  {group.date}
+                </p>
+                <ul className="mt-1.5 space-y-1.5 text-sm text-[var(--text-muted)]">
+                  {group.items.map((item) => (
+                    <li key={item} className="flex gap-2">
+                      <span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-[var(--accent-gold)] opacity-70" />
+                      <span>{item}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
         </section>
 
         {toast && (
