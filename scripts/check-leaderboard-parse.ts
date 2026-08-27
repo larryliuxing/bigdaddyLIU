@@ -21,7 +21,13 @@ assert.equal(extractDetectedName("唐小虎", "唐小虎").matched, true);
 assert.equal(extractDetectedName("周杰伦", "周杰伦").matched, true);
 assert.equal(extractDetectedName("杰伦", "周杰伦").matched, true);
 assert.equal(extractDetectedName("周 杰 伦", "周杰伦").matched, true);
-assert.equal(extractDetectedName("入多避胡证基于双生1", "唐小虎").matched, false);
+assert.equal(extractDetectedName("洛丶洛", "洛丶洛").matched, true);
+assert.equal(extractDetectedName("洛、洛", "洛丶洛").matched, true);
+assert.equal(extractDetectedName("洛·洛", "洛丶洛").matched, true);
+assert.equal(extractDetectedName("洛洛", "洛丶洛").matched, true);
+assert.equal(extractDetectedName("和洛", "洛丶洛").matched, true);
+assert.equal(extractDetectedName("和洛", "唐小龙").matched, false);
+assert.equal(extractDetectedName("洛丶洛", "唐小龙").matched, false);
 
 assert.equal(extractCombatPower("能力值 47176"), 47176);
 assert.equal(extractCombatPower("战斗力 4776"), 4776);
