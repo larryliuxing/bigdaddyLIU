@@ -100,7 +100,8 @@ function uniqueJoinName(chunks: string[]) {
       c
         .replace(/\+\d+/g, " ")
         .replace(/[0-9]+/g, " ")
-        .replace(/[^\u4e00-\u9fffA-Za-z·\s]/g, " ")
+        .replace(/[、·•．.･]/g, "丶")
+        .replace(/[^\u4e00-\u9fffA-Za-z丶\s]/g, " ")
         .replace(/\s+/g, " ")
         .trim(),
     )

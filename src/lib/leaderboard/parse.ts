@@ -6,6 +6,31 @@
 const UI_SKIP =
   /战斗力|能力值|力量|体质|灵巧|敏捷|智力|智慧|攻击|移动|施法|侍卫|战盟|普通|守护|贡献|获得|品级|名称|参与|铠卫|师卫|复活|支配|骑士|经验|等级|装备|背包|技能|任务|日程|自动|进行中|进行|日程自动|金币|银币/;
 
+/** HUD names often use 丶 / · / 、 between glyphs. OCR may emit any of these. */
+const NAME_PUNCT_RE = /[丶、·•．.･]/g;
+
+function isNamePunct(ch: string) {
+  return /[丶、·•．.･]/.test(ch);
+}
+
+function normalizeNamePunct(text: string) {
+  return text.replace(NAME_PUNCT_RE, "丶").replace(/丶{2,}/g, "丶");
+}
+
+function stripNamePunct(text: string) {
+  return text.replace(/丶/g, "");
+}
+
+/** OCR of 洛 is often 和 / 络 on this HUD font. */
+function charsAlign(ocrCh: string, expCh: string) {
+  if (ocrCh === expCh) return true;
+  if (isNamePunct(ocrCh) && isNamePunct(expCh)) return true;
+  if (expCh === "洛" && (ocrCh === "和" || ocrCh === "络" || ocrCh === "珞")) {
+    return true;
+  }
+  return false;
+}
+
 function isUiPhrase(token: string) {
   if (UI_SKIP.test(token)) return true;
   if (token.includes("日程") || token.includes("自动") || token.includes("进行")) {
@@ -23,10 +48,11 @@ function expectedIsChinese(expected: string) {
 
 export function isPlausibleNameCandidate(token: string, expected: string) {
   if (!token || isUiPhrase(token)) return false;
-  if (token.length < 2 || token.length > 10) return false;
-  if (!/^[\u4e00-\u9fffA-Za-z0-9_·]+$/.test(token)) return false;
+  const compact = normalizeNamePunct(token).replace(/[^\u4e00-\u9fffA-Za-z0-9_丶]/g, "");
+  if (compact.length < 2 || compact.length > 12) return false;
+  if (!/^[\u4e00-\u9fffA-Za-z0-9_丶]+$/.test(compact)) return false;
   if (expectedIsChinese(expected)) {
-    const cjk = token.match(/[\u4e00-\u9fff]/g)?.length ?? 0;
+    const cjk = compact.match(/[\u4e00-\u9fff]/g)?.length ?? 0;
     if (cjk < 2) return false;
   }
   return true;
@@ -148,17 +174,17 @@ function isFourToSixDigitPower(value: number) {
 
 function tokenize(text: string) {
   return text
-    .split(/[\s,，、|/\\;；\n\r\t:：\[\]【】()（）<>《》]+/)
+    .split(/[\s,，|/\\;；\n\r\t:：\[\]【】()（）<>《》]+/)
     .map((t) => t.trim())
     .filter(Boolean);
 }
 
 function collapseForMatch(text: string, expected: string) {
-  const normalized = normalizeOcrText(text);
+  const normalized = normalizeNamePunct(normalizeOcrText(text));
   if (expectedIsChinese(expected)) {
-    return normalized.replace(/[^\u4e00-\u9fff·]/g, "");
+    return normalized.replace(/[^\u4e00-\u9fff丶]/g, "");
   }
-  return normalized.replace(/[^\u4e00-\u9fffA-Za-z0-9_·]/g, "");
+  return normalized.replace(/[^\u4e00-\u9fffA-Za-z0-9_丶]/g, "");
 }
 
 function charsInOrder(haystack: string, needle: string) {
@@ -209,12 +235,29 @@ function charCoverage(haystack: string, needle: string) {
 function fuzzyMatchExpected(text: string, expected: string): boolean {
   if (!expected) return false;
   const compact = collapseForMatch(text, expected);
-  const exp = expectedIsChinese(expected)
-    ? expected.replace(/[^\u4e00-\u9fff·]/g, "")
-    : expected.replace(/[^\u4e00-\u9fffA-Za-z0-9_·]/g, "");
+  const expRaw = expectedIsChinese(expected)
+    ? expected.replace(/[^\u4e00-\u9fff丶·、•．.･]/g, "")
+    : expected.replace(/[^\u4e00-\u9fffA-Za-z0-9_丶·]/g, "");
+  const exp = normalizeNamePunct(expRaw);
   if (!exp || !compact) return false;
 
   if (compact.includes(exp)) return true;
+  if (stripNamePunct(compact) === stripNamePunct(exp) && stripNamePunct(exp).length >= 2) {
+    return true;
+  }
+  if (exp.includes("丶") && stripNamePunct(exp).length >= 2) {
+    const a = stripNamePunct(compact);
+    const b = stripNamePunct(exp);
+    if (a.length === b.length && a.length >= 2) {
+      let same = 0;
+      let aligned = 0;
+      for (let i = 0; i < a.length; i += 1) {
+        if (a[i] === b[i]) same += 1;
+        if (charsAlign(a[i], b[i])) aligned += 1;
+      }
+      if (aligned === b.length && same >= 1) return true;
+    }
+  }
   if (exp.length >= 2 && charsInOrder(compact, exp)) return true;
 
   if (exp.length >= 3 && charCoverage(compact, exp) >= (exp.length - 1) / exp.length) {
