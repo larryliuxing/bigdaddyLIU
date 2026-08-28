@@ -83,13 +83,27 @@ export async function DELETE(request: Request) {
   }
 
   if (admin && Number.isFinite(memberId) && memberId > 0) {
-    deleteLeaderboardEntry(memberId);
-    return NextResponse.json({ ok: true, board: getLeaderboardBoard() });
+    const removed = deleteLeaderboardEntry(memberId);
+    if (!removed) {
+      return NextResponse.json(
+        { error: "该成员没有上榜记录", board: getLeaderboardBoard() },
+        { status: 404 },
+      );
+    }
+    return NextResponse.json({
+      ok: true,
+      removed: true,
+      board: getLeaderboardBoard(),
+    });
   }
 
   if (member) {
-    deleteLeaderboardEntry(member.id);
-    return NextResponse.json({ ok: true, board: getLeaderboardBoard() });
+    const removed = deleteLeaderboardEntry(member.id);
+    return NextResponse.json({
+      ok: true,
+      removed,
+      board: getLeaderboardBoard(),
+    });
   }
 
   return NextResponse.json({ error: "缺少成员 ID" }, { status: 400 });
