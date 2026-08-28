@@ -108,43 +108,58 @@ function cropRatio(
 }
 
 /**
- * Score pale / white HUD name glyphs. Rejects orange icons, yellow-white
- * level digits, and the dark blue nameplate fill that used to be treated
- * as ink (that made crops huge and OCR read 和洛 instead of 洛丶洛).
+ * Score pale / white / light-blue HUD name glyphs.
+ * Rejects orange icons, yellow-white level digits, and dark saturated
+ * nameplate fill — but keeps washed cyan and ice-blue strokes.
  */
 export function nameGlyphScore(r: number, g: number, b: number): number {
   const brightness = (r + g + b) / 3;
   const max = Math.max(r, g, b);
   const min = Math.min(r, g, b);
   const sat = max - min;
+  const blueLead = b - r;
 
   // Orange phoenix / gold +N
   if (r > b + 16 && r >= g) return 0;
   // Yellow-white level digits like「2」
   if (brightness > 175 && r >= b + 12 && g >= b) return 0;
-  // Dark blue cloth / MP bar
-  if (brightness < 120) return 0;
-  // Pure white plates / level digits; keep slightly-blue 丶 highlights
+  // Pure white plates; keep slightly-blue 丶 highlights
   if (brightness > 200 && sat < 12 && b < r + 3) return 0;
+  // Dark cloth / MP bar (saturated and dimmer than glyphs)
+  if (brightness < 100) return 0;
+  if (brightness < 112 && sat > 70 && blueLead > 20) return 0;
 
-  const paleBlueGlyph =
+  // Classic cyan HUD fill
+  const strongBlue =
+    brightness >= 108 &&
+    brightness <= 235 &&
+    blueLead >= 16 &&
+    b >= 105 &&
+    sat >= 18 &&
+    sat <= 130;
+
+  // Light blue / pale cyan (low contrast on dark UI)
+  const lightBlue =
+    brightness >= 118 &&
     brightness <= 250 &&
-    b >= r + 10 &&
-    sat >= 12 &&
+    blueLead >= 4 &&
+    b >= g - 14 &&
+    sat >= 6 &&
     sat <= 120;
-  const whiteBlueGlyph =
-    brightness >= 165 &&
-    brightness <= 250 &&
-    b >= r &&
-    sat <= 80;
-  // Tiny 丶 highlights: near-white with a hint of blue
-  const punctDot =
-    brightness >= 185 && b >= r + 2 && sat <= 40;
 
-  if (paleBlueGlyph) return 36 + (b - r);
-  if (whiteBlueGlyph) return 28 + Math.max(0, b - r);
-  if (punctDot) return 22;
-  return 0;
+  // Ice-blue / near-white strokes and 丶 dots
+  const iceBlue =
+    brightness >= 160 &&
+    brightness <= 252 &&
+    b >= r &&
+    blueLead >= 2 &&
+    sat <= 75;
+
+  let score = 0;
+  if (strongBlue) score = Math.max(score, 52 + blueLead);
+  if (lightBlue) score = Math.max(score, 48 + blueLead * 1.35);
+  if (iceBlue) score = Math.max(score, 36 + blueLead);
+  return score;
 }
 
 /**
@@ -231,7 +246,7 @@ export function enhanceNameSoft(canvas: HTMLCanvasElement): HTMLCanvasElement {
     const score = nameGlyphScore(d[i], d[i + 1], d[i + 2]);
     let v: number;
     if (score >= 16) {
-      v = Math.max(0, 255 - Math.min(255, Math.floor(score * 2.2 + 60)));
+      v = Math.max(0, 255 - Math.min(255, Math.floor(score * 2.6 + 70)));
     } else {
       v = 255;
     }
@@ -261,10 +276,10 @@ export function enhanceNameGray(canvas: HTMLCanvasElement): HTMLCanvasElement {
     const score = nameGlyphScore(r, g, b);
     const brightness = (r + g + b) / 3;
     const v =
-      score >= 12
+      score >= 10
         ? Math.max(
             0,
-            Math.min(210, Math.round(255 - brightness * 0.85 - score * 1.1)),
+            Math.min(200, Math.round(255 - brightness * 0.9 - score * 1.35)),
           )
         : Math.min(255, Math.round(220 + brightness * 0.14));
     d[i] = v;
@@ -346,14 +361,15 @@ export function enhanceNameLocalBright(
     sum += (d[i] + d[i + 1] + d[i + 2]) / 3;
   }
   const mean = sum / Math.max(1, n);
-  const floor = Math.max(138, mean + 16);
+  const floor = Math.max(118, mean + 10);
   for (let i = 0; i < d.length; i += 4) {
     const r = d[i];
     const g = d[i + 1];
     const b = d[i + 2];
     const brightness = (r + g + b) / 3;
     const orange = r > b + 16 && r >= g;
-    const on = !orange && nameGlyphScore(r, g, b) >= 16 && brightness >= floor - 8;
+    const on =
+      !orange && nameGlyphScore(r, g, b) >= 12 && brightness >= floor - 12;
     const v = on ? 0 : 255;
     d[i] = v;
     d[i + 1] = v;
