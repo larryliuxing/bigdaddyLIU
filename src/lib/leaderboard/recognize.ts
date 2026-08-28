@@ -116,6 +116,25 @@ function uniqueJoinName(chunks: string[]) {
   return uniqueJoin(cleaned);
 }
 
+async function recognizeNameWithPaddle(colorDataUrl: string, maskDataUrl?: string) {
+  try {
+    const images = [colorDataUrl, maskDataUrl].filter(Boolean);
+    const res = await fetch("/api/leaderboard/ocr-name", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        image: images[0],
+        images: images.slice(1),
+      }),
+    });
+    if (!res.ok) return "";
+    const data = (await res.json()) as { text?: string };
+    return String(data?.text ?? "").trim();
+  } catch {
+    return "";
+  }
+}
+
 /**
  * OCR combat power from a user click on the number.
  * Only accepts 4–6 digit values.
@@ -188,7 +207,7 @@ export async function recognizeNameAtClick(
     getNameWorker(),
     buildNameClickCrops(image, xRatio, yRatio),
   ]);
-  const { crops, previewDataUrl } = bundle;
+  const { crops, previewDataUrl, colorDataUrl } = bundle;
 
   const chunks: string[] = [];
   const modes = [PSM.SINGLE_LINE, PSM.RAW_LINE] as const;
@@ -207,6 +226,55 @@ export async function recognizeNameAtClick(
       } catch {
         // continue
       }
+    }
+  }
+
+  if (
+    expectedName &&
+    !extractDetectedName(uniqueJoinName(chunks), expectedName).matched
+  ) {
+    const extra = [PSM.SINGLE_WORD, PSM.SPARSE_TEXT] as const;
+    extraLoop: for (const psm of extra) {
+      for (const url of crops.slice(0, 2)) {
+        try {
+          const text = await recognizeNameOnce(worker, url, psm);
+          if (text) chunks.push(text);
+          if (extractDetectedName(uniqueJoinName(chunks), expectedName).matched) {
+            break extraLoop;
+          }
+        } catch {
+          // continue
+        }
+      }
+    }
+
+    const whitelist = [...expectedName]
+      .filter((ch) => /[\u4e00-\u9fff丶]/.test(ch))
+      .join("");
+    if (whitelist && crops[0]) {
+      try {
+        await worker.setParameters({
+          tessedit_pageseg_mode: PSM.SINGLE_LINE,
+          preserve_interword_spaces: "1",
+          tessedit_char_whitelist: whitelist,
+        });
+        const result = await worker.recognize(crops[0]);
+        const text = (result.data.text || "").trim();
+        if (text) chunks.push(text);
+      } catch {
+        // ignore
+      }
+    }
+
+    if (
+      !extractDetectedName(uniqueJoinName(chunks), expectedName).matched &&
+      (colorDataUrl || crops[0])
+    ) {
+      const paddleText = await recognizeNameWithPaddle(
+        colorDataUrl || crops[0],
+        crops[0],
+      );
+      if (paddleText) chunks.push(paddleText);
     }
   }
 

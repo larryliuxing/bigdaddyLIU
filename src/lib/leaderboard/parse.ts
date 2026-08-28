@@ -21,13 +21,25 @@ function stripNamePunct(text: string) {
   return text.replace(/丶/g, "");
 }
 
+/**
+ * Stylized HUD fonts confuse Tesseract into nearby CJK.
+ * Keys are expected glyphs; values are OCR lookalikes.
+ */
+const NAME_CONFUSABLE: Record<string, string[]> = {
+  飞: ["习", "乙", "气", "凡", "弋", "風"],
+  抖: ["封", "持", "村", "对", "拌", "料", "肘"],
+  音: ["意", "商", "晋", "言", "普", "音"],
+  绵: ["碑", "棉", "锦", "理", "编", "再", "型", "礁"],
+  羊: ["年", "幸", "午", "苇", "半", "辛", "革", "苹", "羊"],
+  洛: ["和", "络", "珞"],
+};
+
 /** OCR of 洛 is often 和 / 络 on this HUD font. */
 function charsAlign(ocrCh: string, expCh: string) {
   if (ocrCh === expCh) return true;
   if (isNamePunct(ocrCh) && isNamePunct(expCh)) return true;
-  if (expCh === "洛" && (ocrCh === "和" || ocrCh === "络" || ocrCh === "珞")) {
-    return true;
-  }
+  const alts = NAME_CONFUSABLE[expCh];
+  if (alts && alts.includes(ocrCh)) return true;
   return false;
 }
 
@@ -198,6 +210,36 @@ function charsInOrder(haystack: string, needle: string) {
   return false;
 }
 
+function charsInOrderAlign(haystack: string, needle: string) {
+  let i = 0;
+  for (const ch of haystack) {
+    if (charsAlign(ch, needle[i])) {
+      i += 1;
+      if (i >= needle.length) return true;
+    }
+  }
+  return false;
+}
+
+function alignWindow(
+  ocr: string,
+  exp: string,
+): { exact: number; aligned: number } | null {
+  if (!ocr || !exp) return null;
+  if (ocr.length !== exp.length) return null;
+  let exact = 0;
+  let aligned = 0;
+  for (let i = 0; i < exp.length; i += 1) {
+    if (ocr[i] === exp[i]) {
+      exact += 1;
+      aligned += 1;
+    } else if (charsAlign(ocr[i], exp[i])) {
+      aligned += 1;
+    }
+  }
+  return { exact, aligned };
+}
+
 function levenshtein(a: string, b: string) {
   const m = a.length;
   const n = b.length;
@@ -259,8 +301,42 @@ function fuzzyMatchExpected(text: string, expected: string): boolean {
     }
   }
   if (exp.length >= 2 && charsInOrder(compact, exp)) return true;
+  if (exp.length >= 2 && charsInOrderAlign(compact, exp)) return true;
 
-  if (exp.length >= 3 && charCoverage(compact, exp) >= (exp.length - 1) / exp.length) {
+  const expBare = stripNamePunct(exp);
+  const ocrBare = stripNamePunct(compact);
+
+  // Same-length confusable alignment: 封音碑羊 ≈ 抖音绵羊, 习习 ≈ 飞飞
+  if (ocrBare.length === expBare.length && expBare.length >= 2) {
+    const hit = alignWindow(ocrBare, expBare);
+    if (hit) {
+      const dup = expBare.length === 2 && expBare[0] === expBare[1];
+      if (hit.aligned === expBare.length && (hit.exact >= 1 || dup)) return true;
+      if (expBare.length >= 4 && hit.aligned >= expBare.length - 1 && hit.exact >= 1) {
+        return true;
+      }
+    }
+  }
+
+  // Sliding same-length windows inside longer OCR dumps
+  if (expBare.length >= 2 && ocrBare.length > expBare.length) {
+    for (let i = 0; i <= ocrBare.length - expBare.length; i += 1) {
+      const hit = alignWindow(ocrBare.slice(i, i + expBare.length), expBare);
+      if (!hit) continue;
+      const dup = expBare.length === 2 && expBare[0] === expBare[1];
+      if (hit.aligned === expBare.length && (hit.exact >= 1 || dup)) return true;
+      if (expBare.length >= 4 && hit.aligned >= 3 && hit.exact >= 1) return true;
+    }
+  }
+
+  // Duplicate 2-char names (飞飞): a single 飞 / 习 is enough
+  if (expBare.length === 2 && expBare[0] === expBare[1] && ocrBare.length >= 1 && ocrBare.length <= 3) {
+    if ([...ocrBare].every((ch) => charsAlign(ch, expBare[0]))) return true;
+  }
+
+  const coverageNeed =
+    exp.length >= 4 ? 0.5 : (exp.length - 1) / exp.length;
+  if (exp.length >= 3 && charCoverage(compact, exp) >= coverageNeed) {
     if (
       charsInOrder(
         compact,

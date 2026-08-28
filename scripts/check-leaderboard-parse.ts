@@ -12,6 +12,7 @@ import {
   POWER_CLICK_CROP,
   POWER_CLICK_CROP_WIDE,
 } from "../src/lib/leaderboard/regions";
+import { nameGlyphScore } from "../src/lib/leaderboard/preprocess";
 
 assert.equal(NAME_CLICK_CROP.w, POWER_CLICK_CROP.w * 2);
 assert.equal(NAME_CLICK_CROP.h, POWER_CLICK_CROP.h * 2);
@@ -30,6 +31,26 @@ assert.equal(extractDetectedName("洛洛", "洛丶洛").matched, true);
 assert.equal(extractDetectedName("和洛", "洛丶洛").matched, true);
 assert.equal(extractDetectedName("和洛", "唐小龙").matched, false);
 assert.equal(extractDetectedName("洛丶洛", "唐小龙").matched, false);
+
+assert.equal(extractDetectedName("飞飞", "飞飞").matched, true);
+assert.equal(extractDetectedName("习习", "飞飞").matched, true);
+assert.equal(extractDetectedName("飞", "飞飞").matched, true);
+assert.equal(extractDetectedName("习", "飞飞").matched, true);
+assert.equal(extractDetectedName("习习", "洛洛").matched, false);
+assert.equal(extractDetectedName("人人", "飞飞").matched, false);
+assert.equal(extractDetectedName("疏汉", "飞飞").matched, false);
+
+assert.equal(extractDetectedName("抖音绵羊", "抖音绵羊").matched, true);
+assert.equal(extractDetectedName("封音碑羊", "抖音绵羊").matched, true);
+assert.equal(extractDetectedName("持音理羊", "抖音绵羊").matched, true);
+assert.equal(extractDetectedName("持音理苹", "抖音绵羊").matched, true);
+assert.equal(extractDetectedName("村音理年", "抖音绵羊").matched, true);
+assert.equal(extractDetectedName("抖凋理午", "抖音绵羊").matched, true);
+assert.equal(extractDetectedName("音羊", "抖音绵羊").matched, true);
+assert.equal(extractDetectedName("料音绵症", "抖音绵羊").matched, true);
+assert.equal(extractDetectedName("抖音羊", "抖音绵羊").matched, true);
+assert.equal(extractDetectedName("封音碑羊", "唐小虎").matched, false);
+assert.equal(extractDetectedName("音羊", "唐小虎").matched, false);
 
 assert.equal(extractCombatPower("能力值 47176"), 47176);
 assert.equal(extractCombatPower("战斗力 4776"), 4776);
@@ -65,5 +86,13 @@ const tooShort = parseCombatPowerScreenshot(
   "唐小虎",
 );
 assert.equal(tooShort.ok, false);
+
+// Saturated cyan HUD names (飞飞 / 抖音绵羊) must score as ink.
+assert.ok(nameGlyphScore(16, 123, 242) >= 16);
+assert.ok(nameGlyphScore(9, 125, 252) >= 16);
+assert.ok(nameGlyphScore(3, 112, 250) >= 16);
+// Near-white combat slashes must not.
+assert.equal(nameGlyphScore(230, 230, 232), 0);
+assert.equal(nameGlyphScore(236, 236, 233), 0);
 
 console.log("leaderboard click-name redesign checks passed");
