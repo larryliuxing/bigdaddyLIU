@@ -26,12 +26,9 @@ const SPARKS = [
   { sx: "44px", sy: "40px", left: "54%", top: "50%", delay: "120ms" },
 ];
 
-function lastMarkText(boss: Boss) {
-  if (!boss.lastMark) return null;
-  const kind = boss.lastMark.voteType === "killed" ? "已击杀" : "未刷新";
-  const names =
-    boss.lastMark.members.map((m) => m.memberName).join("、") || "未知";
-  return `上次${kind}：${names} · ${formatBeijingDateTime(boss.lastMark.at)}`;
+function lastMarkNames(boss: Boss) {
+  if (!boss.lastMark?.members.length) return "";
+  return boss.lastMark.members.map((m) => m.memberName).join("、");
 }
 
 function BossCard({
@@ -101,7 +98,7 @@ function BossCard({
     return () => window.clearTimeout(t);
   }, [burstKey]);
 
-  const mark = lastMarkText(boss);
+  const markNames = lastMarkNames(boss);
   const hasDrops = Boolean(boss.hasDropsImage || boss.dropsImage || boss.dropsNote);
   const isReady = remain === 0 && Boolean(boss.nextSpawnAt);
   const isUrgent = remain != null && remain > 0 && remain <= URGENT_SECONDS;
@@ -159,11 +156,6 @@ function BossCard({
       <div className="mt-3 space-y-1 text-xs text-[var(--text-muted)]">
         <p>最后击杀 {formatBeijingDateTime(boss.lastKillAt)}</p>
         <p>下次刷新 {formatBeijingDateTime(boss.nextSpawnAt)}</p>
-        {mark ? (
-          <p className="text-[var(--text-primary)]">{mark}</p>
-        ) : (
-          <p>还没有人点过这个 BOSS</p>
-        )}
       </div>
 
       <div className="mt-4 text-center">
@@ -181,6 +173,26 @@ function BossCard({
                 ? "即将刷新！"
                 : "距离刷新"}
         </p>
+      </div>
+
+      <div className="mt-3 rounded-xl border border-[rgba(123,108,255,0.28)] bg-[#151a2c] px-3 py-2.5">
+        <p className="text-[11px] tracking-wide text-[var(--text-muted)]">
+          上次投票
+        </p>
+        {boss.lastMark && markNames ? (
+          <>
+            <p className="mt-0.5 text-base font-semibold text-[var(--text-primary)]">
+              {markNames}
+            </p>
+            <p className="mt-0.5 text-xs text-[var(--text-muted)]">
+              {boss.lastMark.voteType === "killed" ? "已击杀" : "未刷新"}
+              {" · "}
+              {formatBeijingDateTime(boss.lastMark.at)}
+            </p>
+          </>
+        ) : (
+          <p className="mt-0.5 text-sm text-[var(--text-muted)]">还没有人点过</p>
+        )}
       </div>
 
       {member && (

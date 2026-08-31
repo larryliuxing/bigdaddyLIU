@@ -652,19 +652,25 @@ export function AdminBossPanel({
                         {formatBeijingDateTime(boss.nextSpawnAt)}
                       </p>
                       {boss.lastMark ? (
-                        <p className="mt-0.5 text-xs text-[var(--text-primary)]">
-                          上次
-                          {boss.lastMark.voteType === "killed"
-                            ? "已击杀"
-                            : "未刷新"}
-                          ：
+                        <p className="mt-1 text-sm text-[var(--text-primary)]">
+                          上次投票：
                           {boss.lastMark.members
                             .map((m) => m.memberName)
                             .join("、") || "未知"}
-                          {" · "}
-                          {formatBeijingDateTime(boss.lastMark.at)}
+                          <span className="text-xs text-[var(--text-muted)]">
+                            {" · "}
+                            {boss.lastMark.voteType === "killed"
+                              ? "已击杀"
+                              : "未刷新"}
+                            {" · "}
+                            {formatBeijingDateTime(boss.lastMark.at)}
+                          </span>
                         </p>
-                      ) : null}
+                      ) : (
+                        <p className="mt-1 text-xs text-[var(--text-muted)]">
+                          上次投票：还没有人点过
+                        </p>
+                      )}
                       {hasDropsPreview(boss) && (
                         <button
                           type="button"
