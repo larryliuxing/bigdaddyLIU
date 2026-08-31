@@ -108,8 +108,6 @@ export function AdminBossPanel({
   const router = useRouter();
   const [bosses, setBosses] = useState<Boss[]>(initialBosses);
   const [listLoading, setListLoading] = useState(initialBosses.length === 0);
-  const [voteNeed, setVoteNeed] = useState(3);
-  const [voteNeedBusy, setVoteNeedBusy] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [form, setForm] = useState<BossForm>(emptyForm);
@@ -240,8 +238,6 @@ export function AdminBossPanel({
       if (!res.ok) return;
       const list = (data.allBosses || data.room?.bosses || []) as Boss[];
       setBosses(list);
-      const need = Number(data.voteNeed ?? data.room?.voteNeed);
-      if (Number.isFinite(need)) setVoteNeed(need);
       setTimerDrafts((prev) => {
         const next = { ...prev };
         for (const boss of list) {
@@ -255,37 +251,12 @@ export function AdminBossPanel({
   }
 
   useEffect(() => {
-    // Always load voteNeed; skip list reload flash when SSR provided bosses.
     const timeout = window.setTimeout(() => {
       void refresh();
     }, 0);
     return () => window.clearTimeout(timeout);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  async function saveVoteNeed(n: number) {
-    setError("");
-    setMessage("");
-    setVoteNeedBusy(true);
-    try {
-      const res = await fetch("/api/boss", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "setVoteNeed", voteNeed: n }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error || "设置失败");
-        return;
-      }
-      setVoteNeed(Number(data.voteNeed) || n);
-      setMessage(`投票通过人数已设为 ${data.voteNeed} 人`);
-    } catch {
-      setError("网络错误");
-    } finally {
-      setVoteNeedBusy(false);
-    }
-  }
 
   async function fetchDrops(bossId: number) {
     const res = await fetch(`/api/boss?dropsId=${bossId}`);
@@ -544,9 +515,7 @@ export function AdminBossPanel({
         </header>
 
         <p className="mb-4 text-xs leading-relaxed text-[var(--text-muted)]">
-          固有属性：名称、刷新概率、刷新间隔、掉落说明。计时：盟员端倒计时对准「下次刷新」；
-          要倒计时到某个时刻请用「设下次刷新」；已击杀再用「记击杀并推算」（击杀时间 +
-          间隔）。
+          固有属性：名称、刷新概率、刷新间隔、掉落说明。盟员点「已击杀」或「未刷新」会立刻按当前时间加上间隔重开倒计时。后台精确到分钟时：要倒计时到某个时刻请用「设下次刷新」；已击杀再用「记击杀并推算」（击杀时间 + 间隔）。
         </p>
 
         {message && <p className="mb-3 text-sm text-emerald-400">{message}</p>}
@@ -556,35 +525,10 @@ export function AdminBossPanel({
 
         <section className="mb-5 rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)] p-4">
           <h2 className="text-sm font-medium text-[var(--text-muted)]">
-            投票通过人数
+            盟员标记规则
           </h2>
-          <p className="mt-1 text-xs text-[var(--text-muted)]">
-            全局设置：已击杀 / 未刷新需几人同意才生效（1～5），与单个 BOSS
-            固有属性无关。
-          </p>
-          <div className="mt-3 flex flex-wrap gap-2">
-            {[1, 2, 3, 4, 5].map((n) => {
-              const active = voteNeed === n;
-              return (
-                <button
-                  key={n}
-                  type="button"
-                  disabled={voteNeedBusy}
-                  className={`min-w-[3rem] rounded-xl px-3 py-2.5 text-sm font-semibold transition disabled:opacity-60 ${
-                    active
-                      ? "bg-[var(--accent-violet,#7b6cff)] text-white"
-                      : "btn-ghost"
-                  }`}
-                  onClick={() => saveVoteNeed(n)}
-                >
-                  {n} 人
-                </button>
-              );
-            })}
-          </div>
-          <p className="mt-2 text-xs text-[var(--text-muted)]">
-            当前：{voteNeed} 人通过
-            {voteNeedBusy ? " · 保存中…" : ""}
+          <p className="mt-1 text-xs leading-relaxed text-[var(--text-muted)]">
+            盟员在计时器点「已击杀」或「未刷新」立刻生效：下次刷新 = 当前时间 + 该 BOSS 刷新间隔，并开始倒计时。卡片会显示上一次点的人和时间。不再需要多人投票。
           </p>
         </section>
 
@@ -707,6 +651,26 @@ export function AdminBossPanel({
                         击杀 {formatBeijingDateTime(boss.lastKillAt)} · 下次刷新{" "}
                         {formatBeijingDateTime(boss.nextSpawnAt)}
                       </p>
+                      {boss.lastMark ? (
+                        <p className="mt-1 text-sm text-[var(--text-primary)]">
+                          上次投票：
+                          {boss.lastMark.members
+                            .map((m) => m.memberName)
+                            .join("、") || "未知"}
+                          <span className="text-xs text-[var(--text-muted)]">
+                            {" · "}
+                            {boss.lastMark.voteType === "killed"
+                              ? "已击杀"
+                              : "未刷新"}
+                            {" · "}
+                            {formatBeijingDateTime(boss.lastMark.at)}
+                          </span>
+                        </p>
+                      ) : (
+                        <p className="mt-1 text-xs text-[var(--text-muted)]">
+                          上次投票：还没有人点过
+                        </p>
+                      )}
                       {hasDropsPreview(boss) && (
                         <button
                           type="button"

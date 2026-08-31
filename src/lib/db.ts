@@ -26,6 +26,7 @@ import {
   DEFAULT_AUCTION_TAX_RATE,
   normalizeAuctionTaxRate,
 } from "./auction/tax";
+import { computeTimerFromNow } from "./boss/timer";
 
 const dataDir = path.join(process.cwd(), "data");
 const dbPath = path.join(dataDir, "guild.db");
@@ -2643,6 +2644,28 @@ function toBoss(
     enabled: Boolean(row.enabled),
     remainingSeconds: remainingFrom(row.next_spawn_at),
     activeRound: getOpenRoundForBoss(row.id),
+    lastMark: getLastMarkForBoss(row.id),
+  };
+}
+
+function getLastMarkForBoss(bossId: number): import("./types").BossLastMark | null {
+  const row = ensureDb()
+    .prepare(
+      `SELECT * FROM boss_vote_rounds
+       WHERE boss_id = ? AND status = 'passed'
+       ORDER BY id DESC LIMIT 1`,
+    )
+    .get(bossId) as RoundRow | undefined;
+  if (!row) return null;
+  const votes = getRoundVotes(row.id);
+  if (!votes.length) return null;
+  return {
+    voteType: row.vote_type,
+    at: row.resolved_at || row.started_at,
+    members: votes.map((v) => ({
+      memberId: v.member_id,
+      memberName: v.member_name,
+    })),
   };
 }
 
@@ -2759,20 +2782,16 @@ export function deleteBoss(id: number) {
 function applyPassedVote(bossId: number, voteType: "killed" | "not_spawned") {
   const boss = getBossById(bossId);
   if (!boss) return;
-  const now = new Date();
-  const next = new Date(
-    now.getTime() + boss.intervalHours * 60 * 60 * 1000,
-  ).toISOString();
+  const computed = computeTimerFromNow(boss.intervalHours, voteType);
 
   if (voteType === "killed") {
     updateBoss(bossId, {
-      lastKillAt: now.toISOString(),
-      nextSpawnAt: next,
+      lastKillAt: computed.lastKillAt ?? null,
+      nextSpawnAt: computed.nextSpawnAt,
     });
   } else {
-    // 未刷新：按新一轮重新计时
     updateBoss(bossId, {
-      nextSpawnAt: next,
+      nextSpawnAt: computed.nextSpawnAt,
     });
   }
 }
@@ -2787,139 +2806,52 @@ export function castBossVote(input: {
   if (!boss || !boss.enabled) throw new Error("BOSS 不存在或已停用");
 
   const database = ensureDb();
+  const nowIso = new Date().toISOString();
 
   const run = database.transaction(() => {
-    expireOpenRounds(database);
-
-    let roundRow = database
+    database
       .prepare(
-        `SELECT * FROM boss_vote_rounds
-         WHERE boss_id = ? AND status = 'open'
-         ORDER BY id DESC LIMIT 1`,
+        `UPDATE boss_vote_rounds
+         SET status = 'expired', resolved_at = ?
+         WHERE boss_id = ? AND status = 'open'`,
       )
-      .get(input.bossId) as RoundRow | undefined;
+      .run(nowIso, input.bossId);
 
-    if (roundRow && roundRow.vote_type !== input.voteType) {
-      throw new Error(
-        `当前正在进行「${roundRow.vote_type === "killed" ? "已击杀" : "未刷新"}」投票，请先完成或等待结束`,
+    const inserted = database
+      .prepare(
+        `INSERT INTO boss_vote_rounds (boss_id, vote_type, status, started_at, expires_at, resolved_at)
+         VALUES (?, ?, 'passed', ?, ?, ?)`,
+      )
+      .run(input.bossId, input.voteType, nowIso, nowIso, nowIso);
+
+    database
+      .prepare(
+        `INSERT INTO boss_votes (round_id, boss_id, vote_type, member_id, member_name, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        Number(inserted.lastInsertRowid),
+        input.bossId,
+        input.voteType,
+        input.memberId,
+        input.memberName,
+        nowIso,
       );
-    }
-
-    if (!roundRow) {
-      const started = new Date();
-      const expires = new Date(
-        started.getTime() + BOSS_VOTE_WINDOW_SECONDS * 1000,
-      );
-      // Close any stray open rounds for this boss before creating
-      database
-        .prepare(
-          `UPDATE boss_vote_rounds
-           SET status = 'expired', resolved_at = ?
-           WHERE boss_id = ? AND status = 'open'`,
-        )
-        .run(started.toISOString(), input.bossId);
-
-      const result = database
-        .prepare(
-          `INSERT INTO boss_vote_rounds (boss_id, vote_type, status, started_at, expires_at)
-           VALUES (?, ?, 'open', ?, ?)`,
-        )
-        .run(
-          input.bossId,
-          input.voteType,
-          started.toISOString(),
-          expires.toISOString(),
-        );
-      roundRow = database
-        .prepare(`SELECT * FROM boss_vote_rounds WHERE id = ?`)
-        .get(Number(result.lastInsertRowid)) as RoundRow;
-    }
-
-    if (new Date(roundRow.expires_at).getTime() <= Date.now()) {
-      database
-        .prepare(
-          `UPDATE boss_vote_rounds
-           SET status = 'expired', resolved_at = ?
-           WHERE id = ?`,
-        )
-        .run(new Date().toISOString(), roundRow.id);
-      throw new Error("投票已超时，请重新发起");
-    }
-
-    try {
-      database
-        .prepare(
-          `INSERT INTO boss_votes (round_id, boss_id, vote_type, member_id, member_name)
-           VALUES (?, ?, ?, ?, ?)`,
-        )
-        .run(
-          roundRow.id,
-          input.bossId,
-          input.voteType,
-          input.memberId,
-          input.memberName,
-        );
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "";
-      if (/UNIQUE|constraint/i.test(message)) {
-        throw new Error("你已在本轮投过票");
-      }
-      throw error;
-    }
-
-    const voteCount = (
-      database
-        .prepare(`SELECT COUNT(*) as count FROM boss_votes WHERE round_id = ?`)
-        .get(roundRow.id) as { count: number }
-    ).count;
-
-    let passed = false;
-    const voteNeed = getBossVoteNeed();
-    if (voteCount >= voteNeed) {
-      const now = new Date().toISOString();
-      const result = database
-        .prepare(
-          `UPDATE boss_vote_rounds
-           SET status = 'passed', resolved_at = ?
-           WHERE id = ? AND status = 'open' AND expires_at > ?`,
-        )
-        .run(now, roundRow.id, now);
-      if (result.changes > 0) {
-        passed = true;
-      }
-    }
-
-    const round = toRound(
-      database
-        .prepare(`SELECT * FROM boss_vote_rounds WHERE id = ?`)
-        .get(roundRow.id) as RoundRow,
-    );
-
-    return { round, passed, voteCount, voteNeed };
   });
+  run();
 
-  const { round, passed, voteCount, voteNeed } = run();
+  applyPassedVote(input.bossId, input.voteType);
+  const updated = getBossById(input.bossId)!;
   const label = input.voteType === "killed" ? "已击杀" : "未刷新";
-  if (passed) {
-    applyPassedVote(input.bossId, input.voteType);
-    addBossChatSystem(
-      `「${boss.name}」投票「${label}」成功生效（${round.voteCount}人同意）`,
-    );
-  } else {
-    addBossChatSystem(
-      `「${boss.name}」${input.memberName} 投票「${label}」（${voteCount}/${voteNeed}）`,
-    );
-  }
+  addBossChatSystem(
+    `「${boss.name}」${input.memberName} 标记「${label}」已生效，倒计时已按当前时间重开（间隔 ${boss.intervalHours} 小时）`,
+  );
 
   return {
-    round: toRound(
-      ensureDb()
-        .prepare(`SELECT * FROM boss_vote_rounds WHERE id = ?`)
-        .get(round.id) as RoundRow,
-    ),
-    passed,
-    voteCount,
-    boss: getBossById(input.bossId)!,
+    round: updated.activeRound,
+    passed: true,
+    voteCount: updated.lastMark?.members.length ?? 1,
+    boss: updated,
   };
 }
 

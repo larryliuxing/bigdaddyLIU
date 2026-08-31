@@ -245,6 +245,13 @@ export interface Boss {
   enabled: boolean;
   remainingSeconds: number | null;
   activeRound: BossVoteRound | null;
+  lastMark: BossLastMark | null;
+}
+
+export interface BossLastMark {
+  voteType: BossVoteType;
+  at: string;
+  members: Array<{ memberId: number; memberName: string }>;
 }
 
 export interface BossVoteRound {
