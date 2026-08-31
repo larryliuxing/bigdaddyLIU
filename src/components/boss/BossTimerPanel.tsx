@@ -26,10 +26,17 @@ const SPARKS = [
   { sx: "44px", sy: "40px", left: "54%", top: "50%", delay: "120ms" },
 ];
 
+function lastMarkText(boss: Boss) {
+  if (!boss.lastMark) return null;
+  const kind = boss.lastMark.voteType === "killed" ? "已击杀" : "未刷新";
+  const names =
+    boss.lastMark.members.map((m) => m.memberName).join("、") || "未知";
+  return `上次${kind}：${names} · ${formatBeijingDateTime(boss.lastMark.at)}`;
+}
+
 function BossCard({
   boss,
   member,
-  voteNeed,
   onVote,
   busy,
   onOpenDrops,
@@ -39,7 +46,6 @@ function BossCard({
 }: {
   boss: Boss;
   member: Extract<SessionUser, { type: "member" }> | null;
-  voteNeed: number;
   onVote: (bossId: number, voteType: "killed" | "not_spawned") => void;
   busy: boolean;
   onOpenDrops: (boss: Boss) => void;
@@ -62,14 +68,6 @@ function BossCard({
     ? Math.max(
         0,
         Math.floor((new Date(boss.nextSpawnAt).getTime() - now) / 1000),
-      )
-    : null;
-  const roundRemain = boss.activeRound?.expiresAt
-    ? Math.max(
-        0,
-        Math.floor(
-          (new Date(boss.activeRound.expiresAt).getTime() - now) / 1000,
-        ),
       )
     : null;
 
@@ -103,7 +101,7 @@ function BossCard({
     return () => window.clearTimeout(t);
   }, [burstKey]);
 
-  const round = boss.activeRound;
+  const mark = lastMarkText(boss);
   const hasDrops = Boolean(boss.hasDropsImage || boss.dropsImage || boss.dropsNote);
   const isReady = remain === 0 && Boolean(boss.nextSpawnAt);
   const isUrgent = remain != null && remain > 0 && remain <= URGENT_SECONDS;
@@ -161,6 +159,11 @@ function BossCard({
       <div className="mt-3 space-y-1 text-xs text-[var(--text-muted)]">
         <p>最后击杀 {formatBeijingDateTime(boss.lastKillAt)}</p>
         <p>下次刷新 {formatBeijingDateTime(boss.nextSpawnAt)}</p>
+        {mark ? (
+          <p className="text-[var(--text-primary)]">{mark}</p>
+        ) : (
+          <p>还没有人点过这个 BOSS</p>
+        )}
       </div>
 
       <div className="mt-4 text-center">
@@ -179,23 +182,6 @@ function BossCard({
                 : "距离刷新"}
         </p>
       </div>
-
-      {round && round.status === "open" && (
-        <div className="mt-3 rounded-xl border border-[rgba(123,108,255,0.35)] bg-[#151a2c] px-3 py-2 text-sm">
-          <p>
-            投票中：
-            <span className="font-medium text-[var(--accent-violet)]">
-              {round.voteType === "killed" ? "已击杀" : "未刷新"}
-            </span>
-            {" · "}
-            {round.voteCount}/{voteNeed} · 剩余{" "}
-            <span className="tabular-nums">{roundRemain ?? 0}s</span>
-          </p>
-          <p className="mt-1 text-xs text-[var(--text-muted)]">
-            {round.votes.map((v) => v.memberName).join("、") || "等待同意"}
-          </p>
-        </div>
-      )}
 
       {member && (
         <div className="mt-3 grid grid-cols-2 gap-2">
@@ -222,7 +208,7 @@ function BossCard({
 }
 
 function isTerminalVoteLog(message: string) {
-  return /成功生效|超时未通过|投票失败/.test(message);
+  return /成功生效|已生效|已按当前时间|超时未通过|投票失败/.test(message);
 }
 
 /** Member-facing BOSS timer. Admin CRUD lives under /admin/boss. */
@@ -373,7 +359,7 @@ export function BossTimerPanel({
       });
       const data = await res.json();
       if (!res.ok) {
-        const msg = data.error || "投票失败";
+        const msg = data.error || "标记失败";
         setError(msg);
         showPopup(msg, "fail");
         return;
@@ -386,17 +372,15 @@ export function BossTimerPanel({
       const lastSystem = systems[systems.length - 1];
       if (lastSystem) lastSystemId.current = lastSystem.id;
 
-      if (data.passed) {
-        showPopup(lastSystem?.message || "投票成功，已更新计时", "ok");
-      } else {
-        showPopup(
-          `已投票 ${data.round.voteCount}/${data.room.voteNeed}，等待其他人同意`,
-          "info",
-        );
-      }
+      const label = voteType === "killed" ? "已击杀" : "未刷新";
+      showPopup(
+        lastSystem?.message ||
+          `已标记「${label}」，倒计时已按当前时间重开`,
+        "ok",
+      );
     } catch {
       setError("网络错误");
-      showPopup("网络错误，投票失败", "fail");
+      showPopup("网络错误，标记失败", "fail");
     } finally {
       setBusy(false);
     }
@@ -431,7 +415,6 @@ export function BossTimerPanel({
     window.location.assign(member ? "/home" : "/admin");
   }
 
-  const voteNeed = room?.voteNeed ?? 3;
   const systemLogs = useMemo(
     () => (room?.chat ?? []).filter((c) => c.memberName === "系统").slice(-8),
     [room?.chat],
@@ -530,8 +513,7 @@ export function BossTimerPanel({
         </header>
 
         <p className="relative z-10 mb-3 text-xs text-[var(--text-muted)]">
-          倒计时归零播放「来啦老弟」；投票需 {voteNeed} 人在{" "}
-          {room?.voteWindowSeconds ?? 10} 秒内同意。掉落图点击后按需加载。
+          点「已击杀」或「未刷新」会按当前时间加上刷新间隔立刻开始倒计时。倒计时归零播放「来啦老弟」。
         </p>
 
         {error && (
@@ -552,7 +534,6 @@ export function BossTimerPanel({
                 key={boss.id}
                 boss={boss}
                 member={member}
-                voteNeed={voteNeed}
                 onVote={vote}
                 busy={busy || dropsLoading}
                 onOpenDrops={openDrops}
@@ -569,7 +550,7 @@ export function BossTimerPanel({
 
           {systemLogs.length > 0 && (
             <div className="rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)] px-4 py-3">
-              <p className="mb-2 text-xs text-[var(--text-muted)]">投票日志</p>
+              <p className="mb-2 text-xs text-[var(--text-muted)]">系统日志</p>
               <ul className="space-y-1 text-xs text-[var(--text-muted)]">
                 {systemLogs.map((msg) => (
                   <li key={msg.id}>

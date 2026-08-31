@@ -45,3 +45,17 @@ export function computeTimerFromKill(
     nextSpawnAt: new Date(killMs + intervalMs).toISOString(),
   };
 }
+
+/** Member 「已击杀 / 未刷新」: start a new countdown from now + interval. */
+export function computeTimerFromNow(
+  intervalHours: number,
+  kind: "killed" | "not_spawned",
+  nowMs: number = Date.now(),
+) {
+  const intervalMs = Math.max(0, intervalHours) * 60 * 60 * 1000;
+  const nextSpawnAt = new Date(nowMs + intervalMs).toISOString();
+  if (kind === "killed") {
+    return { lastKillAt: new Date(nowMs).toISOString(), nextSpawnAt };
+  }
+  return { nextSpawnAt };
+}
