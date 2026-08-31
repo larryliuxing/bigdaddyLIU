@@ -93,17 +93,10 @@ export async function recognizeBossNameAtClick(
       preserve_interword_spaces: "1",
       tessedit_char_whitelist: "",
     },
-    [PSM.SINGLE_LINE, PSM.RAW_LINE, PSM.SINGLE_WORD],
+    [PSM.SINGLE_LINE, PSM.RAW_LINE, PSM.SPARSE_TEXT],
   );
-  try {
-    await worker.setParameters({
-      tessedit_pageseg_mode: PSM.AUTO,
-      tessedit_char_whitelist: "",
-    });
-  } catch {
-    // ignore
-  }
-  return { text, previewDataUrl };
+  const cjk = text.replace(/[^\u4e00-\u9fff·]/g, "");
+  return { text: cjk.length >= 2 ? cjk : text, previewDataUrl };
 }
 
 export async function recognizeBossTimeAtClick(

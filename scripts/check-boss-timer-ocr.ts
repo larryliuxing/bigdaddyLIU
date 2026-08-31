@@ -40,7 +40,8 @@ const bosses = [
   { id: 4, name: "瓦柏" },
   { id: 5, name: "沙勒卡" },
 ];
-assert.equal(matchBossFromOcr("巴实那", bosses)?.boss.id, 1);
+assert.equal(matchBossFromOcr("去和于巴实那芝全", bosses)?.boss.id, 1);
+assert.equal(matchBossFromOcr("巴 实 那", bosses)?.boss.id, 1);
 assert.equal(matchBossFromOcr("  卡 坦  ", bosses)?.boss.id, 2);
 assert.equal(matchBossFromOcr("被污染的克鲁玛", bosses)?.boss.id, 3);
 assert.equal(matchBossFromOcr("克鲁玛", bosses)?.boss.id, 3);
