@@ -46,6 +46,49 @@ export function computeTimerFromKill(
   };
 }
 
+/**
+ * Screenshot OCR: lastKillAt from 击退时间; nextSpawnAt from 出没时间 if
+ * present, otherwise kill + intervalHours.
+ * If that next time is already past, keep it so the member board shows 已刷新.
+ */
+export function planTimerFromOcrKill(
+  lastKillAtIso: string,
+  intervalHours: number,
+  appearanceAtIso: string | null = null,
+  nowMs: number = Date.now(),
+):
+  | {
+      ok: true;
+      lastKillAt: string;
+      nextSpawnAt: string;
+      source: "appearance" | "interval";
+      overdue: boolean;
+    }
+  | { ok: false; error: string } {
+  const fromKill = computeTimerFromKill(lastKillAtIso, intervalHours, nowMs);
+  if (!fromKill.ok) return fromKill;
+
+  let nextSpawnAt = fromKill.nextSpawnAt;
+  let source: "appearance" | "interval" = "interval";
+  if (appearanceAtIso) {
+    const appearMs = new Date(appearanceAtIso).getTime();
+    const killMs = new Date(fromKill.lastKillAt).getTime();
+    if (!Number.isNaN(appearMs) && appearMs >= killMs) {
+      nextSpawnAt = new Date(appearMs).toISOString();
+      source = "appearance";
+    }
+  }
+
+  const overdue = new Date(nextSpawnAt).getTime() <= nowMs;
+  return {
+    ok: true,
+    lastKillAt: fromKill.lastKillAt,
+    nextSpawnAt,
+    source,
+    overdue,
+  };
+}
+
 /** Member 「已击杀 / 未刷新」: start a new countdown from now + interval. */
 export function computeTimerFromNow(
   intervalHours: number,

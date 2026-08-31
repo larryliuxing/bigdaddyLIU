@@ -18,6 +18,7 @@ import {
   BossDropsLightbox,
   BossDropsPasteZone,
 } from "@/components/boss/BossDropsViewer";
+import { BossTimerOcrPanel } from "@/components/boss/BossTimerOcrPanel";
 
 const BOSS_COLORS = [
   { id: "purple", label: "紫色", value: "#c084fc" },
@@ -487,7 +488,7 @@ export function AdminBossPanel({
 
   return (
     <div className="app-shell">
-      <div className="app-frame" style={{ width: "min(100%, 760px)" }}>
+        <div className="app-frame" style={{ width: "min(100%, 960px)" }}>
         <header className="mb-6 flex flex-wrap items-start justify-between gap-3">
           <div>
             <p className="text-sm text-[var(--text-muted)]">后台管理</p>
@@ -531,6 +532,27 @@ export function AdminBossPanel({
             盟员在计时器点「已击杀」或「未刷新」立刻生效：下次刷新 = 当前时间 + 该 BOSS 刷新间隔，并开始倒计时。卡片会显示上一次点的人和时间。不再需要多人投票。
           </p>
         </section>
+
+        <BossTimerOcrPanel
+          bosses={bosses}
+          onApply={async ({ bossId, lastKillAt, nextSpawnAt }) => {
+            const ok = await patchBoss(bossId, { lastKillAt, nextSpawnAt });
+            if (!ok) return false;
+            setTimerDrafts((prev) => ({
+              ...prev,
+              [bossId]: {
+                killDate: beijingDateFromIso(lastKillAt),
+                killTime: beijingHmFromIso(lastKillAt),
+                nextDate: beijingDateFromIso(nextSpawnAt),
+                nextTime: beijingHmFromIso(nextSpawnAt),
+              },
+            }));
+            setMessage(
+              `已按识别结果更新计时 · 下次刷新 ${formatBeijingDateTime(nextSpawnAt)}`,
+            );
+            return true;
+          }}
+        />
 
         <section className="rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)] p-4">
           <h2 className="text-sm font-medium text-[var(--text-muted)]">
