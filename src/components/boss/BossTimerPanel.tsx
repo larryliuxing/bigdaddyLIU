@@ -16,7 +16,7 @@ import {
 
 const POLL_MS = 1500;
 const TICK_MS = 1000;
-const POPUP_MS = 2000;
+const POPUP_MS = 4000;
 const URGENT_SECONDS = 60;
 
 const SPARKS = [
