@@ -21,7 +21,7 @@ import {
   AuctionItemThumb,
 } from "./AuctionItemImage";
 import { ItemPriceStatsLine } from "./ItemPriceStatsLine";
-import { isPinkAuction } from "@/lib/auction/pink";
+import { isOrdinaryPinkAuction, isPinkAuction, isParticipantOnlyAuction, ORDINARY_PINK_BID_DENIED } from "@/lib/auction/pink";
 import {
   buildNowPlayingDanmaku,
   parseFanfareKind,
@@ -607,15 +607,19 @@ export function AuctionRoom({
                           </h3>
                           <p className="mt-1 text-xs text-[var(--text-muted)]">
                             {isPinkAuction(item.quality)
-                              ? `粉色限价 ¥${item.bidMin ?? item.startPrice}～¥${item.bidMax ?? "-"} · 仅参与者可出价`
-                              : `起拍 ¥${item.startPrice} · 加价 ¥${item.bidIncrement}`}
+                              ? `特殊粉色限价 ¥${item.bidMin ?? item.startPrice}～¥${item.bidMax ?? "-"} · 仅参与者可出价`
+                              : isOrdinaryPinkAuction(item.quality)
+                                ? `普通粉色 · 起拍 ¥${item.startPrice} · 加价 ¥${item.bidIncrement} · 仅参与者可出价`
+                                : `起拍 ¥${item.startPrice} · 加价 ¥${item.bidIncrement}`}
                           </p>
                           <ItemPriceStatsLine
                             stats={item.priceStats}
                             className="mt-1"
                           />
                           <p className="mt-1 text-xs text-[var(--text-muted)]">
-                            分红人员：
+                            {isParticipantOnlyAuction(item.quality)
+                              ? "参与者："
+                              : "分红人员："}
                             {item.dividendMemberNames.length > 0
                               ? item.dividendMemberNames.join("、")
                               : "未设置"}
@@ -670,10 +674,13 @@ export function AuctionRoom({
                           </ul>
                         )}
                       {item.status === "active" && member && (
-                        isPinkAuction(item.quality) &&
+                        isParticipantOnlyAuction(item.quality) &&
+                        item.dividendMemberIds.length > 0 &&
                         !item.dividendMemberIds.includes(member.id) ? (
                           <p className="mt-3 text-sm text-[var(--text-muted)]">
-                            仅本拍品参与者可以出价
+                            {isOrdinaryPinkAuction(item.quality)
+                              ? ORDINARY_PINK_BID_DENIED
+                              : "仅本拍品参与者可以出价"}
                           </p>
                         ) : (
                           <div className="mt-3 flex flex-col gap-2 sm:flex-row">

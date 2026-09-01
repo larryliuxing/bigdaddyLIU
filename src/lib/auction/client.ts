@@ -23,7 +23,8 @@ export const QUALITY_OPTIONS = [
   { value: "blue", label: "蓝色", color: "#60a5fa" },
   { value: "purple", label: "紫色", color: "#c084fc" },
   { value: "orange", label: "橙色", color: "#fb923c" },
-  { value: "pink", label: "粉色", color: "#f472b6" },
+  { value: "pink", label: "普通粉色", color: "#f9a8d4" },
+  { value: "special_pink", label: "特殊粉色", color: "#f472b6" },
 ] as const;
 
 export function qualityMeta(quality: string) {

@@ -29,6 +29,9 @@ import {
 import { computeTimerFromNow } from "./boss/timer";
 import {
   isPinkAuction,
+  isParticipantOnlyAuction,
+  isOrdinaryPinkAuction,
+  ORDINARY_PINK_BID_DENIED,
   PINK_ROLL_SECONDS,
   PINK_VOTE_SECONDS,
   pickUnusedRoll,
@@ -358,6 +361,7 @@ function seedIfEmpty(database: Database.Database) {
   }
 
   backfillSaleHistory(database);
+  migrateLegacyPinkToSpecialOnce(database);
   // Legacy: wipe leftover total-table temporary rows (feature removed).
   database
     .prepare(`DELETE FROM auction_dividend_entries WHERE is_temporary = 1`)
@@ -375,6 +379,24 @@ function ensureColumn(
   }>;
   if (cols.some((c) => c.name === column)) return;
   database.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+}
+
+/** Old `pink` rows used the vote/limit rules; those are now `special_pink`. */
+function migrateLegacyPinkToSpecialOnce(database: Database.Database) {
+  const done = database
+    .prepare(`SELECT value FROM app_meta WHERE key = ?`)
+    .get("migrate_pink_to_special_pink_v1") as { value: string } | undefined;
+  if (done) return;
+  database.exec(`
+    UPDATE auction_items SET quality = 'special_pink' WHERE quality = 'pink';
+    UPDATE auction_item_sale_history SET quality = 'special_pink' WHERE quality = 'pink';
+  `);
+  database
+    .prepare(
+      `INSERT INTO app_meta (key, value) VALUES (?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+    )
+    .run("migrate_pink_to_special_pink_v1", new Date().toISOString());
 }
 
 /** One-shot: clear all members + auction data; keep admin + bosses. */
@@ -1641,7 +1663,7 @@ function finishPinkItem(
   addEvent(
     item.sessionId,
     "sold",
-    `${item.name} 成交 ¥${result.amount}，得主 ${winner?.name ?? "未知"}（粉色·${reasonLabel}）`,
+        `${item.name} 成交 ¥${result.amount}，得主 ${winner?.name ?? "未知"}（特殊粉色·${reasonLabel}）`,
   );
 }
 
@@ -2131,10 +2153,17 @@ export function placeBid(input: {
   if (!member) throw new Error("成员不存在");
   if (member.status === "exited") throw new Error("该成员已清退，无法出价");
 
-  if (isPinkAuction(item.quality)) {
+  if (isParticipantOnlyAuction(item.quality)) {
     if (!item.dividendMemberIds.includes(input.memberId)) {
-      throw new Error("粉色拍品仅该物品参与者可以出价");
+      throw new Error(
+        isOrdinaryPinkAuction(item.quality)
+          ? ORDINARY_PINK_BID_DENIED
+          : "粉色拍品仅该物品参与者可以出价",
+      );
     }
+  }
+
+  if (isPinkAuction(item.quality)) {
     const low = item.bidMin ?? item.startPrice;
     const high = item.bidMax;
     if (high == null || !(high > low)) {

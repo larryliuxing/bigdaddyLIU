@@ -3,8 +3,31 @@ import type { ItemQuality } from "@/lib/types";
 export const PINK_VOTE_SECONDS = 90;
 export const PINK_ROLL_SECONDS = 90;
 
-export function isPinkAuction(quality: ItemQuality | string | null | undefined) {
+/** 特殊粉色：限价出价 + 匿名投票 + 掷点 */
+export function isSpecialPinkAuction(
+  quality: ItemQuality | string | null | undefined,
+) {
+  return quality === "special_pink";
+}
+
+/** 普通粉色：仅参与者按起拍/加价竞拍 */
+export function isOrdinaryPinkAuction(
+  quality: ItemQuality | string | null | undefined,
+) {
   return quality === "pink";
+}
+
+export const ORDINARY_PINK_BID_DENIED = "您未参与此boss战斗，无法出价";
+
+export function isParticipantOnlyAuction(
+  quality: ItemQuality | string | null | undefined,
+) {
+  return isOrdinaryPinkAuction(quality) || isSpecialPinkAuction(quality);
+}
+
+/** @deprecated use isSpecialPinkAuction */
+export function isPinkAuction(quality: ItemQuality | string | null | undefined) {
+  return isSpecialPinkAuction(quality);
 }
 
 export type PinkStandingBid = {

@@ -11,7 +11,7 @@ import {
   normalizeItemNameKey,
 } from "@/lib/db";
 import type { ItemQuality } from "@/lib/types";
-import { isPinkAuction } from "@/lib/auction/pink";
+import { isPinkAuction, isParticipantOnlyAuction } from "@/lib/auction/pink";
 import { buildRoomState } from "@/lib/auction/room";
 
 export const runtime = "nodejs";
@@ -23,6 +23,7 @@ const QUALITIES: ItemQuality[] = [
   "purple",
   "orange",
   "pink",
+  "special_pink",
 ];
 
 export async function GET(request: Request) {
@@ -73,7 +74,7 @@ export async function POST(request: Request) {
   if (isPinkAuction(quality)) {
     if (!(bidMin != null && bidMin > 0) || !(bidMax != null && bidMax > 0)) {
       return NextResponse.json(
-        { error: "粉色拍品请填写低限价和高限价" },
+        { error: "特殊粉色请填写低限价和高限价" },
         { status: 400 },
       );
     }
@@ -85,7 +86,7 @@ export async function POST(request: Request) {
     }
     if (dividendMemberIds.length < 2) {
       return NextResponse.json(
-        { error: "粉色拍品至少选择 2 名参与者（可出价、投票）" },
+        { error: "特殊粉色至少选择 2 名参与者（可出价、投票）" },
         { status: 400 },
       );
     }
@@ -95,7 +96,11 @@ export async function POST(request: Request) {
   }
   if (dividendMemberIds.length === 0) {
     return NextResponse.json(
-      { error: "请至少选择一名分红成员" },
+      {
+        error: isParticipantOnlyAuction(quality)
+          ? "请至少选择一名参与者"
+          : "请至少选择一名分红成员",
+      },
       { status: 400 },
     );
   }

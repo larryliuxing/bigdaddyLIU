@@ -123,7 +123,7 @@ async function main() {
     const item = db.createAuctionItem({
       sessionId: session.id,
       name: "粉色测试装",
-      quality: "pink",
+      quality: "special_pink",
       startPrice: 10,
       bidIncrement: 1,
       dividendMemberIds: [a.id, b.id],
@@ -189,7 +189,7 @@ async function main() {
     const rollItem = db.createAuctionItem({
       sessionId: rollSession.id,
       name: "粉色掷点装",
-      quality: "pink",
+      quality: "special_pink",
       startPrice: 10,
       bidIncrement: 1,
       dividendMemberIds: [a.id, b.id],
@@ -230,6 +230,51 @@ async function main() {
     assert.equal(rolled.winnerMemberId, expectedWinner);
     assert.equal(rolled.soldPrice, 30);
     assert.notEqual(first.points, second.points);
+
+    const ordinarySession = db.createDraftSession({
+      scheduledStart: null,
+      durationMinutes: 30,
+    });
+    const ordinary = db.createAuctionItem({
+      sessionId: ordinarySession.id,
+      name: "普通粉色装",
+      quality: "pink",
+      startPrice: 10,
+      bidIncrement: 5,
+      dividendMemberIds: [a.id, b.id],
+    });
+    assert.equal(ordinary.bidMin, null);
+    assert.equal(ordinary.startPrice, 10);
+    db.startAuctionSession(ordinarySession.id, { forceNow: true });
+    let outsiderOrdinary = false;
+    try {
+      db.placeBid({
+        sessionId: ordinarySession.id,
+        itemId: ordinary.id,
+        memberId: outsider.id,
+        amount: 10,
+      });
+    } catch (err) {
+      outsiderOrdinary = /未参与此boss/.test((err as Error).message);
+    }
+    assert.equal(outsiderOrdinary, true);
+    db.placeBid({
+      sessionId: ordinarySession.id,
+      itemId: ordinary.id,
+      memberId: a.id,
+      amount: 10,
+    });
+    db.placeBid({
+      sessionId: ordinarySession.id,
+      itemId: ordinary.id,
+      memberId: b.id,
+      amount: 15,
+    });
+    db.endAuctionSession(ordinarySession.id);
+    const ordinarySold = db.getItemById(ordinary.id)!;
+    assert.equal(ordinarySold.status, "sold");
+    assert.equal(ordinarySold.winnerMemberId, b.id);
+    assert.equal(ordinarySold.soldPrice, 15);
   } finally {
     process.chdir(originalCwd);
     fs.rmSync(tempDir, { recursive: true, force: true });

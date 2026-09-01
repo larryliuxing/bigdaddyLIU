@@ -31,7 +31,8 @@ export type ItemQuality =
   | "blue"
   | "purple"
   | "orange"
-  | "pink";
+  | "pink"
+  | "special_pink";
 
 export type AuctionSessionStatus =
   | "draft"
