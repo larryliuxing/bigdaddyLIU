@@ -1,4 +1,5 @@
 import {
+  attachPinkRoomFields,
   getAuctionSettings,
   getDividendReport,
   getPublicAuctionSession,
@@ -14,6 +15,7 @@ import {
   normalizeItemNameKey,
 } from "@/lib/db";
 import type { AuctionItem, AuctionRoomState } from "@/lib/types";
+import { isPinkAuction } from "./pink";
 
 export type BuildRoomOptions = {
   /**
@@ -25,6 +27,8 @@ export type BuildRoomOptions = {
   includeDividends?: boolean;
   /** Override historical price-stat loading. */
   includePriceStats?: boolean;
+  /** Member viewing the room (for myVote / myRoll). */
+  viewerMemberId?: number;
 };
 
 function withLeadingBidders(
@@ -78,13 +82,24 @@ export function buildRoomState(
     : [];
 
   const leaders = session ? mapLeadingBidders(session.id) : new Map();
-  const bidderItems = withLeadingBidders(itemsRaw, leaders);
+  const bidderItems = withLeadingBidders(itemsRaw, leaders).map((item) =>
+    attachPinkRoomFields(item, options.viewerMemberId),
+  );
   const items = includePriceStats ? withPriceStats(bidderItems) : bidderItems;
-  const activeItems = items.filter((i) => i.status === "active");
+  const activeItems = items.filter(
+    (i) =>
+      i.status === "active" ||
+      i.status === "voting" ||
+      i.status === "rolling",
+  );
   const activeItem = activeItems[0] ?? null;
 
   const minNextBids: Record<number, number> = {};
-  for (const item of activeItems) {
+  for (const item of items.filter((i) => i.status === "active")) {
+    if (isPinkAuction(item.quality)) {
+      minNextBids[item.id] = item.bidMin ?? item.startPrice;
+      continue;
+    }
     const hasBids = leaders.has(item.id);
     minNextBids[item.id] = hasBids
       ? item.currentPrice + item.bidIncrement

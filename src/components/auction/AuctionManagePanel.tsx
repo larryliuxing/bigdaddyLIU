@@ -22,6 +22,7 @@ import {
   sessionLifecycleLabel,
 } from "@/lib/auction/client";
 import { AddAuctionItemForm } from "./AddAuctionItemForm";
+import { isPinkAuction } from "@/lib/auction/pink";
 import { DividendReportView } from "./DividendReportView";
 import {
   AuctionItemLightbox,
@@ -723,7 +724,9 @@ export function AuctionManagePanel({
                             {item.name}
                           </p>
                           <p className="mt-0.5 text-xs text-[var(--text-muted)]">
-                            起拍 ¥{item.startPrice} · 加价 ¥{item.bidIncrement} ·{" "}
+                            {isPinkAuction(item.quality)
+                              ? `粉色限价 ¥${item.bidMin ?? item.startPrice}～¥${item.bidMax ?? "-"} · `
+                              : `起拍 ¥${item.startPrice} · 加价 ¥${item.bidIncrement} · `}
                             {item.status}
                             {item.soldPrice != null
                               ? ` · 成交 ¥${item.soldPrice}`

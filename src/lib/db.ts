@@ -27,6 +27,13 @@ import {
   normalizeAuctionTaxRate,
 } from "./auction/tax";
 import { computeTimerFromNow } from "./boss/timer";
+import {
+  isPinkAuction,
+  PINK_ROLL_SECONDS,
+  PINK_VOTE_SECONDS,
+  pickUnusedRoll,
+  resolvePinkContest,
+} from "./auction/pink";
 
 const dataDir = path.join(process.cwd(), "data");
 const dbPath = path.join(dataDir, "guild.db");
@@ -118,6 +125,25 @@ export function ensureDb(): Database.Database {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS auction_item_votes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      item_id INTEGER NOT NULL,
+      voter_member_id INTEGER NOT NULL,
+      candidate_member_id INTEGER NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(item_id, voter_member_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS auction_item_rolls (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      item_id INTEGER NOT NULL,
+      member_id INTEGER NOT NULL,
+      points INTEGER NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(item_id, member_id),
+      UNIQUE(item_id, points)
+    );
+
     CREATE TABLE IF NOT EXISTS auction_events (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       session_id INTEGER NOT NULL,
@@ -156,6 +182,10 @@ export function ensureDb(): Database.Database {
       ON auction_item_dividends(item_id, member_id);
     CREATE INDEX IF NOT EXISTS idx_auction_bids_session_item
       ON auction_bids(session_id, item_id, id);
+    CREATE INDEX IF NOT EXISTS idx_auction_item_votes_item
+      ON auction_item_votes(item_id);
+    CREATE INDEX IF NOT EXISTS idx_auction_item_rolls_item
+      ON auction_item_rolls(item_id);
     CREATE INDEX IF NOT EXISTS idx_auction_events_session
       ON auction_events(session_id, id);
 
@@ -304,6 +334,10 @@ function seedIfEmpty(database: Database.Database) {
   ensureColumn(database, "members", "exited_at", "TEXT");
 
   ensureColumn(database, "bosses", "drops_image", "TEXT");
+  ensureColumn(database, "auction_items", "bid_min", "REAL");
+  ensureColumn(database, "auction_items", "bid_max", "REAL");
+  ensureColumn(database, "auction_items", "vote_ends_at", "TEXT");
+  ensureColumn(database, "auction_items", "roll_ends_at", "TEXT");
 
   const bossCount = database
     .prepare("SELECT COUNT(*) as count FROM bosses")
@@ -366,6 +400,8 @@ function wipeRosterAndAuctionsOnce(database: Database.Database) {
       DELETE FROM boss_vote_rounds;
       DELETE FROM boss_presence;
       DELETE FROM boss_chat;
+      DELETE FROM auction_item_rolls;
+      DELETE FROM auction_item_votes;
       DELETE FROM members;
     `);
     database.pragma("foreign_keys = ON");
@@ -420,6 +456,8 @@ function prodGoLiveCleanupOnce(database: Database.Database) {
       DELETE FROM auction_item_dividends;
       DELETE FROM auction_item_dividend_lines;
       DELETE FROM auction_dividend_entries;
+      DELETE FROM auction_item_rolls;
+      DELETE FROM auction_item_votes;
       DELETE FROM auction_bids;
       DELETE FROM auction_events;
       DELETE FROM auction_item_sale_history;
@@ -761,6 +799,10 @@ type ItemRow = {
   sold_price: number | null;
   activated_at: string | null;
   closed_at: string | null;
+  bid_min: number | null;
+  bid_max: number | null;
+  vote_ends_at: string | null;
+  roll_ends_at: string | null;
 };
 
 function toSession(row: SessionRow): AuctionSession {
@@ -829,6 +871,10 @@ function toItem(
     soldPrice: row.sold_price,
     activatedAt: row.activated_at,
     closedAt: row.closed_at,
+    bidMin: row.bid_min ?? null,
+    bidMax: row.bid_max ?? null,
+    voteEndsAt: row.vote_ends_at ?? null,
+    rollEndsAt: row.roll_ends_at ?? null,
     dividendMemberIds,
     dividendMemberNames,
     leadingBidderId: null,
@@ -1079,6 +1125,8 @@ export function deleteAuctionSession(sessionId: number): boolean {
       database
         .prepare(`DELETE FROM auction_item_dividends WHERE item_id = ?`)
         .run(itemId);
+      database.prepare(`DELETE FROM auction_item_votes WHERE item_id = ?`).run(itemId);
+      database.prepare(`DELETE FROM auction_item_rolls WHERE item_id = ?`).run(itemId);
     }
     database.prepare(`DELETE FROM auction_bids WHERE session_id = ?`).run(sessionId);
     database.prepare(`DELETE FROM auction_events WHERE session_id = ?`).run(sessionId);
@@ -1375,6 +1423,8 @@ export function createAuctionItem(input: {
   bidIncrement: number;
   imageData?: string | null;
   dividendMemberIds: number[];
+  bidMin?: number | null;
+  bidMax?: number | null;
 }): AuctionItem {
   const database = ensureDb();
   const maxOrder = database
@@ -1383,21 +1433,28 @@ export function createAuctionItem(input: {
     )
     .get(input.sessionId) as { max_order: number };
 
+  const pink = isPinkAuction(input.quality);
+  const bidMin = pink ? (input.bidMin ?? input.startPrice) : null;
+  const bidMax = pink ? (input.bidMax ?? null) : null;
+  const startPrice = pink ? (bidMin ?? input.startPrice) : input.startPrice;
+
   const result = database
     .prepare(
       `INSERT INTO auction_items
-       (session_id, name, quality, start_price, bid_increment, image_data, sort_order, current_price)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+       (session_id, name, quality, start_price, bid_increment, image_data, sort_order, current_price, bid_min, bid_max)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       input.sessionId,
       input.name.trim(),
       input.quality,
-      input.startPrice,
+      startPrice,
       input.bidIncrement,
       input.imageData ?? null,
       maxOrder.max_order + 1,
-      input.startPrice,
+      startPrice,
+      bidMin,
+      bidMax,
     );
 
   const itemId = Number(result.lastInsertRowid);
@@ -1416,11 +1473,13 @@ export function createAuctionItem(input: {
 
 export function deleteAuctionItem(itemId: number): boolean {
   const item = getItemById(itemId);
-  if (!item || item.status === "active" || item.status === "sold") return false;
+  if (!item || item.status === "active" || item.status === "sold" || item.status === "voting" || item.status === "rolling") return false;
   const database = ensureDb();
   database
     .prepare(`DELETE FROM auction_item_dividends WHERE item_id = ?`)
     .run(itemId);
+  database.prepare(`DELETE FROM auction_item_votes WHERE item_id = ?`).run(itemId);
+  database.prepare(`DELETE FROM auction_item_rolls WHERE item_id = ?`).run(itemId);
   const result = database
     .prepare(`DELETE FROM auction_items WHERE id = ?`)
     .run(itemId);
@@ -1502,6 +1561,319 @@ export function countBidsForItem(itemId: number): number {
   return row.count;
 }
 
+export function listStandingBids(itemId: number) {
+  const rows = ensureDb()
+    .prepare(
+      `SELECT b.member_id as memberId, m.name as memberName, b.amount
+       FROM auction_bids b
+       JOIN members m ON m.id = b.member_id
+       WHERE b.item_id = ?
+         AND b.id = (
+           SELECT MAX(b2.id) FROM auction_bids b2
+           WHERE b2.item_id = b.item_id AND b2.member_id = b.member_id
+         )
+       ORDER BY b.amount DESC, b.id ASC`,
+    )
+    .all(itemId) as Array<{
+    memberId: number;
+    memberName: string;
+    amount: number;
+  }>;
+  return rows;
+}
+
+function listItemVotes(itemId: number) {
+  return ensureDb()
+    .prepare(
+      `SELECT voter_member_id as voterId, candidate_member_id as candidateId
+       FROM auction_item_votes WHERE item_id = ?`,
+    )
+    .all(itemId) as Array<{ voterId: number; candidateId: number }>;
+}
+
+function listItemRolls(itemId: number) {
+  return ensureDb()
+    .prepare(
+      `SELECT r.member_id as memberId, m.name as memberName, r.points
+       FROM auction_item_rolls r
+       JOIN members m ON m.id = r.member_id
+       WHERE r.item_id = ?
+       ORDER BY r.points DESC, r.id ASC`,
+    )
+    .all(itemId) as Array<{
+    memberId: number;
+    memberName: string;
+    points: number;
+  }>;
+}
+
+function secondsFromNow(seconds: number) {
+  return new Date(Date.now() + seconds * 1000).toISOString();
+}
+
+function finishPinkItem(
+  item: AuctionItem,
+  result: { memberId: number; amount: number; reason: string },
+) {
+  const winner = getMemberById(result.memberId);
+  ensureDb()
+    .prepare(
+      `UPDATE auction_items
+       SET status = 'sold', winner_member_id = ?, sold_price = ?, current_price = ?, closed_at = ?
+       WHERE id = ?`,
+    )
+    .run(result.memberId, result.amount, result.amount, nowIso(), item.id);
+  recordItemSale({
+    itemId: item.id,
+    sessionId: item.sessionId,
+    itemName: item.name,
+    quality: item.quality,
+    soldPrice: result.amount,
+    winnerMemberId: result.memberId,
+    winnerName: winner?.name ?? null,
+  });
+  const reasonLabel =
+    result.reason === "votes"
+      ? "投票"
+      : result.reason === "price"
+        ? "同票价高"
+        : "掷点";
+  addEvent(
+    item.sessionId,
+    "sold",
+    `${item.name} 成交 ¥${result.amount}，得主 ${winner?.name ?? "未知"}（粉色·${reasonLabel}）`,
+  );
+}
+
+function unsoldPinkItem(item: AuctionItem) {
+  ensureDb()
+    .prepare(
+      `UPDATE auction_items SET status = 'unsold', closed_at = ? WHERE id = ?`,
+    )
+    .run(nowIso(), item.id);
+  addEvent(item.sessionId, "unsold", `${item.name} 流拍（粉色无有效出价）`);
+}
+
+function beginPinkVote(itemId: number) {
+  const item = getItemById(itemId);
+  if (!item || item.status !== "active" || !isPinkAuction(item.quality)) {
+    return null;
+  }
+  const bids = listStandingBids(itemId);
+  if (!bids.length) {
+    unsoldPinkItem(item);
+    return getItemById(itemId);
+  }
+  ensureDb()
+    .prepare(
+      `UPDATE auction_items
+       SET status = 'voting', vote_ends_at = ?
+       WHERE id = ?`,
+    )
+    .run(secondsFromNow(PINK_VOTE_SECONDS), itemId);
+  addEvent(
+    item.sessionId,
+    "vote",
+    `${item.name} 出价结束，参与者开始匿名投票（${PINK_VOTE_SECONDS} 秒）`,
+  );
+  return getItemById(itemId);
+}
+
+function applyPinkContest(itemId: number, rollClosed: boolean) {
+  const item = getItemById(itemId);
+  if (!item || (item.status !== "voting" && item.status !== "rolling")) {
+    return null;
+  }
+  const bids = listStandingBids(itemId);
+  const votes = listItemVotes(itemId);
+  const rolls = listItemRolls(itemId);
+  const voteClosed =
+    item.status === "rolling" ||
+    item.status === "voting";
+  // voteClosed true when resolving from timeout or all votes; caller decides.
+  const result = resolvePinkContest({
+    bids,
+    votes,
+    rolls,
+    voteClosed,
+    rollClosed,
+  });
+  if (result.kind === "unsold") {
+    unsoldPinkItem(item);
+    return getItemById(itemId);
+  }
+  if (result.kind === "wait_votes") return item;
+  if (result.kind === "wait_roll") {
+    if (item.status !== "rolling") {
+      ensureDb()
+        .prepare(
+          `UPDATE auction_items
+           SET status = 'rolling', roll_ends_at = ?
+           WHERE id = ?`,
+        )
+        .run(secondsFromNow(PINK_ROLL_SECONDS), itemId);
+      addEvent(
+        item.sessionId,
+        "roll",
+        `${item.name} 同票同价，进入掷点（1–100，不可重复）`,
+      );
+    }
+    return getItemById(itemId);
+  }
+  finishPinkItem(item, result);
+  return getItemById(itemId);
+}
+
+export function resolvePinkVoting(itemId: number) {
+  const item = getItemById(itemId);
+  if (!item || item.status !== "voting") return null;
+  const need = item.dividendMemberIds.length;
+  const cast = listItemVotes(itemId).length;
+  const timedOut =
+    Boolean(item.voteEndsAt) &&
+    new Date(item.voteEndsAt!).getTime() <= Date.now();
+  if (cast < need && !timedOut) return item;
+  return applyPinkContest(itemId, false);
+}
+
+export function resolvePinkRolling(itemId: number) {
+  const item = getItemById(itemId);
+  if (!item || item.status !== "rolling") return null;
+  const timedOut =
+    Boolean(item.rollEndsAt) &&
+    new Date(item.rollEndsAt!).getTime() <= Date.now();
+  const bids = listStandingBids(itemId);
+  const preview = resolvePinkContest({
+    bids,
+    votes: listItemVotes(itemId),
+    rolls: listItemRolls(itemId),
+    voteClosed: true,
+    rollClosed: false,
+  });
+  if (preview.kind === "wait_roll" && !timedOut) return item;
+  return applyPinkContest(itemId, timedOut || preview.kind !== "wait_roll");
+}
+
+export function castPinkVote(input: {
+  itemId: number;
+  voterMemberId: number;
+  candidateMemberId: number;
+}) {
+  const item = getItemById(input.itemId);
+  if (!item || item.status !== "voting") {
+    throw new Error("当前不是投票阶段");
+  }
+  if (!item.dividendMemberIds.includes(input.voterMemberId)) {
+    throw new Error("仅本拍品参与者可以投票");
+  }
+  const bids = listStandingBids(item.id);
+  if (!bids.some((b) => b.memberId === input.candidateMemberId)) {
+    throw new Error("只能投给已出价的参与者");
+  }
+  ensureDb()
+    .prepare(
+      `INSERT INTO auction_item_votes (item_id, voter_member_id, candidate_member_id)
+       VALUES (?, ?, ?)
+       ON CONFLICT(item_id, voter_member_id)
+       DO UPDATE SET candidate_member_id = excluded.candidate_member_id`,
+    )
+    .run(item.id, input.voterMemberId, input.candidateMemberId);
+  const voter = getMemberById(input.voterMemberId);
+  addEvent(
+    item.sessionId,
+    "vote",
+    `${voter?.name ?? "参与者"} 已投票（匿名）`,
+  );
+  resolvePinkVoting(item.id);
+  return getItemById(item.id)!;
+}
+
+export function rollPinkPoints(input: { itemId: number; memberId: number }) {
+  const item = getItemById(input.itemId);
+  if (!item || item.status !== "rolling") {
+    throw new Error("当前不是掷点阶段");
+  }
+  const preview = resolvePinkContest({
+    bids: listStandingBids(item.id),
+    votes: listItemVotes(item.id),
+    rolls: listItemRolls(item.id),
+    voteClosed: true,
+    rollClosed: false,
+  });
+  const tied =
+    preview.kind === "wait_roll" ? preview.memberIds : [];
+  if (!tied.includes(input.memberId)) {
+    throw new Error("只有平票平价的参与者可以掷点");
+  }
+  const existing = listItemRolls(item.id).find(
+    (row) => row.memberId === input.memberId,
+  );
+  if (existing) {
+    throw new Error(`你已经掷出 ${existing.points} 点`);
+  }
+  const points = pickUnusedRoll(listItemRolls(item.id).map((row) => row.points));
+  if (points == null) throw new Error("点数已满");
+  ensureDb()
+    .prepare(
+      `INSERT INTO auction_item_rolls (item_id, member_id, points) VALUES (?, ?, ?)`,
+    )
+    .run(item.id, input.memberId, points);
+  const member = getMemberById(input.memberId);
+  addEvent(
+    item.sessionId,
+    "roll",
+    `${member?.name ?? "参与者"} 掷出 ${points} 点`,
+  );
+  resolvePinkRolling(item.id);
+  return { points, item: getItemById(item.id)! };
+}
+
+export function attachPinkRoomFields(
+  item: AuctionItem,
+  viewerMemberId?: number,
+): AuctionItem {
+  if (!isPinkAuction(item.quality)) return item;
+  if (
+    item.status !== "active" &&
+    item.status !== "voting" &&
+    item.status !== "rolling" &&
+    item.status !== "sold"
+  ) {
+    return item;
+  }
+  const standingBids = listStandingBids(item.id);
+  const votes = listItemVotes(item.id);
+  const rolls = listItemRolls(item.id);
+  const myVote =
+    viewerMemberId != null
+      ? (votes.find((v) => v.voterId === viewerMemberId)?.candidateId ?? null)
+      : null;
+  const myRoll =
+    viewerMemberId != null
+      ? (rolls.find((r) => r.memberId === viewerMemberId)?.points ?? null)
+      : null;
+  const contest = resolvePinkContest({
+    bids: standingBids,
+    votes,
+    rolls,
+    voteClosed: item.status === "rolling" || item.status === "sold",
+    rollClosed: item.status === "sold",
+  });
+  const tiedMemberIds =
+    contest.kind === "wait_roll" ? contest.memberIds : [];
+  return {
+    ...item,
+    standingBids,
+    voteCastCount: votes.length,
+    voteNeed:
+      item.dividendMemberIds.length || getItemDividendIds(item.id).length,
+    myVoteCandidateId: myVote,
+    myRollPoints: myRoll,
+    tiedMemberIds,
+    rolls: item.status === "rolling" || item.status === "sold" ? rolls : [],
+  };
+}
+
 function nowIso() {
   return new Date().toISOString();
 }
@@ -1561,6 +1933,10 @@ export function closeItem(itemId: number): AuctionItem | null {
   const item = getItemById(itemId);
   if (!item || item.status !== "active") return null;
 
+  if (isPinkAuction(item.quality)) {
+    return beginPinkVote(itemId);
+  }
+
   const topBid = ensureDb()
     .prepare(
       `SELECT member_id, amount FROM auction_bids
@@ -1603,6 +1979,17 @@ export function closeItem(itemId: number): AuctionItem | null {
   return getItemById(item.id);
 }
 
+export function sessionHasOpenFloor(sessionId: number) {
+  const row = ensureDb()
+    .prepare(
+      `SELECT COUNT(*) as count FROM auction_items
+       WHERE session_id = ?
+         AND status IN ('active', 'voting', 'rolling')`,
+    )
+    .get(sessionId) as { count: number };
+  return row.count > 0;
+}
+
 export function closeAllActiveItems(sessionId: number): void {
   const active = ensureDb()
     .prepare(
@@ -1612,6 +1999,38 @@ export function closeAllActiveItems(sessionId: number): void {
   for (const row of active) {
     closeItem(row.id);
   }
+}
+
+function finishSessionIfIdle(sessionId: number): AuctionSession {
+  if (sessionHasOpenFloor(sessionId)) {
+    return getSessionById(sessionId)!;
+  }
+
+  ensureDb()
+    .prepare(
+      `UPDATE auction_items SET status = 'cancelled', closed_at = ?
+       WHERE session_id = ? AND status = 'pending'`,
+    )
+    .run(nowIso(), sessionId);
+
+  ensureDb()
+    .prepare(
+      `UPDATE auction_sessions
+       SET status = 'ended', ends_at = COALESCE(ends_at, ?), current_item_id = NULL
+       WHERE id = ?`,
+    )
+    .run(nowIso(), sessionId);
+
+  addEvent(sessionId, "system", "拍卖已结束");
+  return getSessionById(sessionId)!;
+}
+
+export function endAuctionSession(sessionId: number): AuctionSession {
+  const session = getSessionById(sessionId);
+  if (!session) throw new Error("拍卖场次不存在");
+
+  closeAllActiveItems(sessionId);
+  return finishSessionIfIdle(sessionId);
 }
 
 export function closeCurrentItem(sessionId: number): AuctionItem | null {
@@ -1668,32 +2087,6 @@ export function startAuctionSession(
   return getSessionById(sessionId)!;
 }
 
-export function endAuctionSession(sessionId: number): AuctionSession {
-  const session = getSessionById(sessionId);
-  if (!session) throw new Error("拍卖场次不存在");
-
-  closeAllActiveItems(sessionId);
-
-  // mark remaining pending as cancelled
-  ensureDb()
-    .prepare(
-      `UPDATE auction_items SET status = 'cancelled', closed_at = ?
-       WHERE session_id = ? AND status = 'pending'`,
-    )
-    .run(nowIso(), sessionId);
-
-  ensureDb()
-    .prepare(
-      `UPDATE auction_sessions
-       SET status = 'ended', ends_at = COALESCE(ends_at, ?), current_item_id = NULL
-       WHERE id = ?`,
-    )
-    .run(nowIso(), sessionId);
-
-  addEvent(sessionId, "system", "拍卖已结束");
-  return getSessionById(sessionId)!;
-}
-
 export function placeBid(input: {
   sessionId: number;
   itemId: number;
@@ -1717,6 +2110,71 @@ export function placeBid(input: {
     throw new Error("该拍品当前不可出价");
   }
 
+  const member = getMemberById(input.memberId);
+  if (!member) throw new Error("成员不存在");
+  if (member.status === "exited") throw new Error("该成员已清退，无法出价");
+
+  if (isPinkAuction(item.quality)) {
+    if (!item.dividendMemberIds.includes(input.memberId)) {
+      throw new Error("粉色拍品仅该物品参与者可以出价");
+    }
+    const low = item.bidMin ?? item.startPrice;
+    const high = item.bidMax;
+    if (high == null || !(high > low)) {
+      throw new Error("粉色拍品未设置有效限价");
+    }
+    if (input.amount + 1e-9 < low || input.amount - 1e-9 > high) {
+      throw new Error(`出价须在 ¥${low}～¥${high} 之间`);
+    }
+
+    ensureDb()
+      .prepare(
+        `INSERT INTO auction_bids (session_id, item_id, member_id, amount, is_anonymous)
+         VALUES (?, ?, ?, ?, 0)`,
+      )
+      .run(input.sessionId, item.id, input.memberId, input.amount);
+
+    const standing = listStandingBids(item.id);
+    const top = standing[0]?.amount ?? input.amount;
+    ensureDb()
+      .prepare(`UPDATE auction_items SET current_price = ? WHERE id = ?`)
+      .run(top, item.id);
+
+    addEvent(
+      input.sessionId,
+      "bid",
+      `${member.name} 出价 ¥${input.amount}（${item.name}）`,
+    );
+
+    const bidRow = ensureDb()
+      .prepare(`SELECT * FROM auction_bids WHERE item_id = ? AND member_id = ? ORDER BY id DESC LIMIT 1`)
+      .get(item.id, input.memberId) as {
+      id: number;
+      session_id: number;
+      item_id: number;
+      member_id: number;
+      amount: number;
+      is_anonymous: number;
+      created_at: string;
+    };
+    const updated = getItemById(item.id)!;
+    updated.leadingBidderId = standing[0]?.memberId ?? member.id;
+    updated.leadingBidderName = standing[0]?.memberName ?? member.name;
+    return {
+      bid: {
+        id: bidRow.id,
+        sessionId: bidRow.session_id,
+        itemId: bidRow.item_id,
+        memberId: bidRow.member_id,
+        memberName: member.name,
+        amount: bidRow.amount,
+        isAnonymous: false,
+        createdAt: bidRow.created_at,
+      },
+      item: updated,
+    };
+  }
+
   const minAmount =
     item.currentPrice === item.startPrice &&
     !ensureDb()
@@ -1728,10 +2186,6 @@ export function placeBid(input: {
   if (input.amount + 1e-9 < minAmount) {
     throw new Error(`出价至少 ¥${minAmount}`);
   }
-
-  const member = getMemberById(input.memberId);
-  if (!member) throw new Error("成员不存在");
-  if (member.status === "exited") throw new Error("该成员已清退，无法出价");
 
   const result = ensureDb()
     .prepare(
@@ -1838,11 +2292,28 @@ export function maybeAutoProgress(sessionId: number): AuctionSession | null {
 
   if (session.status === "live" && session.endsAt) {
     if (new Date(session.endsAt).getTime() <= Date.now()) {
-      return endAuctionSession(sessionId);
+      endAuctionSession(sessionId);
     }
   }
 
-  return session;
+  const latest = getSessionById(sessionId);
+  if (latest?.status === "live") {
+    const voting = ensureDb()
+      .prepare(
+        `SELECT id FROM auction_items WHERE session_id = ? AND status = 'voting'`,
+      )
+      .all(sessionId) as Array<{ id: number }>;
+    for (const row of voting) resolvePinkVoting(row.id);
+    const rolling = ensureDb()
+      .prepare(
+        `SELECT id FROM auction_items WHERE session_id = ? AND status = 'rolling'`,
+      )
+      .all(sessionId) as Array<{ id: number }>;
+    for (const row of rolling) resolvePinkRolling(row.id);
+    return finishSessionIfIdle(sessionId);
+  }
+
+  return getSessionById(sessionId);
 }
 
 export function getBelowThresholdMemberIds(thresholdRatio = 0.85): number[] {

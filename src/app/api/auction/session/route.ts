@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireAdminSession } from "@/lib/auth";
+import { getMemberSession, requireAdminSession } from "@/lib/auth";
 import {
   createDraftSession,
   deleteAuctionSession,
@@ -32,12 +32,14 @@ export async function GET(request: Request) {
       images: session ? listItemImages(session.id) : [],
     });
   }
+  const member = await getMemberSession();
   const room = buildRoomState(
     Number.isFinite(sessionId) && sessionId > 0 ? sessionId : undefined,
     {
       lite: lite || bootstrap,
       includeDividends: bootstrap ? true : undefined,
       includePriceStats: bootstrap ? true : undefined,
+      viewerMemberId: member?.id,
     },
   );
   return NextResponse.json(
