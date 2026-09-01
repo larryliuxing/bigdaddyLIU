@@ -23,7 +23,7 @@ import {
   auctionItemStatusLabel,
 } from "@/lib/auction/client";
 import { AddAuctionItemForm } from "./AddAuctionItemForm";
-import { isPinkAuction } from "@/lib/auction/pink";
+import { isOrdinaryPinkAuction, isPinkAuction } from "@/lib/auction/pink";
 import { DividendReportView } from "./DividendReportView";
 import {
   AuctionItemLightbox,
@@ -713,7 +713,7 @@ export function AuctionManagePanel({
                           onOpen={(payload) =>
                             setViewer({
                               ...payload,
-                              detail: `${isPinkAuction(item.quality) ? "粉色限价" : "起拍"} ¥${item.bidMin ?? item.startPrice} · ${auctionItemStatusLabel(item.status)}${
+                              detail: `${isPinkAuction(item.quality) ? "特殊粉色限价" : "起拍"} ¥${item.bidMin ?? item.startPrice} · ${auctionItemStatusLabel(item.status)}${
                                 item.soldPrice != null
                                   ? ` · 成交 ¥${item.soldPrice}`
                                   : ""
@@ -731,8 +731,10 @@ export function AuctionManagePanel({
                           </p>
                           <p className="mt-0.5 text-xs text-[var(--text-muted)]">
                             {isPinkAuction(item.quality)
-                              ? `粉色限价 ¥${item.bidMin ?? item.startPrice}～¥${item.bidMax ?? "-"} · `
-                              : `起拍 ¥${item.startPrice} · 加价 ¥${item.bidIncrement} · `}
+                              ? `特殊粉色限价 ¥${item.bidMin ?? item.startPrice}～¥${item.bidMax ?? "-"} · `
+                              : isOrdinaryPinkAuction(item.quality)
+                                ? `普通粉色 · 起拍 ¥${item.startPrice} · 加价 ¥${item.bidIncrement} · 仅参与者 · `
+                                : `起拍 ¥${item.startPrice} · 加价 ¥${item.bidIncrement} · `}
                             {auctionItemStatusLabel(item.status)}
                             {item.soldPrice != null
                               ? ` · 成交 ¥${item.soldPrice}`

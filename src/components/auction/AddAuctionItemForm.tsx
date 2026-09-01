@@ -7,7 +7,7 @@ import { recognizeParticipantNames } from "@/lib/auction/participantOcr";
 import { LockIcon } from "@/components/Icons";
 import { ItemPriceStatsLine } from "./ItemPriceStatsLine";
 import { QUALITY_OPTIONS } from "@/lib/auction/client";
-import { isPinkAuction } from "@/lib/auction/pink";
+import { isOrdinaryPinkAuction, isPinkAuction } from "@/lib/auction/pink";
 
 interface AddAuctionItemFormProps {
   members: Member[];
@@ -274,7 +274,12 @@ export function AddAuctionItemForm({
           </div>
           {isPinkAuction(quality) && (
             <p className="text-xs leading-relaxed text-[var(--accent-violet)]">
-              粉色：仅所选参与者可出价（有高低限价，全场可见）；时间到后匿名投票，票多者得，按此人出价结算。同票比价，价也相同则掷 1–100 点（不可重复）。
+              特殊粉色：仅所选参与者可出价（有高低限价，全场可见）；时间到后匿名投票，票多者得，按此人出价结算。同票比价，价也相同则掷 1–100 点（不可重复）。
+            </p>
+          )}
+          {isOrdinaryPinkAuction(quality) && (
+            <p className="text-xs leading-relaxed text-[var(--accent-violet)]">
+              普通粉色：仅所选参与者可出价，填写起拍价和加价幅度，价高者得。其他人无法出价。
             </p>
           )}
         </label>
@@ -375,7 +380,11 @@ export function AddAuctionItemForm({
       <div className="space-y-2">
         <div className="flex items-center justify-between">
           <span className="text-xs text-[var(--text-muted)]">
-            {isPinkAuction(quality) ? "参与者（可出价/投票）" : "分红成员"}
+            {isPinkAuction(quality)
+              ? "参与者（可出价/投票）"
+              : isOrdinaryPinkAuction(quality)
+                ? "参与者（可出价）"
+                : "分红成员"}
           </span>
           <span className="text-xs text-[var(--text-muted)]">
             已选 {selectedMembers.length}
@@ -433,7 +442,7 @@ export function AddAuctionItemForm({
 
           <div className="rounded-xl border border-[var(--border-soft)] bg-[#0f1320] p-3">
             <p className="mb-2 text-xs text-[var(--text-muted)]">
-              {isPinkAuction(quality)
+              {isPinkAuction(quality) || isOrdinaryPinkAuction(quality)
                 ? `参与者 (${selectedMembers.length})`
                 : `参与分红 (${selectedMembers.length})`}
             </p>
