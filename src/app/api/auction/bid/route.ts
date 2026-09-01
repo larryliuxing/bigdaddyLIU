@@ -37,7 +37,10 @@ export async function POST(request: Request) {
     // Lite room: no base64 images — client merges cached images for instant UI.
     return NextResponse.json({
       ...result,
-      room: buildRoomState(session.id, { lite: true }),
+      room: buildRoomState(session.id, {
+        lite: true,
+        viewerMemberId: member.id,
+      }),
     });
   } catch (error) {
     return NextResponse.json(

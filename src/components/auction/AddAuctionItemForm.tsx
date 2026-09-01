@@ -6,6 +6,8 @@ import { recognizeItemName } from "@/lib/auction/itemOcr";
 import { recognizeParticipantNames } from "@/lib/auction/participantOcr";
 import { LockIcon } from "@/components/Icons";
 import { ItemPriceStatsLine } from "./ItemPriceStatsLine";
+import { QUALITY_OPTIONS } from "@/lib/auction/client";
+import { isPinkAuction } from "@/lib/auction/pink";
 
 interface AddAuctionItemFormProps {
   members: Member[];
@@ -22,6 +24,8 @@ export function AddAuctionItemForm({
   const [quality, setQuality] = useState<ItemQuality>("green");
   const [startPrice, setStartPrice] = useState(5);
   const [bidIncrement, setBidIncrement] = useState(5);
+  const [bidMin, setBidMin] = useState(10);
+  const [bidMax, setBidMax] = useState(100);
   const [imageData, setImageData] = useState<string | null>(null);
   const [namePreview, setNamePreview] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
@@ -137,8 +141,10 @@ export function AddAuctionItemForm({
           sessionId,
           name,
           quality,
-          startPrice,
-          bidIncrement,
+          startPrice: isPinkAuction(quality) ? bidMin : startPrice,
+          bidIncrement: isPinkAuction(quality) ? 1 : bidIncrement,
+          bidMin: isPinkAuction(quality) ? bidMin : null,
+          bidMax: isPinkAuction(quality) ? bidMax : null,
           imageData,
           dividendMemberIds: selectedIds,
         }),
@@ -152,6 +158,8 @@ export function AddAuctionItemForm({
       setQuality("green");
       setStartPrice(5);
       setBidIncrement(5);
+      setBidMin(10);
+      setBidMax(100);
       setImageData(null);
       setNamePreview(null);
       setSelectedIds([]);
@@ -239,28 +247,88 @@ export function AddAuctionItemForm({
             />
           )}
         </label>
-        <label className="block space-y-1.5">
-          <span className="text-xs text-[var(--text-muted)]">起拍价 ¥</span>
-          <input
-            className="field"
-            type="number"
-            min={1}
-            step={1}
-            value={startPrice}
-            onChange={(e) => setStartPrice(Number(e.target.value))}
-          />
+        <label className="block space-y-1.5 sm:col-span-2">
+          <span className="text-xs text-[var(--text-muted)]">拍品颜色</span>
+          <div className="flex flex-wrap gap-2">
+            {QUALITY_OPTIONS.map((opt) => {
+              const active = quality === opt.value;
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-sm transition ${
+                    active
+                      ? "border-white/35 bg-[#2a3350]"
+                      : "border-[var(--border-soft)] bg-[#121826] text-[var(--text-muted)]"
+                  }`}
+                  onClick={() => setQuality(opt.value)}
+                >
+                  <span
+                    className="h-3.5 w-3.5 rounded-full"
+                    style={{ background: opt.color }}
+                  />
+                  {opt.label}
+                </button>
+              );
+            })}
+          </div>
+          {isPinkAuction(quality) && (
+            <p className="text-xs leading-relaxed text-[var(--accent-violet)]">
+              粉色：仅所选参与者可出价（有高低限价，全场可见）；时间到后匿名投票，票多者得，按此人出价结算。同票比价，价也相同则掷 1–100 点（不可重复）。
+            </p>
+          )}
         </label>
-        <label className="block space-y-1.5">
-          <span className="text-xs text-[var(--text-muted)]">加价幅度 ¥</span>
-          <input
-            className="field"
-            type="number"
-            min={1}
-            step={1}
-            value={bidIncrement}
-            onChange={(e) => setBidIncrement(Number(e.target.value))}
-          />
-        </label>
+        {isPinkAuction(quality) ? (
+          <>
+            <label className="block space-y-1.5">
+              <span className="text-xs text-[var(--text-muted)]">低限价 ¥</span>
+              <input
+                className="field"
+                type="number"
+                min={1}
+                step={1}
+                value={bidMin}
+                onChange={(e) => setBidMin(Number(e.target.value))}
+              />
+            </label>
+            <label className="block space-y-1.5">
+              <span className="text-xs text-[var(--text-muted)]">高限价 ¥</span>
+              <input
+                className="field"
+                type="number"
+                min={1}
+                step={1}
+                value={bidMax}
+                onChange={(e) => setBidMax(Number(e.target.value))}
+              />
+            </label>
+          </>
+        ) : (
+          <>
+            <label className="block space-y-1.5">
+              <span className="text-xs text-[var(--text-muted)]">起拍价 ¥</span>
+              <input
+                className="field"
+                type="number"
+                min={1}
+                step={1}
+                value={startPrice}
+                onChange={(e) => setStartPrice(Number(e.target.value))}
+              />
+            </label>
+            <label className="block space-y-1.5">
+              <span className="text-xs text-[var(--text-muted)]">加价幅度 ¥</span>
+              <input
+                className="field"
+                type="number"
+                min={1}
+                step={1}
+                value={bidIncrement}
+                onChange={(e) => setBidIncrement(Number(e.target.value))}
+              />
+            </label>
+          </>
+        )}
       </div>
 
       <div className="space-y-2">
@@ -306,7 +374,9 @@ export function AddAuctionItemForm({
 
       <div className="space-y-2">
         <div className="flex items-center justify-between">
-          <span className="text-xs text-[var(--text-muted)]">分红成员</span>
+          <span className="text-xs text-[var(--text-muted)]">
+            {isPinkAuction(quality) ? "参与者（可出价/投票）" : "分红成员"}
+          </span>
           <span className="text-xs text-[var(--text-muted)]">
             已选 {selectedMembers.length}
           </span>
@@ -363,7 +433,9 @@ export function AddAuctionItemForm({
 
           <div className="rounded-xl border border-[var(--border-soft)] bg-[#0f1320] p-3">
             <p className="mb-2 text-xs text-[var(--text-muted)]">
-              参与分红 ({selectedMembers.length})
+              {isPinkAuction(quality)
+                ? `参与者 (${selectedMembers.length})`
+                : `参与分红 (${selectedMembers.length})`}
             </p>
             {selectedMembers.length === 0 ? (
               <p className="text-sm text-[var(--text-muted)]">

@@ -42,6 +42,8 @@ export type AuctionSessionStatus =
 export type AuctionItemStatus =
   | "pending"
   | "active"
+  | "voting"
+  | "rolling"
   | "sold"
   | "unsold"
   | "cancelled";
@@ -90,6 +92,23 @@ export interface AuctionItem {
   closedAt: string | null;
   dividendMemberIds: number[];
   dividendMemberNames: string[];
+  /** Pink items: bid floor / ceiling. Null for normal items. */
+  bidMin: number | null;
+  bidMax: number | null;
+  voteEndsAt: string | null;
+  rollEndsAt: string | null;
+  /** Latest bid per participant (pink), visible to the room. */
+  standingBids?: Array<{
+    memberId: number;
+    memberName: string;
+    amount: number;
+  }>;
+  voteCastCount?: number;
+  voteNeed?: number;
+  myVoteCandidateId?: number | null;
+  myRollPoints?: number | null;
+  tiedMemberIds?: number[];
+  rolls?: Array<{ memberId: number; memberName: string; points: number }>;
   /** Current high bidder (live); always real name, never anonymous. */
   leadingBidderId?: number | null;
   leadingBidderName?: string | null;
@@ -199,6 +218,8 @@ export interface AuctionRoomState {
   recentBids: AuctionBid[];
   serverNow: string;
   remainingSeconds: number | null;
+  /** Countdown caption: 本场剩余 / 投票剩余 / 掷点剩余 / 距开始 */
+  remainingLabel?: string;
   dividends: DividendEntry[];
   dividendsCalculated: boolean;
   dividendReport?: DividendReport | null;

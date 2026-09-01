@@ -1,4 +1,5 @@
 import {
+  attachPinkRoomFields,
   getAuctionSettings,
   getDividendReport,
   getPublicAuctionSession,
@@ -14,6 +15,7 @@ import {
   normalizeItemNameKey,
 } from "@/lib/db";
 import type { AuctionItem, AuctionRoomState } from "@/lib/types";
+import { isPinkAuction } from "./pink";
 
 export type BuildRoomOptions = {
   /**
@@ -25,6 +27,8 @@ export type BuildRoomOptions = {
   includeDividends?: boolean;
   /** Override historical price-stat loading. */
   includePriceStats?: boolean;
+  /** Member viewing the room (for myVote / myRoll). */
+  viewerMemberId?: number;
 };
 
 function withLeadingBidders(
@@ -78,13 +82,24 @@ export function buildRoomState(
     : [];
 
   const leaders = session ? mapLeadingBidders(session.id) : new Map();
-  const bidderItems = withLeadingBidders(itemsRaw, leaders);
+  const bidderItems = withLeadingBidders(itemsRaw, leaders).map((item) =>
+    attachPinkRoomFields(item, options.viewerMemberId),
+  );
   const items = includePriceStats ? withPriceStats(bidderItems) : bidderItems;
-  const activeItems = items.filter((i) => i.status === "active");
+  const activeItems = items.filter(
+    (i) =>
+      i.status === "active" ||
+      i.status === "voting" ||
+      i.status === "rolling",
+  );
   const activeItem = activeItems[0] ?? null;
 
   const minNextBids: Record<number, number> = {};
-  for (const item of activeItems) {
+  for (const item of items.filter((i) => i.status === "active")) {
+    if (isPinkAuction(item.quality)) {
+      minNextBids[item.id] = item.bidMin ?? item.startPrice;
+      continue;
+    }
     const hasBids = leaders.has(item.id);
     minNextBids[item.id] = hasBids
       ? item.currentPrice + item.bidIncrement
@@ -92,12 +107,31 @@ export function buildRoomState(
   }
 
   let remainingSeconds: number | null = null;
-  if (session?.status === "live" && session.endsAt) {
+  let remainingLabel = "本场剩余";
+  const contestItems = items.filter(
+    (item) => item.status === "voting" || item.status === "rolling",
+  );
+  if (session?.status === "live" && contestItems.length > 0) {
+    const rolling = contestItems.filter((item) => item.status === "rolling");
+    remainingLabel = rolling.length > 0 ? "掷点剩余" : "投票剩余";
+    remainingSeconds = 0;
+    for (const item of contestItems) {
+      const iso =
+        item.status === "rolling" ? item.rollEndsAt : item.voteEndsAt;
+      if (!iso) continue;
+      remainingSeconds = Math.max(
+        remainingSeconds,
+        Math.floor((new Date(iso).getTime() - Date.now()) / 1000),
+      );
+    }
+    remainingSeconds = Math.max(0, remainingSeconds);
+  } else if (session?.status === "live" && session.endsAt) {
     remainingSeconds = Math.max(
       0,
       Math.floor((new Date(session.endsAt).getTime() - Date.now()) / 1000),
     );
   } else if (session?.status === "scheduled" && session.scheduledStart) {
+    remainingLabel = "距开始";
     remainingSeconds = Math.max(
       0,
       Math.floor(
@@ -122,6 +156,7 @@ export function buildRoomState(
     recentBids: session ? listBids(session.id, 20) : [],
     serverNow: new Date().toISOString(),
     remainingSeconds,
+    remainingLabel,
     dividends: ended && session ? listDividends(session.id) : [],
     dividendsCalculated,
     dividendReport: session && ended ? getDividendReport(session.id) : null,

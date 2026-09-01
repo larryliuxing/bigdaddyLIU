@@ -11,6 +11,7 @@ import {
   normalizeItemNameKey,
 } from "@/lib/db";
 import type { ItemQuality } from "@/lib/types";
+import { isPinkAuction } from "@/lib/auction/pink";
 import { buildRoomState } from "@/lib/auction/room";
 
 export const runtime = "nodejs";
@@ -55,6 +56,10 @@ export async function POST(request: Request) {
   const quality = QUALITIES.includes(body?.quality) ? body.quality : "green";
   const startPrice = Number(body?.startPrice ?? 5);
   const bidIncrement = Number(body?.bidIncrement ?? 5);
+  const bidMin =
+    body?.bidMin != null && body?.bidMin !== "" ? Number(body.bidMin) : null;
+  const bidMax =
+    body?.bidMax != null && body?.bidMax !== "" ? Number(body.bidMax) : null;
   const imageData =
     typeof body?.imageData === "string" ? body.imageData : null;
   const dividendMemberIds = Array.isArray(body?.dividendMemberIds)
@@ -64,6 +69,26 @@ export async function POST(request: Request) {
 
   if (!name) {
     return NextResponse.json({ error: "请填写拍品名称" }, { status: 400 });
+  }
+  if (isPinkAuction(quality)) {
+    if (!(bidMin != null && bidMin > 0) || !(bidMax != null && bidMax > 0)) {
+      return NextResponse.json(
+        { error: "粉色拍品请填写低限价和高限价" },
+        { status: 400 },
+      );
+    }
+    if (bidMax <= bidMin) {
+      return NextResponse.json(
+        { error: "高限价必须大于低限价" },
+        { status: 400 },
+      );
+    }
+    if (dividendMemberIds.length < 2) {
+      return NextResponse.json(
+        { error: "粉色拍品至少选择 2 名参与者（可出价、投票）" },
+        { status: 400 },
+      );
+    }
   }
   if (!(startPrice > 0) || !(bidIncrement > 0)) {
     return NextResponse.json({ error: "价格必须大于 0" }, { status: 400 });
@@ -104,6 +129,8 @@ export async function POST(request: Request) {
     bidIncrement,
     imageData,
     dividendMemberIds,
+    bidMin: isPinkAuction(quality) ? bidMin : null,
+    bidMax: isPinkAuction(quality) ? bidMax : null,
   });
 
   return NextResponse.json(

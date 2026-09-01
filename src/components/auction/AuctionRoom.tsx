@@ -12,6 +12,7 @@ import {
   formatCountdown,
   qualityMeta,
   formatBeijingDateTime,
+  auctionItemStatusLabel,
 } from "@/lib/auction/client";
 import { GavelIcon } from "@/components/Icons";
 import { DividendReportView } from "./DividendReportView";
@@ -20,6 +21,7 @@ import {
   AuctionItemThumb,
 } from "./AuctionItemImage";
 import { ItemPriceStatsLine } from "./ItemPriceStatsLine";
+import { isPinkAuction } from "@/lib/auction/pink";
 import {
   buildNowPlayingDanmaku,
   parseFanfareKind,
@@ -41,11 +43,7 @@ function HourglassIcon() {
 }
 
 function itemStatusLabel(status: AuctionItem["status"]) {
-  if (status === "active") return "竞拍中";
-  if (status === "sold") return "已成交";
-  if (status === "unsold") return "流拍";
-  if (status === "cancelled") return "已取消";
-  return "待开拍";
+  return auctionItemStatusLabel(status);
 }
 
 /** Keep previously loaded images when applying a lite room payload. */
@@ -97,6 +95,7 @@ export function AuctionRoom({
     Record<number, { value: string; touched: boolean }>
   >({});
   const [biddingId, setBiddingId] = useState<number | null>(null);
+  const [pinkBusy, setPinkBusy] = useState<number | null>(null);
   const [viewer, setViewer] = useState<{
     imageData: string;
     name: string;
@@ -278,7 +277,9 @@ export function AuctionRoom({
   const activeItems = room?.activeItems ?? [];
 
   function draftValue(item: AuctionItem) {
-    const min = room?.minNextBids?.[item.id] ?? item.startPrice;
+    const min = isPinkAuction(item.quality)
+      ? (item.bidMin ?? item.startPrice)
+      : (room?.minNextBids?.[item.id] ?? item.startPrice);
     const draft = bidDrafts[item.id];
     if (draft?.touched) return draft.value;
     return String(min);
@@ -314,6 +315,7 @@ export function AuctionRoom({
 
     // Optimistic local bump so the bidder sees the new price immediately.
     if (member && Number.isFinite(amount) && amount > 0) {
+      const pink = isPinkAuction(target.quality);
       setRoom((prev) => {
         if (!prev) return prev;
         const patchItem = (item: AuctionItem) =>
@@ -321,9 +323,23 @@ export function AuctionRoom({
             ? item
             : {
                 ...item,
-                currentPrice: amount,
+                currentPrice: pink
+                  ? Math.max(item.currentPrice, amount)
+                  : amount,
                 leadingBidderId: member.id,
                 leadingBidderName: member.name,
+                standingBids: pink
+                  ? [
+                      ...(item.standingBids ?? []).filter(
+                        (bid) => bid.memberId !== member.id,
+                      ),
+                      {
+                        memberId: member.id,
+                        memberName: member.name,
+                        amount,
+                      },
+                    ].sort((a, b) => b.amount - a.amount || a.memberId - b.memberId)
+                  : item.standingBids,
               };
         return {
           ...prev,
@@ -334,11 +350,12 @@ export function AuctionRoom({
             : null,
           minNextBids: {
             ...prev.minNextBids,
-            [itemId]:
-              amount +
-              (prev.activeItems.find((i) => i.id === itemId)?.bidIncrement ??
-                target.bidIncrement ??
-                5),
+            [itemId]: pink
+              ? (target.bidMin ?? target.startPrice)
+              : amount +
+                (prev.activeItems.find((i) => i.id === itemId)?.bidIncrement ??
+                  target.bidIncrement ??
+                  5),
           },
         };
       });
@@ -380,6 +397,50 @@ export function AuctionRoom({
       window.setTimeout(() => setToast(""), 1600);
     } finally {
       setBiddingId(null);
+    }
+  }
+
+  async function votePink(itemId: number, candidateId: number) {
+    setError("");
+    setPinkBusy(itemId);
+    try {
+      const res = await fetch("/api/auction/pink", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "vote", itemId, candidateId }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "投票失败");
+        return;
+      }
+      setRoom((prev) => mergeRoomKeepImages(prev, data.room));
+      setToast("已投票（匿名）");
+      window.setTimeout(() => setToast(""), 1600);
+    } finally {
+      setPinkBusy(null);
+    }
+  }
+
+  async function rollPink(itemId: number) {
+    setError("");
+    setPinkBusy(itemId);
+    try {
+      const res = await fetch("/api/auction/pink", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "roll", itemId }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "掷点失败");
+        return;
+      }
+      setRoom((prev) => mergeRoomKeepImages(prev, data.room));
+      setToast(`掷出 ${data.points} 点`);
+      window.setTimeout(() => setToast(""), 1800);
+    } finally {
+      setPinkBusy(null);
     }
   }
 
@@ -432,7 +493,7 @@ export function AuctionRoom({
             <div className="flex flex-wrap items-center gap-3">
               {(live || session?.status === "scheduled") && (
                 <span className="rounded-lg border border-[var(--border-soft)] px-2.5 py-1 text-sm tabular-nums">
-                  {live ? "本场剩余" : "距开始"}{" "}
+                  {room?.remainingLabel ?? (live ? "本场剩余" : "距开始")}{" "}
                   <strong>{formatCountdown(remaining)}</strong>
                 </span>
               )}
@@ -542,7 +603,9 @@ export function AuctionRoom({
                             {item.name}
                           </h3>
                           <p className="mt-1 text-xs text-[var(--text-muted)]">
-                            起拍 ¥{item.startPrice} · 加价 ¥{item.bidIncrement}
+                            {isPinkAuction(item.quality)
+                              ? `粉色限价 ¥${item.bidMin ?? item.startPrice}～¥${item.bidMax ?? "-"} · 仅参与者可出价`
+                              : `起拍 ¥${item.startPrice} · 加价 ¥${item.bidIncrement}`}
                           </p>
                           <ItemPriceStatsLine
                             stats={item.priceStats}
@@ -556,15 +619,16 @@ export function AuctionRoom({
                           </p>
                         </div>
                         <span className="rounded-full bg-emerald-500/15 px-2.5 py-1 text-xs text-emerald-300">
-                          竞拍中
+                          {itemStatusLabel(item.status)}
                         </span>
                       </div>
                       <p className="mt-3 text-2xl font-bold text-[var(--accent-gold)]">
                         ¥{item.currentPrice}
                       </p>
-                      <p className="mt-1 text-sm text-[var(--text-muted)]">
-                        {item.leadingBidderName
-                          ? <>
+                      {!isPinkAuction(item.quality) && (
+                        <p className="mt-1 text-sm text-[var(--text-muted)]">
+                          {item.leadingBidderName ? (
+                            <>
                               当前出价：
                               <span
                                 className={
@@ -577,39 +641,157 @@ export function AuctionRoom({
                                 {isMine ? "（我）" : ""}
                               </span>
                             </>
-                          : "暂无出价"}
-                      </p>
-                      {member ? (
-                        <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-                          <input
-                            className="field"
-                            type="number"
-                            min={min}
-                            step={item.bidIncrement}
-                            value={draftValue(item)}
-                            onChange={(e) =>
-                              setBidDrafts((prev) => ({
-                                ...prev,
-                                [item.id]: {
-                                  value: e.target.value,
-                                  touched: true,
-                                },
-                              }))
-                            }
-                          />
-                          <button
-                            type="button"
-                            className="rounded-xl bg-[#e23d4a] px-5 py-3 text-sm font-semibold sm:min-w-[120px] disabled:opacity-50"
-                            disabled={biddingId === item.id}
-                            onClick={() => placeBid(item.id)}
-                          >
-                            {biddingId === item.id ? "出价中…" : "出价"}
-                          </button>
-                        </div>
-                      ) : (
+                          ) : (
+                            "暂无出价"
+                          )}
+                        </p>
+                      )}
+                      {isPinkAuction(item.quality) &&
+                        (item.standingBids?.length ?? 0) > 0 && (
+                          <ul className="mt-2 space-y-1 text-sm">
+                            {item.standingBids!.map((bid) => (
+                              <li key={bid.memberId}>
+                                <span
+                                  className={
+                                    member?.id === bid.memberId
+                                      ? "text-[var(--accent-gold)]"
+                                      : ""
+                                  }
+                                >
+                                  {bid.memberName}
+                                  {member?.id === bid.memberId ? "（我）" : ""}
+                                </span>
+                                {" · "}¥{bid.amount}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      {item.status === "active" && member && (
+                        isPinkAuction(item.quality) &&
+                        !item.dividendMemberIds.includes(member.id) ? (
+                          <p className="mt-3 text-sm text-[var(--text-muted)]">
+                            仅本拍品参与者可以出价
+                          </p>
+                        ) : (
+                          <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                            <input
+                              className="field"
+                              type="number"
+                              min={
+                                isPinkAuction(item.quality)
+                                  ? (item.bidMin ?? item.startPrice)
+                                  : min
+                              }
+                              max={
+                                isPinkAuction(item.quality)
+                                  ? (item.bidMax ?? undefined)
+                                  : undefined
+                              }
+                              step={
+                                isPinkAuction(item.quality)
+                                  ? 1
+                                  : item.bidIncrement
+                              }
+                              value={draftValue(item)}
+                              onChange={(e) =>
+                                setBidDrafts((prev) => ({
+                                  ...prev,
+                                  [item.id]: {
+                                    value: e.target.value,
+                                    touched: true,
+                                  },
+                                }))
+                              }
+                            />
+                            <button
+                              type="button"
+                              className="rounded-xl bg-[#e23d4a] px-5 py-3 text-sm font-semibold sm:min-w-[120px] disabled:opacity-50"
+                              disabled={biddingId === item.id}
+                              onClick={() => placeBid(item.id)}
+                            >
+                              {biddingId === item.id ? "出价中…" : "出价"}
+                            </button>
+                          </div>
+                        )
+                      )}
+                      {item.status === "active" && !member && (
                         <p className="mt-3 text-sm text-[var(--text-muted)]">
                           请以成员身份登录后出价
                         </p>
+                      )}
+                      {item.status === "voting" && (
+                        <div className="mt-3 space-y-2">
+                          <p className="text-sm text-[var(--accent-violet)]">
+                            匿名投票中
+                            {item.voteNeed
+                              ? ` · ${item.voteCastCount ?? 0}/${item.voteNeed}`
+                              : ""}
+                            {item.voteEndsAt
+                              ? ` · 截止 ${formatBeijingDateTime(item.voteEndsAt)}`
+                              : ""}
+                          </p>
+                          {member &&
+                          item.dividendMemberIds.includes(member.id) ? (
+                            <div className="flex flex-wrap gap-2">
+                              {(item.standingBids ?? []).map((bid) => {
+                                const mine =
+                                  item.myVoteCandidateId === bid.memberId;
+                                return (
+                                  <button
+                                    key={bid.memberId}
+                                    type="button"
+                                    className={`rounded-xl px-3 py-2 text-sm ${
+                                      mine
+                                        ? "bg-[#2a3350] text-white"
+                                        : "btn-ghost"
+                                    }`}
+                                    disabled={pinkBusy === item.id}
+                                    onClick={() =>
+                                      votePink(item.id, bid.memberId)
+                                    }
+                                  >
+                                    {bid.memberName} ¥{bid.amount}
+                                    {mine ? " · 已选" : ""}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <p className="text-sm text-[var(--text-muted)]">
+                              仅参与者可投票，其他人可看出价
+                            </p>
+                          )}
+                        </div>
+                      )}
+                      {item.status === "rolling" && (
+                        <div className="mt-3 space-y-2">
+                          <p className="text-sm text-[var(--accent-gold)]">
+                            同票同价，掷 1–100 点（不可重复，先掷到先占有）
+                          </p>
+                          <ul className="text-sm text-[var(--text-muted)]">
+                            {(item.rolls ?? []).map((row) => (
+                              <li key={row.memberId}>
+                                {row.memberName}：{row.points} 点
+                              </li>
+                            ))}
+                          </ul>
+                          {member &&
+                          item.tiedMemberIds?.includes(member.id) &&
+                          item.myRollPoints == null ? (
+                            <button
+                              type="button"
+                              className="rounded-xl bg-[#e23d4a] px-5 py-3 text-sm font-semibold disabled:opacity-50"
+                              disabled={pinkBusy === item.id}
+                              onClick={() => rollPink(item.id)}
+                            >
+                              {pinkBusy === item.id ? "掷点中…" : "掷点"}
+                            </button>
+                          ) : item.myRollPoints != null ? (
+                            <p className="text-sm">
+                              你掷出 {item.myRollPoints} 点
+                            </p>
+                          ) : null}
+                        </div>
                       )}
                     </div>
                   </div>
