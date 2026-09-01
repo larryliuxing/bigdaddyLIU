@@ -30,6 +30,8 @@ import { computeTimerFromNow } from "./boss/timer";
 import {
   isPinkAuction,
   isParticipantOnlyAuction,
+  isOrdinaryPinkAuction,
+  ORDINARY_PINK_BID_DENIED,
   PINK_ROLL_SECONDS,
   PINK_VOTE_SECONDS,
   pickUnusedRoll,
@@ -2153,7 +2155,11 @@ export function placeBid(input: {
 
   if (isParticipantOnlyAuction(item.quality)) {
     if (!item.dividendMemberIds.includes(input.memberId)) {
-      throw new Error("粉色拍品仅该物品参与者可以出价");
+      throw new Error(
+        isOrdinaryPinkAuction(item.quality)
+          ? ORDINARY_PINK_BID_DENIED
+          : "粉色拍品仅该物品参与者可以出价",
+      );
     }
   }
 

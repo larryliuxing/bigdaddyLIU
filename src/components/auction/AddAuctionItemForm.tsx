@@ -279,7 +279,7 @@ export function AddAuctionItemForm({
           )}
           {isOrdinaryPinkAuction(quality) && (
             <p className="text-xs leading-relaxed text-[var(--accent-violet)]">
-              普通粉色：仅所选参与者可出价，填写起拍价和加价幅度，价高者得。其他人无法出价。
+              普通粉色：仅所选分红成员可出价。其他人看不到出价按钮，会显示「您未参与此boss战斗，无法出价」。
             </p>
           )}
         </label>

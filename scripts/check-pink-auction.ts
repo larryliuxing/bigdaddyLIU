@@ -255,7 +255,7 @@ async function main() {
         amount: 10,
       });
     } catch (err) {
-      outsiderOrdinary = /参与者/.test((err as Error).message);
+      outsiderOrdinary = /未参与此boss/.test((err as Error).message);
     }
     assert.equal(outsiderOrdinary, true);
     db.placeBid({

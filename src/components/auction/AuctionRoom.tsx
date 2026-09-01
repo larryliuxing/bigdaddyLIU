@@ -21,7 +21,7 @@ import {
   AuctionItemThumb,
 } from "./AuctionItemImage";
 import { ItemPriceStatsLine } from "./ItemPriceStatsLine";
-import { isOrdinaryPinkAuction, isPinkAuction, isParticipantOnlyAuction } from "@/lib/auction/pink";
+import { isOrdinaryPinkAuction, isPinkAuction, isParticipantOnlyAuction, ORDINARY_PINK_BID_DENIED } from "@/lib/auction/pink";
 import {
   buildNowPlayingDanmaku,
   parseFanfareKind,
@@ -675,9 +675,12 @@ export function AuctionRoom({
                         )}
                       {item.status === "active" && member && (
                         isParticipantOnlyAuction(item.quality) &&
+                        item.dividendMemberIds.length > 0 &&
                         !item.dividendMemberIds.includes(member.id) ? (
                           <p className="mt-3 text-sm text-[var(--text-muted)]">
-                            仅本拍品参与者可以出价
+                            {isOrdinaryPinkAuction(item.quality)
+                              ? ORDINARY_PINK_BID_DENIED
+                              : "仅本拍品参与者可以出价"}
                           </p>
                         ) : (
                           <div className="mt-3 flex flex-col gap-2 sm:flex-row">

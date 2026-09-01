@@ -17,6 +17,8 @@ export function isOrdinaryPinkAuction(
   return quality === "pink";
 }
 
+export const ORDINARY_PINK_BID_DENIED = "您未参与此boss战斗，无法出价";
+
 export function isParticipantOnlyAuction(
   quality: ItemQuality | string | null | undefined,
 ) {
