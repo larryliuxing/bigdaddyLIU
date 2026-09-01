@@ -20,6 +20,7 @@ import {
   isSessionEditable,
   qualityMeta,
   sessionLifecycleLabel,
+  auctionItemStatusLabel,
 } from "@/lib/auction/client";
 import { AddAuctionItemForm } from "./AddAuctionItemForm";
 import { isPinkAuction } from "@/lib/auction/pink";
@@ -662,7 +663,12 @@ export function AuctionManagePanel({
                     disabled={busy}
                     onClick={() => sessionAction("end")}
                   >
-                    结束拍卖
+                    {items.some(
+                      (item) =>
+                        item.status === "voting" || item.status === "rolling",
+                    )
+                      ? "出价已截止（投票/掷点进行中）"
+                      : "结束拍卖"}
                   </button>
                 )}
               </div>
@@ -707,7 +713,7 @@ export function AuctionManagePanel({
                           onOpen={(payload) =>
                             setViewer({
                               ...payload,
-                              detail: `起拍 ¥${item.startPrice} · ${item.status}${
+                              detail: `${isPinkAuction(item.quality) ? "粉色限价" : "起拍"} ¥${item.bidMin ?? item.startPrice} · ${auctionItemStatusLabel(item.status)}${
                                 item.soldPrice != null
                                   ? ` · 成交 ¥${item.soldPrice}`
                                   : ""
@@ -727,7 +733,7 @@ export function AuctionManagePanel({
                             {isPinkAuction(item.quality)
                               ? `粉色限价 ¥${item.bidMin ?? item.startPrice}～¥${item.bidMax ?? "-"} · `
                               : `起拍 ¥${item.startPrice} · 加价 ¥${item.bidIncrement} · `}
-                            {item.status}
+                            {auctionItemStatusLabel(item.status)}
                             {item.soldPrice != null
                               ? ` · 成交 ¥${item.soldPrice}`
                               : ""}

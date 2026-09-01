@@ -1700,6 +1700,7 @@ function applyPinkContest(itemId: number, rollClosed: boolean) {
   });
   if (result.kind === "unsold") {
     unsoldPinkItem(item);
+    finishSessionIfIdle(item.sessionId);
     return getItemById(itemId);
   }
   if (result.kind === "wait_votes") return item;
@@ -1721,13 +1722,15 @@ function applyPinkContest(itemId: number, rollClosed: boolean) {
     return getItemById(itemId);
   }
   finishPinkItem(item, result);
+  finishSessionIfIdle(item.sessionId);
   return getItemById(itemId);
 }
 
 export function resolvePinkVoting(itemId: number) {
   const item = getItemById(itemId);
   if (!item || item.status !== "voting") return null;
-  const need = item.dividendMemberIds.length;
+  const need =
+    item.dividendMemberIds.length || getItemDividendIds(item.id).length;
   const cast = listItemVotes(itemId).length;
   const timedOut =
     Boolean(item.voteEndsAt) &&
@@ -1764,7 +1767,10 @@ export function castPinkVote(input: {
     throw new Error("当前不是投票阶段");
   }
   if (!item.dividendMemberIds.includes(input.voterMemberId)) {
-    throw new Error("仅本拍品参与者可以投票");
+    const roster = getItemDividendIds(item.id);
+    if (!roster.includes(input.voterMemberId)) {
+      throw new Error("仅本拍品参与者可以投票");
+    }
   }
   const bids = listStandingBids(item.id);
   if (!bids.some((b) => b.memberId === input.candidateMemberId)) {
@@ -1778,11 +1784,10 @@ export function castPinkVote(input: {
        DO UPDATE SET candidate_member_id = excluded.candidate_member_id`,
     )
     .run(item.id, input.voterMemberId, input.candidateMemberId);
-  const voter = getMemberById(input.voterMemberId);
   addEvent(
     item.sessionId,
     "vote",
-    `${voter?.name ?? "参与者"} 已投票（匿名）`,
+    `${item.name} 收到一票（匿名）`,
   );
   resolvePinkVoting(item.id);
   return getItemById(item.id)!;
@@ -1811,13 +1816,25 @@ export function rollPinkPoints(input: { itemId: number; memberId: number }) {
   if (existing) {
     throw new Error(`你已经掷出 ${existing.points} 点`);
   }
-  const points = pickUnusedRoll(listItemRolls(item.id).map((row) => row.points));
-  if (points == null) throw new Error("点数已满");
-  ensureDb()
-    .prepare(
-      `INSERT INTO auction_item_rolls (item_id, member_id, points) VALUES (?, ?, ?)`,
-    )
-    .run(item.id, input.memberId, points);
+  let points: number | null = null;
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const taken = listItemRolls(item.id).map((row) => row.points);
+    points = pickUnusedRoll(taken);
+    if (points == null) throw new Error("点数已满");
+    try {
+      ensureDb()
+        .prepare(
+          `INSERT INTO auction_item_rolls (item_id, member_id, points) VALUES (?, ?, ?)`,
+        )
+        .run(item.id, input.memberId, points);
+      break;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!/UNIQUE/i.test(msg)) throw err;
+      points = null;
+    }
+  }
+  if (points == null) throw new Error("掷点失败，请再试一次");
   const member = getMemberById(input.memberId);
   addEvent(
     item.sessionId,

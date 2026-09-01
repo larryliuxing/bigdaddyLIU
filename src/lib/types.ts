@@ -218,6 +218,8 @@ export interface AuctionRoomState {
   recentBids: AuctionBid[];
   serverNow: string;
   remainingSeconds: number | null;
+  /** Countdown caption: 本场剩余 / 投票剩余 / 掷点剩余 / 距开始 */
+  remainingLabel?: string;
   dividends: DividendEntry[];
   dividendsCalculated: boolean;
   dividendReport?: DividendReport | null;

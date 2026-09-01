@@ -164,6 +164,8 @@ async function main() {
     db.endAuctionSession(session.id);
     const voting = db.getItemById(item.id)!;
     assert.equal(voting.status, "voting");
+    const liveDuringVote = db.getSessionById(session.id)!;
+    assert.equal(liveDuringVote.status, "live", "session stays live during pink vote");
 
     db.castPinkVote({
       itemId: item.id,
@@ -179,6 +181,55 @@ async function main() {
     assert.equal(sold.status, "sold");
     assert.equal(sold.winnerMemberId, b.id);
     assert.equal(sold.soldPrice, 45);
+
+    const rollSession = db.createDraftSession({
+      scheduledStart: null,
+      durationMinutes: 30,
+    });
+    const rollItem = db.createAuctionItem({
+      sessionId: rollSession.id,
+      name: "粉色掷点装",
+      quality: "pink",
+      startPrice: 10,
+      bidIncrement: 1,
+      dividendMemberIds: [a.id, b.id],
+      bidMin: 10,
+      bidMax: 80,
+    });
+    db.startAuctionSession(rollSession.id, { forceNow: true });
+    db.placeBid({
+      sessionId: rollSession.id,
+      itemId: rollItem.id,
+      memberId: a.id,
+      amount: 30,
+    });
+    db.placeBid({
+      sessionId: rollSession.id,
+      itemId: rollItem.id,
+      memberId: b.id,
+      amount: 30,
+    });
+    db.endAuctionSession(rollSession.id);
+    db.castPinkVote({
+      itemId: rollItem.id,
+      voterMemberId: a.id,
+      candidateMemberId: a.id,
+    });
+    db.castPinkVote({
+      itemId: rollItem.id,
+      voterMemberId: b.id,
+      candidateMemberId: b.id,
+    });
+    const rolling = db.getItemById(rollItem.id)!;
+    assert.equal(rolling.status, "rolling");
+    const first = db.rollPinkPoints({ itemId: rollItem.id, memberId: a.id });
+    const second = db.rollPinkPoints({ itemId: rollItem.id, memberId: b.id });
+    const rolled = db.getItemById(rollItem.id)!;
+    assert.equal(rolled.status, "sold");
+    const expectedWinner = first.points > second.points ? a.id : b.id;
+    assert.equal(rolled.winnerMemberId, expectedWinner);
+    assert.equal(rolled.soldPrice, 30);
+    assert.notEqual(first.points, second.points);
   } finally {
     process.chdir(originalCwd);
     fs.rmSync(tempDir, { recursive: true, force: true });

@@ -12,6 +12,7 @@ import {
   formatCountdown,
   qualityMeta,
   formatBeijingDateTime,
+  auctionItemStatusLabel,
 } from "@/lib/auction/client";
 import { GavelIcon } from "@/components/Icons";
 import { DividendReportView } from "./DividendReportView";
@@ -42,13 +43,7 @@ function HourglassIcon() {
 }
 
 function itemStatusLabel(status: AuctionItem["status"]) {
-  if (status === "active") return "竞拍中";
-  if (status === "voting") return "匿名投票";
-  if (status === "rolling") return "掷点";
-  if (status === "sold") return "已成交";
-  if (status === "unsold") return "流拍";
-  if (status === "cancelled") return "已取消";
-  return "待开拍";
+  return auctionItemStatusLabel(status);
 }
 
 /** Keep previously loaded images when applying a lite room payload. */
@@ -320,6 +315,7 @@ export function AuctionRoom({
 
     // Optimistic local bump so the bidder sees the new price immediately.
     if (member && Number.isFinite(amount) && amount > 0) {
+      const pink = isPinkAuction(target.quality);
       setRoom((prev) => {
         if (!prev) return prev;
         const patchItem = (item: AuctionItem) =>
@@ -327,9 +323,23 @@ export function AuctionRoom({
             ? item
             : {
                 ...item,
-                currentPrice: amount,
+                currentPrice: pink
+                  ? Math.max(item.currentPrice, amount)
+                  : amount,
                 leadingBidderId: member.id,
                 leadingBidderName: member.name,
+                standingBids: pink
+                  ? [
+                      ...(item.standingBids ?? []).filter(
+                        (bid) => bid.memberId !== member.id,
+                      ),
+                      {
+                        memberId: member.id,
+                        memberName: member.name,
+                        amount,
+                      },
+                    ].sort((a, b) => b.amount - a.amount || a.memberId - b.memberId)
+                  : item.standingBids,
               };
         return {
           ...prev,
@@ -340,11 +350,12 @@ export function AuctionRoom({
             : null,
           minNextBids: {
             ...prev.minNextBids,
-            [itemId]:
-              amount +
-              (prev.activeItems.find((i) => i.id === itemId)?.bidIncrement ??
-                target.bidIncrement ??
-                5),
+            [itemId]: pink
+              ? (target.bidMin ?? target.startPrice)
+              : amount +
+                (prev.activeItems.find((i) => i.id === itemId)?.bidIncrement ??
+                  target.bidIncrement ??
+                  5),
           },
         };
       });
@@ -482,7 +493,7 @@ export function AuctionRoom({
             <div className="flex flex-wrap items-center gap-3">
               {(live || session?.status === "scheduled") && (
                 <span className="rounded-lg border border-[var(--border-soft)] px-2.5 py-1 text-sm tabular-nums">
-                  {live ? "本场剩余" : "距开始"}{" "}
+                  {room?.remainingLabel ?? (live ? "本场剩余" : "距开始")}{" "}
                   <strong>{formatCountdown(remaining)}</strong>
                 </span>
               )}

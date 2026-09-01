@@ -32,6 +32,17 @@ export function qualityMeta(quality: string) {
   );
 }
 
+export function auctionItemStatusLabel(status: string) {
+  if (status === "active") return "竞拍中";
+  if (status === "voting") return "匿名投票";
+  if (status === "rolling") return "掷点";
+  if (status === "sold") return "已成交";
+  if (status === "unsold") return "流拍";
+  if (status === "cancelled") return "已取消";
+  if (status === "pending") return "待开拍";
+  return status;
+}
+
 export function formatCountdown(totalSeconds: number | null) {
   if (totalSeconds == null) return "--:--";
   const s = Math.max(0, totalSeconds);

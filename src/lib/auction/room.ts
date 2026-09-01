@@ -107,12 +107,31 @@ export function buildRoomState(
   }
 
   let remainingSeconds: number | null = null;
-  if (session?.status === "live" && session.endsAt) {
+  let remainingLabel = "本场剩余";
+  const contestItems = items.filter(
+    (item) => item.status === "voting" || item.status === "rolling",
+  );
+  if (session?.status === "live" && contestItems.length > 0) {
+    const rolling = contestItems.filter((item) => item.status === "rolling");
+    remainingLabel = rolling.length > 0 ? "掷点剩余" : "投票剩余";
+    remainingSeconds = 0;
+    for (const item of contestItems) {
+      const iso =
+        item.status === "rolling" ? item.rollEndsAt : item.voteEndsAt;
+      if (!iso) continue;
+      remainingSeconds = Math.max(
+        remainingSeconds,
+        Math.floor((new Date(iso).getTime() - Date.now()) / 1000),
+      );
+    }
+    remainingSeconds = Math.max(0, remainingSeconds);
+  } else if (session?.status === "live" && session.endsAt) {
     remainingSeconds = Math.max(
       0,
       Math.floor((new Date(session.endsAt).getTime() - Date.now()) / 1000),
     );
   } else if (session?.status === "scheduled" && session.scheduledStart) {
+    remainingLabel = "距开始";
     remainingSeconds = Math.max(
       0,
       Math.floor(
@@ -137,6 +156,7 @@ export function buildRoomState(
     recentBids: session ? listBids(session.id, 20) : [],
     serverNow: new Date().toISOString(),
     remainingSeconds,
+    remainingLabel,
     dividends: ended && session ? listDividends(session.id) : [],
     dividendsCalculated,
     dividendReport: session && ended ? getDividendReport(session.id) : null,
