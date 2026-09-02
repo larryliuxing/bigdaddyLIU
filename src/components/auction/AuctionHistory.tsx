@@ -6,7 +6,6 @@ import type {
   AuctionItem,
   AuctionSession,
   DividendReport,
-  ItemQuality,
   SessionUser,
 } from "@/lib/types";
 import {
@@ -17,6 +16,7 @@ import { DividendReportView } from "./DividendReportView";
 import {
   AuctionItemLightbox,
   AuctionItemThumb,
+  type AuctionItemViewerPayload,
 } from "./AuctionItemImage";
 import { ItemPriceStatsLine } from "./ItemPriceStatsLine";
 
@@ -30,12 +30,7 @@ export function AuctionHistory({
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [items, setItems] = useState<AuctionItem[]>([]);
   const [report, setReport] = useState<DividendReport | null>(null);
-  const [viewer, setViewer] = useState<{
-    imageData: string;
-    name: string;
-    quality?: ItemQuality | null;
-    detail?: string | null;
-  } | null>(null);
+  const [viewer, setViewer] = useState<AuctionItemViewerPayload | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -133,7 +128,9 @@ export function AuctionHistory({
                 className="flex items-center gap-3 px-4 py-3"
               >
                 <AuctionItemThumb
+                  itemId={item.id}
                   imageData={item.imageData}
+                  hasImage={item.hasImage}
                   name={item.name}
                   quality={item.quality}
                   className="h-14 w-14 shrink-0"
@@ -183,6 +180,8 @@ export function AuctionHistory({
           <AuctionItemLightbox
             open
             imageData={viewer.imageData}
+            itemId={viewer.itemId}
+            hasImage={viewer.hasImage}
             name={viewer.name}
             quality={viewer.quality}
             detail={viewer.detail}

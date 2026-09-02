@@ -4,17 +4,40 @@ import { useEffect } from "react";
 import { qualityMeta } from "@/lib/auction/client";
 import type { ItemQuality } from "@/lib/types";
 
+export function auctionItemImageSrc(item: {
+  id?: number;
+  imageData?: string | null;
+  hasImage?: boolean;
+}) {
+  if (item.imageData) return item.imageData;
+  if (item.id && item.hasImage) return `/api/auction/item-image?id=${item.id}`;
+  return null;
+}
+
+export type AuctionItemViewerPayload = {
+  imageData?: string | null;
+  itemId?: number;
+  hasImage?: boolean;
+  name: string;
+  quality?: ItemQuality | null;
+  detail?: string | null;
+};
+
 export function AuctionItemLightbox({
   open,
   onClose,
   imageData,
+  itemId,
+  hasImage,
   name,
   quality,
   detail,
 }: {
   open: boolean;
   onClose: () => void;
-  imageData: string;
+  imageData?: string | null;
+  itemId?: number;
+  hasImage?: boolean;
   name: string;
   quality?: ItemQuality | null;
   detail?: string | null;
@@ -36,6 +59,7 @@ export function AuctionItemLightbox({
   if (!open) return null;
 
   const q = quality ? qualityMeta(quality) : null;
+  const src = auctionItemImageSrc({ id: itemId, imageData, hasImage });
 
   return (
     <div
@@ -71,12 +95,18 @@ export function AuctionItemLightbox({
           </button>
         </div>
         <div className="min-h-0 flex-1 overflow-auto rounded-xl bg-black/60 p-2">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={imageData}
-            alt={`${name} 详细属性`}
-            className="mx-auto max-h-[75vh] w-auto max-w-full object-contain"
-          />
+          {src ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={src}
+              alt={`${name} 详细属性`}
+              className="mx-auto max-h-[75vh] w-auto max-w-full object-contain"
+            />
+          ) : (
+            <p className="py-16 text-center text-sm text-[var(--text-muted)]">
+              无图
+            </p>
+          )}
         </div>
       </div>
     </div>
@@ -85,23 +115,24 @@ export function AuctionItemLightbox({
 
 /** Clickable thumbnail that opens the attribute screenshot lightbox. */
 export function AuctionItemThumb({
+  itemId,
   imageData,
+  hasImage,
   name,
   quality,
   className,
   onOpen,
 }: {
-  imageData: string | null | undefined;
+  itemId?: number;
+  imageData?: string | null;
+  hasImage?: boolean;
   name: string;
   quality?: ItemQuality | null;
   className?: string;
-  onOpen: (payload: {
-    imageData: string;
-    name: string;
-    quality?: ItemQuality | null;
-  }) => void;
+  onOpen: (payload: AuctionItemViewerPayload) => void;
 }) {
-  if (!imageData) {
+  const src = auctionItemImageSrc({ id: itemId, imageData, hasImage });
+  if (!src) {
     return (
       <div
         className={`flex items-center justify-center rounded-xl bg-[#121826] text-xs text-[var(--text-muted)] ${className ?? ""}`}
@@ -115,14 +146,24 @@ export function AuctionItemThumb({
     <button
       type="button"
       className={`group relative overflow-hidden rounded-xl border border-transparent bg-[#121826] p-0 transition hover:border-[rgba(232,168,74,0.45)] focus:outline-none focus-visible:border-[rgba(232,168,74,0.65)] ${className ?? ""}`}
-      onClick={() => onOpen({ imageData, name, quality })}
+      onClick={() =>
+        onOpen({
+          imageData: imageData ?? null,
+          itemId,
+          hasImage: hasImage ?? Boolean(imageData),
+          name,
+          quality,
+        })
+      }
       title="点击放大查看详细属性"
       aria-label={`查看 ${name} 详细属性`}
     >
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
-        src={imageData}
+        src={src}
         alt={name}
+        loading="lazy"
+        decoding="async"
         className="h-full w-full object-contain"
       />
       <span className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent px-1.5 py-1 text-[10px] text-white/90 opacity-0 transition group-hover:opacity-100">

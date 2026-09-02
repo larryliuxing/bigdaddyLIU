@@ -21,17 +21,33 @@ export function DividendPanel({
   useEffect(() => {
     let alive = true;
     const load = async () => {
-      const qs = sessionId != null ? `?sessionId=${sessionId}` : "";
-      const res = await fetch(`/api/auction/dividends${qs}`);
+      const res = await fetch("/api/auction/dividends");
       const data = await res.json();
       if (!alive || !res.ok) return;
       const list = (data.sessions || []) as AuctionSession[];
       setSessions(list);
-      const nextSession = (data.session as AuctionSession | null) ?? null;
-      setSession(nextSession);
-      if (sessionId == null && nextSession?.id != null) {
-        setSessionId(nextSession.id);
-      }
+      const firstEnded =
+        list.find((s) => s.status === "ended") ?? list[0] ?? null;
+      if (firstEnded) setSessionId(firstEnded.id);
+    };
+    const timeout = window.setTimeout(() => {
+      void load();
+    }, 0);
+    return () => {
+      alive = false;
+      window.clearTimeout(timeout);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (sessionId == null) return;
+    let alive = true;
+    const load = async () => {
+      const res = await fetch(`/api/auction/dividends?sessionId=${sessionId}`);
+      const data = await res.json();
+      if (!alive || !res.ok) return;
+      if (data.sessions) setSessions(data.sessions as AuctionSession[]);
+      setSession((data.session as AuctionSession | null) ?? null);
       setReport((data.report as DividendReport | null) ?? null);
     };
     const timeout = window.setTimeout(() => {

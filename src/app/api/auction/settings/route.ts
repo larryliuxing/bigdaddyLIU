@@ -13,7 +13,7 @@ export const runtime = "nodejs";
 export async function GET() {
   return NextResponse.json({
     settings: getAuctionSettings(),
-    room: buildRoomState(),
+    room: buildRoomState(undefined, { lite: true }),
   });
 }
 
@@ -59,6 +59,6 @@ export async function PATCH(request: Request) {
 
   return NextResponse.json({
     settings: getAuctionSettings(),
-    room: buildRoomState(),
+    room: buildRoomState(undefined, { lite: true }),
   });
 }

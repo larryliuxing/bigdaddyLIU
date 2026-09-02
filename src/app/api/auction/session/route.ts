@@ -1,12 +1,10 @@
 import { NextResponse } from "next/server";
-import { getMemberSession, requireAdminSession } from "@/lib/auth";
+import { getAdminSession, getMemberSession, requireAdminSession } from "@/lib/auth";
 import {
   createDraftSession,
   deleteAuctionSession,
   endAuctionSession,
-  getPublicAuctionSession,
   getSessionById,
-  listItemImages,
   listSessionSummaries,
   startAuctionSession,
   updateSessionSchedule,
@@ -17,28 +15,29 @@ import { parseAuctionTaxPercent } from "@/lib/auction/tax";
 export const runtime = "nodejs";
 
 export async function GET(request: Request) {
+  const member = await getMemberSession();
+  const admin = await getAdminSession();
+  if (!member && !admin) {
+    return NextResponse.json({ error: "未登录" }, { status: 401 });
+  }
+
   const { searchParams } = new URL(request.url);
   const sessionId = Number(searchParams.get("sessionId"));
   const lite = searchParams.get("lite") === "1";
   const bootstrap = searchParams.get("bootstrap") === "1";
   const includeSessions = searchParams.get("sessions") !== "0";
-  if (searchParams.get("images") === "1") {
-    const session =
-      Number.isFinite(sessionId) && sessionId > 0
-        ? getSessionById(sessionId)
-        : getPublicAuctionSession();
+  if (searchParams.get("room") === "0") {
     return NextResponse.json({
-      sessionId: session?.id ?? null,
-      images: session ? listItemImages(session.id) : [],
+      sessions: listSessionSummaries(),
     });
   }
-  const member = await getMemberSession();
   const room = buildRoomState(
     Number.isFinite(sessionId) && sessionId > 0 ? sessionId : undefined,
     {
       lite: lite || bootstrap,
       includeDividends: bootstrap ? true : undefined,
       includePriceStats: bootstrap ? true : undefined,
+      includeDividendReport: bootstrap ? true : undefined,
       viewerMemberId: member?.id,
     },
   );
@@ -92,7 +91,7 @@ export async function POST(request: Request) {
       return NextResponse.json({
         session,
         sessions: listSessionSummaries(),
-        room: buildRoomState(session.id),
+        room: buildRoomState(session.id, { lite: true }),
       });
     }
 
@@ -139,7 +138,7 @@ export async function POST(request: Request) {
       return NextResponse.json({
         session,
         sessions: listSessionSummaries(),
-        room: buildRoomState(sessionId),
+        room: buildRoomState(sessionId, { lite: true }),
       });
     }
 
@@ -165,7 +164,7 @@ export async function POST(request: Request) {
       return NextResponse.json({
         ok: true,
         sessions: listSessionSummaries(),
-        room: buildRoomState(),
+        room: buildRoomState(undefined, { lite: true }),
       });
     }
 
@@ -183,7 +182,7 @@ export async function POST(request: Request) {
         return NextResponse.json({
           session,
           sessions: listSessionSummaries(),
-          room: buildRoomState(session.id),
+          room: buildRoomState(session.id, { lite: true }),
         });
       }
       session = startAuctionSession(session.id, { forceNow: true });
@@ -205,7 +204,7 @@ export async function POST(request: Request) {
     return NextResponse.json({
       session,
       sessions: listSessionSummaries(),
-      room: buildRoomState(session.id),
+      room: buildRoomState(session.id, { lite: true }),
     });
   } catch (error) {
     return NextResponse.json(

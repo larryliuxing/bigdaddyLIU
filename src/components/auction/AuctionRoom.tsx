@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import type {
   AuctionItem,
   AuctionRoomState,
-  ItemQuality,
   SessionUser,
 } from "@/lib/types";
 import {
@@ -19,6 +18,7 @@ import { DividendReportView } from "./DividendReportView";
 import {
   AuctionItemLightbox,
   AuctionItemThumb,
+  type AuctionItemViewerPayload,
 } from "./AuctionItemImage";
 import { ItemPriceStatsLine } from "./ItemPriceStatsLine";
 import { isOrdinaryPinkAuction, isPinkAuction, isParticipantOnlyAuction, ORDINARY_PINK_BID_DENIED } from "@/lib/auction/pink";
@@ -28,6 +28,7 @@ import {
   playBidFanfare,
   unlockBidFanfare,
 } from "@/lib/auction/bidFanfare";
+import { mergeAuctionRoom } from "@/lib/auction/mergeRoom";
 
 function HourglassIcon() {
   return (
@@ -46,40 +47,6 @@ function itemStatusLabel(status: AuctionItem["status"]) {
   return auctionItemStatusLabel(status);
 }
 
-/** Keep previously loaded images when applying a lite room payload. */
-function mergeRoomKeepImages(
-  prev: AuctionRoomState | null,
-  next: AuctionRoomState,
-): AuctionRoomState {
-  if (!prev) return next;
-  const previousMap = new Map(prev.items.map((item) => [item.id, item]));
-  const patch = (items: AuctionItem[]) =>
-    items.map((item) => {
-      const previous = previousMap.get(item.id);
-      return {
-        ...item,
-        imageData: item.imageData ?? previous?.imageData ?? null,
-        dividendMemberIds:
-          item.dividendMemberIds.length > 0
-            ? item.dividendMemberIds
-            : (previous?.dividendMemberIds ?? []),
-        dividendMemberNames:
-          item.dividendMemberNames.length > 0
-            ? item.dividendMemberNames
-            : (previous?.dividendMemberNames ?? []),
-        priceStats: item.priceStats ?? previous?.priceStats ?? null,
-      };
-    });
-  return {
-    ...next,
-    items: patch(next.items),
-    activeItems: patch(next.activeItems),
-    activeItem: next.activeItem
-      ? patch([next.activeItem])[0]
-      : null,
-  };
-}
-
 export function AuctionRoom({
   member,
 }: {
@@ -96,12 +63,7 @@ export function AuctionRoom({
   >({});
   const [biddingId, setBiddingId] = useState<number | null>(null);
   const [pinkBusy, setPinkBusy] = useState<number | null>(null);
-  const [viewer, setViewer] = useState<{
-    imageData: string;
-    name: string;
-    quality?: ItemQuality | null;
-    detail?: string | null;
-  } | null>(null);
+  const [viewer, setViewer] = useState<AuctionItemViewerPayload | null>(null);
   const [danmaku, setDanmaku] = useState<
     Array<{ id: string; text: string; top: number; variant: "bid" | "track" }>
   >([]);
@@ -171,38 +133,6 @@ export function AuctionRoom({
     let timer: number | null = null;
     const liveRef = { current: false };
 
-    const loadImages = async (sessionId: number) => {
-      const res = await fetch(
-        `/api/auction/session?sessions=0&images=1&sessionId=${sessionId}`,
-      );
-      const data = await res.json();
-      if (!alive || !res.ok || data.sessionId !== sessionId) return;
-      const imageMap = new Map<number, string | null>(
-        (data.images || []).map(
-          (image: { id: number; imageData: string | null }) => [
-            image.id,
-            image.imageData,
-          ],
-        ),
-      );
-      setRoom((prev) => {
-        if (!prev || prev.session?.id !== sessionId) return prev;
-        const patch = (items: AuctionItem[]) =>
-          items.map((item) => ({
-            ...item,
-            imageData: imageMap.get(item.id) ?? item.imageData,
-          }));
-        return {
-          ...prev,
-          items: patch(prev.items),
-          activeItems: patch(prev.activeItems),
-          activeItem: prev.activeItem
-            ? patch([prev.activeItem])[0]
-            : null,
-        };
-      });
-    };
-
     const bootstrap = async () => {
       const res = await fetch(
         "/api/auction/session?sessions=0&bootstrap=1",
@@ -216,9 +146,6 @@ export function AuctionRoom({
       staticSessionStatusRef.current = data.room?.session?.status ?? null;
       setRoom(data.room);
       setRemaining(data.room.remainingSeconds);
-      if (data.room?.session?.id) {
-        void loadImages(data.room.session.id);
-      }
       return data.room as AuctionRoomState;
     };
 
@@ -240,7 +167,7 @@ export function AuctionRoom({
         return;
       }
       liveRef.current = data.room?.session?.status === "live";
-      setRoom((prev) => mergeRoomKeepImages(prev, data.room));
+      setRoom((prev) => mergeAuctionRoom(prev, data.room));
       setRemaining(data.room.remainingSeconds);
     };
 
@@ -380,12 +307,12 @@ export function AuctionRoom({
         );
         const refreshData = await refresh.json();
         if (refresh.ok) {
-          setRoom((prev) => mergeRoomKeepImages(prev, refreshData.room));
+          setRoom((prev) => mergeAuctionRoom(prev, refreshData.room));
           setRemaining(refreshData.room.remainingSeconds);
         }
         return;
       }
-      setRoom((prev) => mergeRoomKeepImages(prev, data.room));
+      setRoom((prev) => mergeAuctionRoom(prev, data.room));
       setRemaining(data.room.remainingSeconds);
       setToast(
         data.bid?.memberName
@@ -414,7 +341,7 @@ export function AuctionRoom({
         setError(data.error || "投票失败");
         return;
       }
-      setRoom((prev) => mergeRoomKeepImages(prev, data.room));
+      setRoom((prev) => mergeAuctionRoom(prev, data.room));
       setToast("已投票（匿名）");
       window.setTimeout(() => setToast(""), 1600);
     } finally {
@@ -436,7 +363,7 @@ export function AuctionRoom({
         setError(data.error || "掷点失败");
         return;
       }
-      setRoom((prev) => mergeRoomKeepImages(prev, data.room));
+      setRoom((prev) => mergeAuctionRoom(prev, data.room));
       setToast(`掷出 ${data.points} 点`);
       window.setTimeout(() => setToast(""), 1800);
     } finally {
@@ -580,7 +507,9 @@ export function AuctionRoom({
                 >
                   <div className="flex flex-col gap-4 sm:flex-row">
                     <AuctionItemThumb
+                      itemId={item.id}
                       imageData={item.imageData}
+                      hasImage={item.hasImage}
                       name={item.name}
                       quality={item.quality}
                       className="mx-auto h-28 w-28 sm:mx-0"
@@ -830,7 +759,9 @@ export function AuctionRoom({
                       >
                         <div className="flex min-w-0 items-center gap-3">
                           <AuctionItemThumb
+                            itemId={item.id}
                             imageData={item.imageData}
+                            hasImage={item.hasImage}
                             name={item.name}
                             quality={item.quality}
                             className="h-12 w-12 shrink-0"
@@ -909,6 +840,8 @@ export function AuctionRoom({
           <AuctionItemLightbox
             open
             imageData={viewer.imageData}
+            itemId={viewer.itemId}
+            hasImage={viewer.hasImage}
             name={viewer.name}
             quality={viewer.quality}
             detail={viewer.detail}
