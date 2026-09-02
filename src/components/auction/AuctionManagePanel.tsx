@@ -7,7 +7,6 @@ import type {
   AuctionRoomState,
   AuctionSessionSummary,
   DividendReport,
-  ItemQuality,
   Member,
 } from "@/lib/types";
 import {
@@ -28,8 +27,10 @@ import { DividendReportView } from "./DividendReportView";
 import {
   AuctionItemLightbox,
   AuctionItemThumb,
+  type AuctionItemViewerPayload,
 } from "./AuctionItemImage";
 import { ItemPriceStatsLine } from "./ItemPriceStatsLine";
+import { mergeAuctionRoom } from "@/lib/auction/mergeRoom";
 
 function statusTone(status: AuctionSessionSummary["status"]) {
   if (status === "live") return "bg-emerald-500/15 text-emerald-300";
@@ -62,12 +63,7 @@ export function AuctionManagePanel({
     null,
   );
   const [taxPercent, setTaxPercent] = useState(5);
-  const [viewer, setViewer] = useState<{
-    imageData: string;
-    name: string;
-    quality?: ItemQuality | null;
-    detail?: string | null;
-  } | null>(null);
+  const [viewer, setViewer] = useState<AuctionItemViewerPayload | null>(null);
 
   const syncEditFields = useCallback((nextRoom: AuctionRoomState | null) => {
     const session = nextRoom?.session;
@@ -82,7 +78,7 @@ export function AuctionManagePanel({
   }, []);
 
   const loadList = useCallback(async () => {
-    const res = await fetch("/api/auction/session");
+    const res = await fetch("/api/auction/session?room=0");
     const data = await res.json();
     if (!res.ok) return;
     setSessions(data.sessions || []);
@@ -90,7 +86,9 @@ export function AuctionManagePanel({
 
   const loadDetail = useCallback(
     async (sessionId: number) => {
-      const res = await fetch(`/api/auction/session?sessionId=${sessionId}`);
+      const res = await fetch(
+        `/api/auction/session?sessionId=${sessionId}&bootstrap=1`,
+      );
       const data = await res.json();
       if (!res.ok) return;
       setSessions(data.sessions || []);
@@ -114,24 +112,21 @@ export function AuctionManagePanel({
     if (selectedId == null) return;
     let alive = true;
     const tick = async () => {
-      const res = await fetch(`/api/auction/session?sessionId=${selectedId}`);
+      const res = await fetch(
+        `/api/auction/session?sessionId=${selectedId}&lite=1&sessions=0`,
+      );
       const data = await res.json();
       if (!alive || !res.ok) return;
-      setSessions(data.sessions || []);
-      setRoom(data.room);
-      const report =
-        (data.room?.dividendReport as DividendReport | null) ?? null;
-      setDividendReport(report);
+      setRoom((prev) => mergeAuctionRoom(prev, data.room));
+      if (data.room?.dividendReport) {
+        setDividendReport(data.room.dividendReport as DividendReport);
+      }
     };
-    const timeout = window.setTimeout(() => {
-      void tick();
-    }, 0);
     const timer = window.setInterval(() => {
       void tick();
     }, 4000);
     return () => {
       alive = false;
-      window.clearTimeout(timeout);
       window.clearInterval(timer);
     };
   }, [selectedId]);
@@ -706,7 +701,9 @@ export function AuctionManagePanel({
                     >
                       <div className="flex items-center gap-3">
                         <AuctionItemThumb
+                          itemId={item.id}
                           imageData={item.imageData}
+                          hasImage={item.hasImage}
                           name={item.name}
                           quality={item.quality}
                           className="h-12 w-12"
@@ -803,6 +800,8 @@ export function AuctionManagePanel({
           <AuctionItemLightbox
             open
             imageData={viewer.imageData}
+            itemId={viewer.itemId}
+            hasImage={viewer.hasImage}
             name={viewer.name}
             quality={viewer.quality}
             detail={viewer.detail}

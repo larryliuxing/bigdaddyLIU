@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
-import { requireAdminSession } from "@/lib/auth";
+import {
+  getAdminSession,
+  getMemberSession,
+  requireAdminSession,
+} from "@/lib/auth";
 import {
   createAuctionItem,
   deleteAuctionItem,
@@ -27,13 +31,19 @@ const QUALITIES: ItemQuality[] = [
 ];
 
 export async function GET(request: Request) {
+  const member = await getMemberSession();
+  const admin = await getAdminSession();
+  if (!member && !admin) {
+    return NextResponse.json({ error: "未登录" }, { status: 401 });
+  }
+
   const { searchParams } = new URL(request.url);
   const sessionId = Number(searchParams.get("sessionId"));
   const session = sessionId
     ? getSessionById(sessionId)
     : getLatestSession();
 
-  const items = session ? listItems(session.id) : [];
+  const items = session ? listItems(session.id, { includeImages: false }) : [];
   const statsMap = mapPriceStatsByNames(items.map((i) => i.name));
   const withStats = items.map((item) => ({
     ...item,
@@ -139,7 +149,7 @@ export async function POST(request: Request) {
   });
 
   return NextResponse.json(
-    { item, room: buildRoomState(session.id) },
+    { item, room: buildRoomState(session.id, { lite: true }) },
     { status: 201 },
   );
 }
@@ -170,6 +180,7 @@ export async function DELETE(request: Request) {
       Number.isFinite(itemSessionId) && itemSessionId > 0
         ? itemSessionId
         : undefined,
+      { lite: true },
     ),
   });
 }

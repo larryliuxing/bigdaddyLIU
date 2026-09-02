@@ -1,11 +1,10 @@
 import { NextResponse } from "next/server";
-import { requireAdminSession } from "@/lib/auth";
+import { getAdminSession, getMemberSession, requireAdminSession } from "@/lib/auth";
 import {
   calculateDividends,
   getDividendReport,
   getLatestSession,
   getSessionById,
-  listDividends,
   listSessions,
   setItemDividendMembers,
   updateSessionTaxRate,
@@ -27,19 +26,28 @@ function resolveTargetSession(bodySessionId?: unknown) {
 }
 
 export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url);
-  const sessionId = Number(searchParams.get("sessionId"));
-  const session = sessionId
-    ? listSessions().find((s) => s.id === sessionId)
-    : resolveTargetSession();
+  const member = await getMemberSession();
+  const admin = await getAdminSession();
+  if (!member && !admin) {
+    return NextResponse.json({ error: "未登录" }, { status: 401 });
+  }
 
+  const { searchParams } = new URL(request.url);
+  const sessions = listSessions();
+  const sessionIdParam = searchParams.get("sessionId");
+  if (sessionIdParam == null) {
+    return NextResponse.json({ sessions });
+  }
+
+  const sessionId = Number(sessionIdParam);
+  const session = sessionId
+    ? (sessions.find((s) => s.id === sessionId) ?? null)
+    : null;
   const report = session ? getDividendReport(session.id) : null;
   return NextResponse.json({
-    sessions: listSessions(),
+    sessions,
     session,
-    dividends: session ? listDividends(session.id) : [],
     report,
-    room: buildRoomState(session?.id),
   });
 }
 
@@ -71,14 +79,14 @@ export async function POST(request: Request) {
         return NextResponse.json({
           session: report.session,
           report,
-          room: buildRoomState(session.id),
+          room: buildRoomState(session.id, { lite: true }),
         });
       }
       const updated = updateSessionTaxRate(session.id, taxRate);
       return NextResponse.json({
         session: updated,
         report: getDividendReport(session.id),
-        room: buildRoomState(session.id),
+        room: buildRoomState(session.id, { lite: true }),
       });
     }
 
@@ -98,7 +106,7 @@ export async function POST(request: Request) {
         report,
         dividends: report.totals,
         session,
-        room: buildRoomState(session.id),
+        room: buildRoomState(session.id, { lite: true }),
       });
     }
 
@@ -111,7 +119,7 @@ export async function POST(request: Request) {
       return NextResponse.json({
         report,
         dividends: report.totals,
-        room: buildRoomState(session.id),
+        room: buildRoomState(session.id, { lite: true }),
       });
     }
 

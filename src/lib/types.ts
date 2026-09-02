@@ -115,6 +115,8 @@ export interface AuctionItem {
   leadingBidderName?: string | null;
   /** Historical sold prices for the same item name. */
   priceStats?: ItemPriceStats | null;
+  /** True when a screenshot is stored; fetch via /api/auction/item-image. */
+  hasImage?: boolean;
 }
 
 /** Aggregated sale history for identical item names. */

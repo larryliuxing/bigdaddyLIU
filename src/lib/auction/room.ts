@@ -27,8 +27,12 @@ export type BuildRoomOptions = {
   includeDividends?: boolean;
   /** Override historical price-stat loading. */
   includePriceStats?: boolean;
+  /** Include persisted dividend report. Default: skip on lite polls. */
+  includeDividendReport?: boolean;
   /** Member viewing the room (for myVote / myRoll). */
   viewerMemberId?: number;
+  /** Include base64 screenshots. Default false — use /api/auction/item-image. */
+  includeImages?: boolean;
 };
 
 function withLeadingBidders(
@@ -73,10 +77,11 @@ export function buildRoomState(
   const ended = session?.status === "ended";
   const includeDividends = options.includeDividends ?? !lite;
   const includePriceStats = options.includePriceStats ?? !lite;
+  const includeDividendReport = options.includeDividendReport ?? !lite;
 
   const itemsRaw = session
     ? listItems(session.id, {
-        includeImages: !lite,
+        includeImages: Boolean(options.includeImages),
         includeDividends,
       })
     : [];
@@ -157,8 +162,13 @@ export function buildRoomState(
     serverNow: new Date().toISOString(),
     remainingSeconds,
     remainingLabel,
-    dividends: ended && session ? listDividends(session.id) : [],
+    dividends: ended && session && includeDividendReport
+      ? listDividends(session.id)
+      : [],
     dividendsCalculated,
-    dividendReport: session && ended ? getDividendReport(session.id) : null,
+    dividendReport:
+      session && ended && includeDividendReport
+        ? getDividendReport(session.id)
+        : null,
   };
 }

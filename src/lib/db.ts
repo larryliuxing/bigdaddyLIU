@@ -100,6 +100,7 @@ export function ensureDb(): Database.Database {
       start_price REAL NOT NULL DEFAULT 5,
       bid_increment REAL NOT NULL DEFAULT 5,
       image_data TEXT,
+      has_image INTEGER NOT NULL DEFAULT 0,
       sort_order INTEGER NOT NULL DEFAULT 0,
       status TEXT NOT NULL DEFAULT 'pending',
       current_price REAL NOT NULL DEFAULT 5,
@@ -215,6 +216,7 @@ export function ensureDb(): Database.Database {
       combat_power INTEGER NOT NULL,
       ocr_name TEXT NOT NULL,
       image_data TEXT,
+      has_image INTEGER NOT NULL DEFAULT 0,
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
       FOREIGN KEY(member_id) REFERENCES members(id)
     );
@@ -341,6 +343,18 @@ function seedIfEmpty(database: Database.Database) {
   ensureColumn(database, "auction_items", "bid_max", "REAL");
   ensureColumn(database, "auction_items", "vote_ends_at", "TEXT");
   ensureColumn(database, "auction_items", "roll_ends_at", "TEXT");
+  ensureColumn(
+    database,
+    "auction_items",
+    "has_image",
+    "INTEGER NOT NULL DEFAULT 0",
+  );
+  ensureColumn(
+    database,
+    "leaderboard_entries",
+    "has_image",
+    "INTEGER NOT NULL DEFAULT 0",
+  );
 
   const bossCount = database
     .prepare("SELECT COUNT(*) as count FROM bosses")
@@ -362,6 +376,7 @@ function seedIfEmpty(database: Database.Database) {
 
   backfillSaleHistory(database);
   migrateLegacyPinkToSpecialOnce(database);
+  migrateHasImageFlagsOnce(database);
   // Legacy: wipe leftover total-table temporary rows (feature removed).
   database
     .prepare(`DELETE FROM auction_dividend_entries WHERE is_temporary = 1`)
@@ -397,6 +412,25 @@ function migrateLegacyPinkToSpecialOnce(database: Database.Database) {
        ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
     )
     .run("migrate_pink_to_special_pink_v1", new Date().toISOString());
+}
+
+function migrateHasImageFlagsOnce(database: Database.Database) {
+  const done = database
+    .prepare(`SELECT value FROM app_meta WHERE key = ?`)
+    .get("migrate_has_image_flags_v1") as { value: string } | undefined;
+  if (done) return;
+  database.exec(`
+    UPDATE auction_items SET has_image = 1
+      WHERE image_data IS NOT NULL AND length(image_data) > 32;
+    UPDATE leaderboard_entries SET has_image = 1
+      WHERE image_data IS NOT NULL AND length(image_data) > 32;
+  `);
+  database
+    .prepare(
+      `INSERT INTO app_meta (key, value) VALUES (?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+    )
+    .run("migrate_has_image_flags_v1", new Date().toISOString());
 }
 
 /** One-shot: clear all members + auction data; keep admin + bosses. */
@@ -825,7 +859,17 @@ type ItemRow = {
   bid_max: number | null;
   vote_ends_at: string | null;
   roll_ends_at: string | null;
+  has_image?: number;
+  winner_name?: string | null;
 };
+
+const ITEM_COLUMNS = `auction_items.id, auction_items.session_id, auction_items.name,
+  auction_items.quality, auction_items.start_price, auction_items.bid_increment,
+  auction_items.sort_order, auction_items.status, auction_items.current_price,
+  auction_items.winner_member_id, auction_items.sold_price,
+  auction_items.activated_at, auction_items.closed_at, auction_items.bid_min,
+  auction_items.bid_max, auction_items.vote_ends_at, auction_items.roll_ends_at,
+  auction_items.has_image`;
 
 function toSession(row: SessionRow): AuctionSession {
   return {
@@ -858,9 +902,10 @@ function toItem(
     includeImages?: boolean;
     includeDividends?: boolean;
     dividendRoster?: { ids: number[]; names: string[] };
+    winnerName?: string | null;
   },
 ): AuctionItem {
-  const includeImages = opts?.includeImages !== false;
+  const includeImages = opts?.includeImages === true;
   const includeDividends = opts?.includeDividends !== false;
   const dividendMemberIds = includeDividends
     ? (opts?.dividendRoster?.ids ?? getItemDividendIds(row.id))
@@ -872,8 +917,11 @@ function toItem(
         .filter(Boolean) as string[]))
     : [];
 
-  let winnerName: string | null = null;
-  if (row.winner_member_id) {
+  let winnerName: string | null =
+    opts?.winnerName !== undefined
+      ? (opts.winnerName ?? null)
+      : (row.winner_name ?? null);
+  if (winnerName == null && row.winner_member_id) {
     winnerName = getMemberById(row.winner_member_id)?.name ?? null;
   }
 
@@ -885,6 +933,7 @@ function toItem(
     startPrice: row.start_price,
     bidIncrement: row.bid_increment,
     imageData: includeImages ? row.image_data : null,
+    hasImage: Boolean(row.has_image),
     sortOrder: row.sort_order,
     status: row.status,
     currentPrice: row.current_price,
@@ -1167,9 +1216,20 @@ export function listItems(
   opts?: { includeImages?: boolean; includeDividends?: boolean },
 ): AuctionItem[] {
   const database = ensureDb();
+  const includeImages = opts?.includeImages === true;
   const rows = database
     .prepare(
-      `SELECT * FROM auction_items WHERE session_id = ? ORDER BY sort_order ASC, id ASC`,
+      includeImages
+        ? `SELECT ${ITEM_COLUMNS}, auction_items.image_data, m.name AS winner_name
+           FROM auction_items
+           LEFT JOIN members m ON m.id = auction_items.winner_member_id
+           WHERE auction_items.session_id = ?
+           ORDER BY auction_items.sort_order ASC, auction_items.id ASC`
+        : `SELECT ${ITEM_COLUMNS}, m.name AS winner_name
+           FROM auction_items
+           LEFT JOIN members m ON m.id = auction_items.winner_member_id
+           WHERE auction_items.session_id = ?
+           ORDER BY auction_items.sort_order ASC, auction_items.id ASC`,
     )
     .all(sessionId) as ItemRow[];
 
@@ -1200,6 +1260,8 @@ export function listItems(
   return rows.map((row) =>
     toItem(row, {
       ...opts,
+      includeImages,
+      winnerName: row.winner_name ?? null,
       dividendRoster:
         opts?.includeDividends === false
           ? undefined
@@ -1430,11 +1492,34 @@ export function listItemSaleHistory(
   }));
 }
 
-export function getItemById(id: number): AuctionItem | null {
+export function getItemById(
+  id: number,
+  opts?: { includeImages?: boolean },
+): AuctionItem | null {
+  const includeImages = opts?.includeImages === true;
   const row = ensureDb()
-    .prepare(`SELECT * FROM auction_items WHERE id = ?`)
+    .prepare(
+      includeImages
+        ? `SELECT ${ITEM_COLUMNS}, auction_items.image_data, m.name AS winner_name
+           FROM auction_items
+           LEFT JOIN members m ON m.id = auction_items.winner_member_id
+           WHERE auction_items.id = ?`
+        : `SELECT ${ITEM_COLUMNS}, m.name AS winner_name
+           FROM auction_items
+           LEFT JOIN members m ON m.id = auction_items.winner_member_id
+           WHERE auction_items.id = ?`,
+    )
     .get(id) as ItemRow | undefined;
-  return row ? toItem(row) : null;
+  return row
+    ? toItem(row, { includeImages, winnerName: row.winner_name ?? null })
+    : null;
+}
+
+export function getItemImageData(itemId: number): string | null {
+  const row = ensureDb()
+    .prepare(`SELECT image_data FROM auction_items WHERE id = ?`)
+    .get(itemId) as { image_data: string | null } | undefined;
+  return row?.image_data ?? null;
 }
 
 export function createAuctionItem(input: {
@@ -1459,12 +1544,14 @@ export function createAuctionItem(input: {
   const bidMin = pink ? (input.bidMin ?? input.startPrice) : null;
   const bidMax = pink ? (input.bidMax ?? null) : null;
   const startPrice = pink ? (bidMin ?? input.startPrice) : input.startPrice;
+  const imageData = input.imageData ?? null;
+  const hasImage = Boolean(imageData && imageData.length > 32);
 
   const result = database
     .prepare(
       `INSERT INTO auction_items
-       (session_id, name, quality, start_price, bid_increment, image_data, sort_order, current_price, bid_min, bid_max)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (session_id, name, quality, start_price, bid_increment, image_data, has_image, sort_order, current_price, bid_min, bid_max)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       input.sessionId,
@@ -1472,7 +1559,8 @@ export function createAuctionItem(input: {
       input.quality,
       startPrice,
       input.bidIncrement,
-      input.imageData ?? null,
+      imageData,
+      hasImage ? 1 : 0,
       maxOrder.max_order + 1,
       startPrice,
       bidMin,
@@ -2431,7 +2519,10 @@ function rebuildSessionDividendTotals(sessionId: number) {
   tx();
 }
 
-export function listItemDividendLines(sessionId: number): ItemDividendLine[] {
+export function listItemDividendLines(
+  sessionId: number,
+  belowThreshold?: Set<number>,
+): ItemDividendLine[] {
   const rows = ensureDb()
     .prepare(
       `SELECT l.*, i.name as item_name
@@ -2455,7 +2546,7 @@ export function listItemDividendLines(sessionId: number): ItemDividendLine[] {
     is_temporary: number;
   }>;
 
-  const below = new Set(getBelowThresholdMemberIds());
+  const below = belowThreshold ?? new Set(getBelowThresholdMemberIds());
   return rows.map((r) => ({
     id: r.id,
     sessionId: r.session_id,
@@ -2475,10 +2566,10 @@ export function listItemDividendLines(sessionId: number): ItemDividendLine[] {
 
 export function getDividendReport(sessionId: number): DividendReport {
   const session = getSessionById(sessionId);
-  const lines = listItemDividendLines(sessionId);
   const belowThresholdMemberIds = getBelowThresholdMemberIds();
   const below = new Set(belowThresholdMemberIds);
-  const totals = listDividends(sessionId)
+  const lines = listItemDividendLines(sessionId, below);
+  const totals = listDividends(sessionId, below)
     .filter((d) => !d.isTemporary)
     .map((d) => ({
       ...d,
@@ -2492,7 +2583,10 @@ export function getDividendReport(sessionId: number): DividendReport {
     linesByItem.set(line.itemId, list);
   }
 
-  const soldItems = listItems(sessionId).filter(
+  const soldItems = listItems(sessionId, {
+    includeImages: false,
+    includeDividends: false,
+  }).filter(
     (i) => i.status === "sold" && i.soldPrice != null && i.soldPrice > 0,
   );
 
@@ -2592,7 +2686,7 @@ export function calculateDividends(
     updateSessionTaxRate(sessionId, taxRate);
   }
 
-  const items = listItems(sessionId).filter(
+  const items = listItems(sessionId, { includeImages: false }).filter(
     (i) => i.status === "sold" && i.soldPrice != null && i.soldPrice > 0,
   );
 
@@ -2740,7 +2834,10 @@ export function setItemDividendMembers(
   return getDividendReport(item.sessionId);
 }
 
-export function listDividends(sessionId: number): DividendEntry[] {
+export function listDividends(
+  sessionId: number,
+  belowThreshold?: Set<number>,
+): DividendEntry[] {
   const rows = ensureDb()
     .prepare(
       `SELECT * FROM auction_dividend_entries
@@ -2757,7 +2854,7 @@ export function listDividends(sessionId: number): DividendEntry[] {
     note: string | null;
   }>;
 
-  const below = new Set(getBelowThresholdMemberIds());
+  const below = belowThreshold ?? new Set(getBelowThresholdMemberIds());
   return rows.map((r) => ({
     id: r.id,
     sessionId: r.session_id,
@@ -2908,16 +3005,19 @@ export function upsertLeaderboardEntry(input: {
   if (!member || member.status === "exited") {
     throw new Error("该成员已清退，无法更新排行榜");
   }
+  const imageData = input.imageData ?? null;
+  const hasImage = Boolean(imageData && imageData.length > 32);
   ensureDb()
     .prepare(
       `INSERT INTO leaderboard_entries
-         (member_id, member_name, combat_power, ocr_name, image_data, updated_at)
-       VALUES (?, ?, ?, ?, ?, datetime('now'))
+         (member_id, member_name, combat_power, ocr_name, image_data, has_image, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
        ON CONFLICT(member_id) DO UPDATE SET
          member_name = excluded.member_name,
          combat_power = excluded.combat_power,
          ocr_name = excluded.ocr_name,
          image_data = excluded.image_data,
+         has_image = excluded.has_image,
          updated_at = datetime('now')`,
     )
     .run(
@@ -2925,7 +3025,8 @@ export function upsertLeaderboardEntry(input: {
       input.memberName,
       input.combatPower,
       input.ocrName,
-      input.imageData ?? null,
+      imageData,
+      hasImage ? 1 : 0,
     );
 }
 
@@ -2939,15 +3040,23 @@ export function deleteLeaderboardEntry(memberId: number): boolean {
 export function getLeaderboardBoard(thresholdRatio = 0.85) {
   const rows = ensureDb()
     .prepare(
-      `SELECT le.*, m.role as member_role
+      `SELECT le.id, le.member_id, le.member_name, le.combat_power, le.ocr_name,
+              le.has_image, le.updated_at, m.role as member_role
        FROM leaderboard_entries le
        LEFT JOIN members m ON m.id = le.member_id
        WHERE m.id IS NULL OR COALESCE(m.status, 'active') = 'active'
        ORDER BY le.combat_power DESC, le.updated_at ASC, le.id ASC`,
     )
-    .all() as Array<
-    LeaderboardRow & { member_role: MemberRole | null }
-  >;
+    .all() as Array<{
+    id: number;
+    member_id: number;
+    member_name: string;
+    combat_power: number;
+    ocr_name: string;
+    has_image: number | null;
+    updated_at: string;
+    member_role: MemberRole | null;
+  }>;
 
   const count = rows.length;
   const average =
@@ -2962,7 +3071,7 @@ export function getLeaderboardBoard(thresholdRatio = 0.85) {
     memberName: row.member_name,
     combatPower: row.combat_power,
     ocrName: row.ocr_name,
-    hasImage: Boolean(row.image_data),
+    hasImage: Boolean(row.has_image),
     role: (row.member_role || "normal") as MemberRole,
     updatedAt: row.updated_at,
     rank: index + 1,
