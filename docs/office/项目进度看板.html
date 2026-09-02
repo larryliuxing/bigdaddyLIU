@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>天堂2盟约 · 研发进度看板</title>
+  <style>
+    body { font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; margin: 0; background: #f4f6f9; color: #1f2a37; }
+    header { background: #1f4e79; color: #fff; padding: 28px 40px; }
+    header p { opacity: .85; margin: 8px 0 0; }
+    main { padding: 24px 40px 48px; }
+    .kpis { display: flex; flex-wrap: wrap; gap: 12px; margin: 16px 0 28px; }
+    .kpi { background: #fff; border: 1px solid #e5eaf1; border-radius: 10px; padding: 14px 18px; min-width: 120px; }
+    .kpi .n { font-size: 28px; font-weight: 700; color: #1f4e79; }
+    .kpi .l { color: #667085; font-size: 13px; }
+    table { border-collapse: collapse; width: 100%; background: #fff; }
+    th, td { border: 1px solid #e5eaf1; padding: 8px 10px; text-align: left; font-size: 13px; }
+    th { background: #1f4e79; color: #fff; }
+    tr:nth-child(even) { background: #f8fafc; }
+    h2 { margin-top: 32px; }
+    .note { background: #fff7ed; border: 1px solid #fdba74; padding: 12px 16px; border-radius: 8px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>天堂2盟约公会助手 · 研发进度看板</h1>
+    <p>生成时间 2026-09-02 22:13（北京时间） · 共 44 个 PR · 0 个已合并</p>
+  </header>
+  <main>
+    <div class="note">main 目前只有 README。功能都在互相串联的 PR 分支上。本看板用于周会，不替代代码审查。</div>
+    <h2>模块数量</h2>
+    <div class="kpis"><div class='kpi'><div class='n'>15</div><div class='l'>排行榜 / OCR</div></div><div class='kpi'><div class='n'>14</div><div class='l'>拍卖竞价</div></div><div class='kpi'><div class='n'>6</div><div class='l'>BOSS 计时</div></div><div class='kpi'><div class='n'>4</div><div class='l'>首页 / 品牌</div></div><div class='kpi'><div class='n'>2</div><div class='l'>登录 / 基础平台</div></div><div class='kpi'><div class='n'>2</div><div class='l'>成员 / 权限</div></div><div class='kpi'><div class='n'>1</div><div class='l'>上线 / 运维</div></div></div>
+    <h2>周度产出</h2>
+    <table><thead><tr><th>周次</th><th>PR 数</th></tr></thead><tbody><tr><td>2026-08-10 ~ 2026-08-16</td><td>18</td></tr><tr><td>2026-08-17 ~ 2026-08-23</td><td>5</td></tr><tr><td>2026-08-24 ~ 2026-08-30</td><td>12</td></tr><tr><td>2026-08-31 ~ 2026-09-06</td><td>9</td></tr></tbody></table>
+    <h2>PR 明细</h2>
+    <table>
+      <thead><tr><th>编号</th><th>标题</th><th>模块</th><th>类型</th><th>状态</th><th>创建日期</th></tr></thead>
+      <tbody><tr><td>#1</td><td>公会助手：身份登录、功能首页与管理后台</td><td>登录 / 基础平台</td><td>功能开发</td><td>草稿</td><td>2026-08-11</td></tr><tr><td>#2</td><td>fix: HTTP 登录 Cookie 丢失导致无法进入首页</td><td>登录 / 基础平台</td><td>缺陷修复</td><td>草稿</td><td>2026-08-12</td></tr><tr><td>#3</td><td>fix: 增强战力截图角色名 OCR 识别</td><td>排行榜 / OCR</td><td>缺陷修复</td><td>草稿</td><td>2026-08-12</td></tr><tr><td>#4</td><td>限制账户与拍卖物品管理仅限管理员后台</td><td>成员 / 权限</td><td>功能开发</td><td>草稿</td><td>2026-08-12</td></tr><tr><td>#5</td><td>修复拍卖场次时间弹回并统一北京时间</td><td>拍卖竞价</td><td>缺陷修复</td><td>草稿</td><td>2026-08-12</td></tr><tr><td>#6</td><td>重构拍卖后台：场次列表与拍品管理流程</td><td>拍卖竞价</td><td>功能开发</td><td>草稿</td><td>2026-08-12</td></tr><tr><td>#7</td><td>拍品图仅识别顶部装备名称</td><td>拍卖竞价</td><td>功能开发</td><td>草稿</td><td>2026-08-12</td></tr><tr><td>#8</td><td>拍卖改为全部拍品同时竞拍</td><td>拍卖竞价</td><td>功能开发</td><td>草稿</td><td>2026-08-12</td></tr><tr><td>#9</td><td>拍卖分红：可调税率、按拍品明细与公示总表</td><td>拍卖竞价</td><td>功能开发</td><td>草稿</td><td>2026-08-12</td></tr><tr><td>#10</td><td>fix: improve auction item name OCR accuracy</td><td>拍卖竞价</td><td>缺陷修复</td><td>草稿</td><td>2026-08-12</td></tr><tr><td>#11</td><td>feat: show high/low/avg prices when adding auction items</td><td>拍卖竞价</td><td>功能开发</td><td>草稿</td><td>2026-08-12</td></tr><tr><td>#12</td><td>feat: BOSS settings labels, drop images, and admin timers</td><td>BOSS 计时</td><td>功能开发</td><td>草稿</td><td>2026-08-12</td></tr><tr><td>#13</td><td>feat: auction high-bid fanfare music and danmaku</td><td>拍卖竞价</td><td>功能开发</td><td>草稿</td><td>2026-08-12</td></tr><tr><td>#14</td><td>feat: add 天堂2盟约 brand title on home</td><td>首页 / 品牌</td><td>功能开发</td><td>草稿</td><td>2026-08-12</td></tr><tr><td>#15</td><td>fix: 成员清退 + 清空成员/拍卖（留 admin 与 BOSS）</td><td>成员 / 权限</td><td>缺陷修复</td><td>草稿</td><td>2026-08-12</td></tr><tr><td>#16</td><td>perf: BOSS 设置页列表加载加速</td><td>BOSS 计时</td><td>性能优化</td><td>草稿</td><td>2026-08-13</td></tr><tr><td>#17</td><td>fix: BOSS 计时规则（下次刷新 vs 击杀）</td><td>BOSS 计时</td><td>缺陷修复</td><td>草稿</td><td>2026-08-13</td></tr><tr><td>#18</td><td>feat: BOSS 倒计时排序、加大名称、投票人数设置</td><td>BOSS 计时</td><td>功能开发</td><td>草稿</td><td>2026-08-13</td></tr><tr><td>#19</td><td>chore: 正式上线清理（删测试、清拍卖、改管理员密码）</td><td>上线 / 运维</td><td>运维清理</td><td>草稿</td><td>2026-08-17</td></tr><tr><td>#20</td><td>fix: 排行榜战力只识别左上角（取消双校验）</td><td>排行榜 / OCR</td><td>缺陷修复</td><td>草稿</td><td>2026-08-21</td></tr><tr><td>#21</td><td>fix: 识别角色下方「战斗力」后的数字（更快更准）</td><td>排行榜 / OCR</td><td>缺陷修复</td><td>草稿</td><td>2026-08-22</td></tr><tr><td>#22</td><td>feat: 左上战力改用服务端 PP-OCR（准确+速度）</td><td>排行榜 / OCR</td><td>功能开发</td><td>草稿</td><td>2026-08-22</td></tr><tr><td>#23</td><td>feat: 点选战力数字 + 点选名字识别（4–6 位）</td><td>排行榜 / OCR</td><td>功能开发</td><td>草稿</td><td>2026-08-22</td></tr><tr><td>#24</td><td>feat: 拍卖税率改为按场次设置（0%–10%）</td><td>拍卖竞价</td><td>功能开发</td><td>待审</td><td>2026-08-26</td></tr><tr><td>#25</td><td>预约未开拍时先展示拍品，到点才能出价</td><td>拍卖竞价</td><td>功能开发</td><td>待审</td><td>2026-08-26</td></tr><tr><td>#26</td><td>紫/粉拍品最后一分钟出价加时</td><td>拍卖竞价</td><td>功能开发</td><td>待审</td><td>2026-08-26</td></tr><tr><td>#27</td><td>后台可配置排行榜合格战力百分比</td><td>排行榜 / OCR</td><td>功能开发</td><td>待审</td><td>2026-08-26</td></tr><tr><td>#28</td><td>加大排行榜点名识别范围</td><td>排行榜 / OCR</td><td>功能开发</td><td>待审</td><td>2026-08-26</td></tr><tr><td>#29</td><td>首页更新日志、拍卖动态可滚动、结束后结果上移</td><td>首页 / 品牌</td><td>功能开发</td><td>待审</td><td>2026-08-27</td></tr><tr><td>#30</td><td>点名识别框收回并加快，避免又大又卡</td><td>排行榜 / OCR</td><td>性能优化</td><td>待审</td><td>2026-08-27</td></tr><tr><td>#31</td><td>首页更新日志挪到排行榜下面</td><td>首页 / 品牌</td><td>功能开发</td><td>待审</td><td>2026-08-27</td></tr><tr><td>#32</td><td>点名识别支持洛丶洛，去掉左右图标干扰</td><td>排行榜 / OCR</td><td>功能开发</td><td>待审</td><td>2026-08-28</td></tr><tr><td>#33</td><td>名字识别框为战力框两倍，并加强浅蓝识别</td><td>排行榜 / OCR</td><td>功能开发</td><td>待审</td><td>2026-08-28</td></tr><tr><td>#34</td><td>fix: 识别飞飞、抖音绵羊这类饱和青色角色名</td><td>排行榜 / OCR</td><td>缺陷修复</td><td>待审</td><td>2026-08-28</td></tr><tr><td>#35</td><td>feat: 后台可移除已上榜成员的错误战力记录</td><td>排行榜 / OCR</td><td>功能开发</td><td>待审</td><td>2026-08-28</td></tr><tr><td>#36</td><td>feat: 盟员点 BOSS 立刻重开倒计时，并显示上次标记的人</td><td>BOSS 计时</td><td>功能开发</td><td>草稿</td><td>2026-08-31</td></tr><tr><td>#37</td><td>feat: 后台截图识别批量调整 BOSS 计时</td><td>BOSS 计时</td><td>功能开发</td><td>草稿</td><td>2026-08-31</td></tr><tr><td>#38</td><td>feat: 粉色拍品限价竞价后匿名投票，平票掷点结算</td><td>拍卖竞价</td><td>功能开发</td><td>草稿</td><td>2026-09-01</td></tr><tr><td>#39</td><td>fix: 恢复首页更新公告，避免后续改动再冲掉</td><td>首页 / 品牌</td><td>缺陷修复</td><td>草稿</td><td>2026-09-01</td></tr><tr><td>#40</td><td>feat: 拍卖颜色拆成紫色、普通粉色、特殊粉色</td><td>拍卖竞价</td><td>功能开发</td><td>草稿</td><td>2026-09-01</td></tr><tr><td>#41</td><td>perf: speed up auction, dividends, and admin listing loads</td><td>拍卖竞价</td><td>性能优化</td><td>草稿</td><td>2026-09-02</td></tr><tr><td>#42</td><td>feat: restore admin leaderboard pass-line percent</td><td>排行榜 / OCR</td><td>功能开发</td><td>草稿</td><td>2026-09-02</td></tr><tr><td>#43</td><td>feat: restore admin removal of incorrect leaderboard records</td><td>排行榜 / OCR</td><td>功能开发</td><td>草稿</td><td>2026-09-02</td></tr><tr><td>#44</td><td>fix: restore cyan HUD name OCR for 飞飞 and 抖音绵羊</td><td>排行榜 / OCR</td><td>缺陷修复</td><td>草稿</td><td>2026-09-02</td></tr></tbody>
+    </table>
+  </main>
+</body>
+</html>
