@@ -59,6 +59,10 @@ export async function loadImageForOcr(
   });
 }
 
+function canvasCtx(canvas: HTMLCanvasElement) {
+  return canvas.getContext("2d", { willReadFrequently: true });
+}
+
 function cropAbsolute(
   img: HTMLImageElement,
   sx: number,
@@ -70,7 +74,7 @@ function cropAbsolute(
   const canvas = document.createElement("canvas");
   canvas.width = Math.max(1, Math.round(sw * scale));
   canvas.height = Math.max(1, Math.round(sh * scale));
-  const ctx = canvas.getContext("2d");
+  const ctx = canvasCtx(canvas);
   if (!ctx) throw new Error("无法创建画布");
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = "high";
@@ -104,41 +108,75 @@ function cropRatio(
 }
 
 /**
- * Score cyan / blue-white name ink.
- * Keeps pale cyan names; rejects orange +N, skin portraits, pure white UI.
+ * Score HUD name ink: saturated cyan (飞飞 / 抖音绵羊), washed light
+ * blue, and ice-blue 丶 dots. Rejects orange icons, gold level digits,
+ * and near-white combat slashes that used to pass as ice-blue.
  */
-export function blueInkScore(r: number, g: number, b: number): number {
+export function nameGlyphScore(r: number, g: number, b: number): number {
   const brightness = (r + g + b) / 3;
   const max = Math.max(r, g, b);
   const min = Math.min(r, g, b);
   const sat = max - min;
+  const blueLead = b - r;
 
-  // Reject warm UI (+4 orange / gold)
-  if (r > b + 25 && r >= g) return 0;
-  // Reject near-gray / pure white plates
-  if (sat < 10 && brightness > 200) return 0;
+  // Orange phoenix / gold +N
+  if (r > b + 16 && r >= g) return 0;
+  // Yellow-white level digits like「2」/「5」
+  if (brightness > 175 && r >= b + 12 && g >= b) return 0;
+  // Near-white combat slashes / sparks (not name ink)
+  if (brightness >= 198 && sat <= 30) return 0;
+  if (brightness >= 186 && sat <= 16 && blueLead < 14) return 0;
+  if (brightness < 88) return 0;
 
-  // Pale cyan / blue-white glyph fill (common for character names)
-  const paleCyan =
-    brightness >= 150 &&
-    brightness <= 245 &&
-    b >= r + 6 &&
-    b >= g - 8 &&
-    sat >= 10 &&
-    sat <= 140;
-
-  // Stronger saturated cyan outline / fill
+  // Saturated cyan HUD fill. sat is often 180–250 — the old ≤130 cap
+  // dropped the actual glyphs and only kept pale edges.
   const strongCyan =
-    b >= 120 &&
-    b > r + 20 &&
-    b >= g - 12 &&
-    sat >= 28 &&
-    brightness >= 90 &&
-    brightness <= 230;
+    brightness >= 92 &&
+    brightness <= 210 &&
+    blueLead >= 36 &&
+    b >= 130 &&
+    sat >= 60 &&
+    g <= b + 10 &&
+    r <= b - 18;
 
-  if (paleCyan) return 50 + (b - r);
-  if (strongCyan) return 35 + (b - Math.max(r, g * 0.9));
-  return 0;
+  const midBlue =
+    brightness >= 108 &&
+    brightness <= 235 &&
+    blueLead >= 16 &&
+    b >= 105 &&
+    sat >= 18 &&
+    g <= b + 12;
+
+  const lightBlue =
+    brightness >= 118 &&
+    brightness <= 245 &&
+    blueLead >= 8 &&
+    b >= g - 8 &&
+    sat >= 12 &&
+    sat <= 140 &&
+    !(brightness > 210 && sat < 30);
+
+  const iceBlue =
+    brightness >= 155 &&
+    brightness <= 228 &&
+    b >= r + 6 &&
+    blueLead >= 8 &&
+    sat >= 10 &&
+    sat <= 70;
+
+  let score = 0;
+  if (strongCyan) score = Math.max(score, 80 + Math.min(blueLead, 180) * 0.4);
+  if (midBlue) score = Math.max(score, 52 + Math.min(blueLead, 120) * 0.35);
+  if (lightBlue) score = Math.max(score, 48 + blueLead * 1.1);
+  if (iceBlue) score = Math.max(score, 36 + blueLead);
+  return score;
+}
+
+/**
+ * Score cyan / blue-white name ink (legacy helper used by tests / power path).
+ */
+export function blueInkScore(r: number, g: number, b: number): number {
+  return nameGlyphScore(r, g, b);
 }
 
 function dilateMask(mask: Uint8Array, width: number, height: number, radius = 1) {
@@ -163,39 +201,20 @@ function dilateMask(mask: Uint8Array, width: number, height: number, radius = 1)
   return out;
 }
 
-function erodeMask(mask: Uint8Array, width: number, height: number) {
-  const out = new Uint8Array(mask.length);
-  for (let y = 1; y < height - 1; y += 1) {
-    for (let x = 1; x < width - 1; x += 1) {
-      let all = 1;
-      for (let dy = -1; dy <= 1 && all; dy += 1) {
-        for (let dx = -1; dx <= 1; dx += 1) {
-          if (!mask[(y + dy) * width + (x + dx)]) {
-            all = 0;
-            break;
-          }
-        }
-      }
-      out[y * width + x] = all;
-    }
-  }
-  return out;
-}
-
 /** Black ink on white — Tesseract-friendly. */
 export function enhanceNameBlue(canvas: HTMLCanvasElement): HTMLCanvasElement {
-  const ctx = canvas.getContext("2d");
+  const ctx = canvasCtx(canvas);
   if (!ctx) return canvas;
   const { width, height } = canvas;
   const imageData = ctx.getImageData(0, 0, width, height);
   const d = imageData.data;
   const mask = new Uint8Array(width * height);
   for (let p = 0, i = 0; p < mask.length; p += 1, i += 4) {
-    mask[p] = blueInkScore(d[i], d[i + 1], d[i + 2]) >= 16 ? 1 : 0;
+    mask[p] = nameGlyphScore(d[i], d[i + 1], d[i + 2]) >= 16 ? 1 : 0;
   }
-  // Open then dilate: drop speckles, keep glyph strokes connected
-  const opened = dilateMask(erodeMask(mask, width, height), width, height, 1);
-  const fat = dilateMask(opened, width, height, 1);
+  // Dilate only: erode wipes thin 飞 strokes. Speckles are mostly gone
+  // after bar-trimmed cyan scoring.
+  const fat = dilateMask(mask, width, height, 1);
   for (let p = 0, i = 0; p < fat.length; p += 1, i += 4) {
     const v = fat[p] ? 0 : 255;
     d[i] = v;
@@ -207,18 +226,39 @@ export function enhanceNameBlue(canvas: HTMLCanvasElement): HTMLCanvasElement {
   return canvas;
 }
 
-/** Soft blue-emphasis grayscale (keeps anti-aliased strokes). */
-export function enhanceNameSoft(canvas: HTMLCanvasElement): HTMLCanvasElement {
-  const ctx = canvas.getContext("2d");
+/**
+ * Hard cyan mask, no morphology. Keeps stylized HUD stroke gaps so
+ * Tesseract sees two similar glyphs (飞飞 → 习习) instead of a blob.
+ */
+export function enhanceNameCyanHard(canvas: HTMLCanvasElement): HTMLCanvasElement {
+  const ctx = canvasCtx(canvas);
   if (!ctx) return canvas;
   const { width, height } = canvas;
   const imageData = ctx.getImageData(0, 0, width, height);
   const d = imageData.data;
   for (let i = 0; i < d.length; i += 4) {
-    const score = blueInkScore(d[i], d[i + 1], d[i + 2]);
+    const v = nameGlyphScore(d[i], d[i + 1], d[i + 2]) >= 16 ? 0 : 255;
+    d[i] = v;
+    d[i + 1] = v;
+    d[i + 2] = v;
+    d[i + 3] = 255;
+  }
+  ctx.putImageData(imageData, 0, 0);
+  return canvas;
+}
+
+/** Soft blue-emphasis grayscale (keeps anti-aliased strokes). */
+export function enhanceNameSoft(canvas: HTMLCanvasElement): HTMLCanvasElement {
+  const ctx = canvasCtx(canvas);
+  if (!ctx) return canvas;
+  const { width, height } = canvas;
+  const imageData = ctx.getImageData(0, 0, width, height);
+  const d = imageData.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const score = nameGlyphScore(d[i], d[i + 1], d[i + 2]);
     let v: number;
     if (score >= 16) {
-      v = Math.max(0, 255 - Math.min(255, Math.floor(score * 2.2 + 60)));
+      v = Math.max(0, 255 - Math.min(255, Math.floor(score * 2.6 + 70)));
     } else {
       v = 255;
     }
@@ -231,8 +271,40 @@ export function enhanceNameSoft(canvas: HTMLCanvasElement): HTMLCanvasElement {
   return canvas;
 }
 
+/**
+ * Mild grayscale: keep stroke anti-aliasing instead of hard binary.
+ * Better for stylized CJK HUD fonts that fall apart when thresholded.
+ */
+export function enhanceNameGray(canvas: HTMLCanvasElement): HTMLCanvasElement {
+  const ctx = canvasCtx(canvas);
+  if (!ctx) return canvas;
+  const { width, height } = canvas;
+  const imageData = ctx.getImageData(0, 0, width, height);
+  const d = imageData.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const r = d[i];
+    const g = d[i + 1];
+    const b = d[i + 2];
+    const score = nameGlyphScore(r, g, b);
+    const brightness = (r + g + b) / 3;
+    const v =
+      score >= 10
+        ? Math.max(
+            0,
+            Math.min(200, Math.round(255 - brightness * 0.9 - score * 1.35)),
+          )
+        : Math.min(255, Math.round(220 + brightness * 0.14));
+    d[i] = v;
+    d[i + 1] = v;
+    d[i + 2] = v;
+    d[i + 3] = 255;
+  }
+  ctx.putImageData(imageData, 0, 0);
+  return canvas;
+}
+
 export function enhanceLightText(canvas: HTMLCanvasElement): HTMLCanvasElement {
-  const ctx = canvas.getContext("2d");
+  const ctx = canvasCtx(canvas);
   if (!ctx) return canvas;
   const { width, height } = canvas;
   const imageData = ctx.getImageData(0, 0, width, height);
@@ -274,108 +346,282 @@ export function nameRectAroundClick(
   yRatio: number,
   size: { w: number; h: number } = NAME_CLICK_CROP,
 ): RatioRect {
+  const x = clamp01(xRatio - size.w / 2);
+  const y = clamp01(yRatio - size.h / 2);
   return {
-    x: clamp01(xRatio - size.w / 2),
-    y: clamp01(yRatio - size.h / 2),
-    w: size.w,
-    h: size.h,
+    x,
+    y,
+    w: Math.min(size.w, 1 - x),
+    h: Math.min(size.h, 1 - y),
   };
 }
 
 /**
- * Inside a probe crop, locate the densest horizontal cyan text band and
- * return absolute pixel bounds on the full image.
+ * Local-bright glyphs → black on white. Keeps tiny 丶 dots that erode would wipe.
+ */
+export function enhanceNameLocalBright(
+  canvas: HTMLCanvasElement,
+): HTMLCanvasElement {
+  const ctx = canvasCtx(canvas);
+  if (!ctx) return canvas;
+  const { width, height } = canvas;
+  const imageData = ctx.getImageData(0, 0, width, height);
+  const d = imageData.data;
+  let sum = 0;
+  const n = width * height;
+  for (let i = 0; i < d.length; i += 4) {
+    sum += (d[i] + d[i + 1] + d[i + 2]) / 3;
+  }
+  const mean = sum / Math.max(1, n);
+  const floor = Math.max(100, mean + 8);
+  for (let i = 0; i < d.length; i += 4) {
+    const r = d[i];
+    const g = d[i + 1];
+    const b = d[i + 2];
+    const brightness = (r + g + b) / 3;
+    const orange = r > b + 16 && r >= g;
+    const score = nameGlyphScore(r, g, b);
+    const on =
+      !orange &&
+      score >= 12 &&
+      (score >= 70 || brightness >= floor - 16);
+    const v = on ? 0 : 255;
+    d[i] = v;
+    d[i + 1] = v;
+    d[i + 2] = v;
+    d[i + 3] = 255;
+  }
+  ctx.putImageData(imageData, 0, 0);
+  return canvas;
+}
+
+/**
+ * Inside a probe crop, locate the name glyph cluster around the click
+ * (skip full-width MP bars and leftover icons).
  */
 export function findBlueNameBoundsInProbe(
   img: HTMLImageElement,
   probe: RatioRect,
+  clickXRatio?: number,
+  clickYRatio?: number,
 ): { x: number; y: number; w: number; h: number } | null {
   const sx = Math.floor(img.width * probe.x);
   const sy = Math.floor(img.height * probe.y);
   const sw = Math.max(1, Math.floor(img.width * probe.w));
   const sh = Math.max(1, Math.floor(img.height * probe.h));
 
+  const maxScanW = 320;
+  const scanScale = sw > maxScanW ? maxScanW / sw : 1;
+  const cw = Math.max(1, Math.round(sw * scanScale));
+  const ch = Math.max(1, Math.round(sh * scanScale));
+
   const canvas = document.createElement("canvas");
-  canvas.width = sw;
-  canvas.height = sh;
-  const ctx = canvas.getContext("2d");
+  canvas.width = cw;
+  canvas.height = ch;
+  const ctx = canvasCtx(canvas);
   if (!ctx) return null;
-  ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
-  const { data } = ctx.getImageData(0, 0, sw, sh);
+  ctx.drawImage(img, sx, sy, sw, sh, 0, 0, cw, ch);
+  const { data } = ctx.getImageData(0, 0, cw, ch);
 
-  const rowCounts = new Array<number>(sh).fill(0);
-  const rowMinX = new Array<number>(sh).fill(sw);
-  const rowMaxX = new Array<number>(sh).fill(0);
+  const mask = new Uint8Array(cw * ch);
+  const rowCounts = new Array<number>(ch).fill(0);
+  const rowRun = new Array<number>(ch).fill(0);
   let total = 0;
-
-  for (let y = 0; y < sh; y += 1) {
-    for (let x = 0; x < sw; x += 1) {
-      const i = (y * sw + x) * 4;
-      if (blueInkScore(data[i], data[i + 1], data[i + 2]) < 16) continue;
+  for (let y = 0; y < ch; y += 1) {
+    let run = 0;
+    let best = 0;
+    for (let x = 0; x < cw; x += 1) {
+      const i = (y * cw + x) * 4;
+      if (nameGlyphScore(data[i], data[i + 1], data[i + 2]) < 16) {
+        run = 0;
+        continue;
+      }
+      mask[y * cw + x] = 1;
       total += 1;
       rowCounts[y] += 1;
-      if (x < rowMinX[y]) rowMinX[y] = x;
-      if (x > rowMaxX[y]) rowMaxX[y] = x;
+      run += 1;
+      if (run > best) best = run;
+    }
+    rowRun[y] = best;
+  }
+  if (total < 12) return null;
+
+  // Full-probe bars (rare). Name-width MP bars are handled after the x-run.
+  const rowOk = rowCounts.map((c, y) => {
+    const fill = c / cw;
+    const bar = rowRun[y] / cw >= 0.42 && fill >= 0.32;
+    return !bar && c >= 2;
+  });
+  const col = new Array<number>(cw).fill(0);
+  for (let y = 0; y < ch; y += 1) {
+    if (!rowOk[y]) continue;
+    for (let x = 0; x < cw; x += 1) {
+      if (mask[y * cw + x]) col[x] += 1;
     }
   }
+  const peak = Math.max(...col, 0);
+  if (peak < 2) return null;
+  const thr = Math.max(2, peak * 0.2);
+  const on = col.map((v) => v >= thr);
 
-  if (total < 25) return null;
-
-  // Prefer a short horizontal band (name line), not a tall icon blob
-  const win = Math.max(4, Math.floor(sh * 0.35));
-  let bestSum = 0;
-  let bestY = 0;
-  for (let y = 0; y + win <= sh; y += 1) {
-    let sum = 0;
-    for (let k = 0; k < win; k += 1) sum += rowCounts[y + k];
-    if (sum > bestSum) {
-      bestSum = sum;
-      bestY = y;
+  const gap = Math.max(3, Math.round(ch * 0.12));
+  const runs: Array<[number, number]> = [];
+  let i = 0;
+  while (i < cw) {
+    while (i < cw && !on[i]) i += 1;
+    if (i >= cw) break;
+    let j = i;
+    while (j < cw) {
+      if (on[j]) {
+        j += 1;
+        continue;
+      }
+      let k = j;
+      while (k < cw && !on[k] && k - j <= gap) k += 1;
+      if (k < cw && on[k] && k - j <= gap) {
+        j = k;
+        continue;
+      }
+      break;
     }
+    runs.push([i, j - 1]);
+    i = j;
   }
-  if (bestSum < 18) return null;
+  if (!runs.length) return null;
 
-  let minX = sw;
-  let maxX = 0;
-  let minY = sh;
+  const clickX =
+    clickXRatio != null
+      ? ((clickXRatio - probe.x) / Math.max(probe.w, 1e-6)) * cw
+      : cw / 2;
+  const clickY =
+    clickYRatio != null
+      ? ((clickYRatio - probe.y) / Math.max(probe.h, 1e-6)) * ch
+      : ch / 2;
+  let pick = runs.find(([a, b]) => clickX >= a - 2 && clickX <= b + 2);
+  if (!pick) {
+    pick = runs.slice().sort((A, B) => {
+      const da = Math.abs((A[0] + A[1]) / 2 - clickX);
+      const db = Math.abs((B[0] + B[1]) / 2 - clickX);
+      return da - db;
+    })[0];
+  }
+  const minX = pick[0];
+  const maxX = pick[1];
+  const runW = Math.max(1, maxX - minX + 1);
+
+  const localFill = new Array<number>(ch).fill(0);
+  const localRun = new Array<number>(ch).fill(0);
+  for (let y = 0; y < ch; y += 1) {
+    let run = 0;
+    let best = 0;
+    let count = 0;
+    for (let x = minX; x <= maxX; x += 1) {
+      if (mask[y * cw + x]) {
+        count += 1;
+        run += 1;
+        if (run > best) best = run;
+      } else {
+        run = 0;
+      }
+    }
+    localFill[y] = count;
+    localRun[y] = best;
+  }
+
+  const isBarRow = (y: number) =>
+    localRun[y] >= runW * 0.5 && localFill[y] >= runW * 0.36;
+
+  // Row clusters: name glyphs vs the cyan MP bar sitting under them.
+  const clusters: Array<[number, number]> = [];
+  let y = 0;
+  while (y < ch) {
+    while (y < ch && (localFill[y] < 2 || isBarRow(y))) y += 1;
+    if (y >= ch) break;
+    let y2 = y;
+    while (y2 + 1 < ch) {
+      const nxt = y2 + 1;
+      if (isBarRow(nxt)) break;
+      if (localFill[nxt] >= 2) {
+        y2 = nxt;
+        continue;
+      }
+      if (nxt + 1 < ch && localFill[nxt + 1] >= 2 && !isBarRow(nxt + 1)) {
+        y2 = nxt + 1;
+        continue;
+      }
+      break;
+    }
+    clusters.push([y, y2]);
+    y = y2 + 1;
+  }
+
+  let band: [number, number] | null = null;
+  if (clusters.length) {
+    band = clusters.slice().sort((A, B) => {
+      const ha = A[1] - A[0] + 1;
+      const hb = B[1] - B[0] + 1;
+      const ca = (A[0] + A[1]) / 2;
+      const cb = (B[0] + B[1]) / 2;
+      const inA = clickY >= A[0] - 2 && clickY <= A[1] + 2 ? 0 : 1;
+      const inB = clickY >= B[0] - 2 && clickY <= B[1] + 2 ? 0 : 1;
+      if (inA !== inB) return inA - inB;
+      const da = Math.abs(ca - clickY);
+      const db = Math.abs(cb - clickY);
+      if (Math.abs(da - db) > 3) return da - db;
+      return hb - ha;
+    })[0];
+  }
+
+  let minY = ch;
   let maxY = 0;
-  for (let y = bestY; y < bestY + win; y += 1) {
-    if (rowCounts[y] < 2) continue;
-    if (rowMinX[y] < minX) minX = rowMinX[y];
-    if (rowMaxX[y] > maxX) maxX = rowMaxX[y];
-    if (y < minY) minY = y;
-    if (y > maxY) maxY = y;
+  if (band) {
+    minY = band[0];
+    maxY = band[1];
+    let peakFill = 0;
+    for (let yy = minY; yy <= maxY; yy += 1) {
+      if (localFill[yy] > peakFill) peakFill = localFill[yy];
+    }
+    const fillThr = Math.max(3, peakFill * 0.28);
+    let g0 = minY;
+    while (g0 <= maxY && localFill[g0] < fillThr) g0 += 1;
+    let g1 = maxY;
+    while (g1 >= g0 && localFill[g1] < fillThr) g1 -= 1;
+    if (g1 > g0) {
+      minY = g0;
+      maxY = g1;
+    }
+  } else {
+    for (let yy = 0; yy < ch; yy += 1) {
+      if (isBarRow(yy) || localFill[yy] < 2) continue;
+      if (yy < minY) minY = yy;
+      if (yy > maxY) maxY = yy;
+    }
   }
   if (maxX <= minX || maxY <= minY) return null;
 
-  // Drop extreme left/right outliers that are likely icon glow (optional trim
-  // by requiring the band to be wider than tall — character names are).
-  const bw = maxX - minX + 1;
-  const bh = maxY - minY + 1;
-  if (bw < bh * 1.2 && bw < sw * 0.35) {
-    // Probably an icon blob near the click; try full probe blue extent
-    minX = sw;
-    maxX = 0;
-    minY = sh;
-    maxY = 0;
-    for (let y = 0; y < sh; y += 1) {
-      if (rowCounts[y] < 3) continue;
-      if (rowMinX[y] < minX) minX = rowMinX[y];
-      if (rowMaxX[y] > maxX) maxX = rowMaxX[y];
-      if (y < minY) minY = y;
-      if (y > maxY) maxY = y;
-    }
-    if (maxX <= minX || maxY <= minY) return null;
+  // Keep the band short — HUD names are a single line, not HP/MP.
+  const maxBand = Math.max(12, Math.round(ch * 0.32));
+  if (maxY - minY + 1 > maxBand) {
+    const half = Math.floor(maxBand / 2);
+    minY = Math.max(minY, Math.round(clickY) - half);
+    maxY = Math.min(maxY, minY + maxBand - 1);
   }
 
-  const padX = Math.max(4, Math.floor((maxX - minX) * 0.12));
-  const padY = Math.max(3, Math.floor((maxY - minY) * 0.45));
+  const inv = 1 / scanScale;
+  const absMinX = minX * inv;
+  const absMaxX = maxX * inv;
+  const absMinY = minY * inv;
+  const absMaxY = maxY * inv;
+  const padX = Math.max(4, Math.floor((absMaxX - absMinX) * 0.1));
+  const padY = Math.max(3, Math.floor((absMaxY - absMinY) * 0.22));
+  const localX = Math.max(0, absMinX - padX);
+  const localY = Math.max(0, absMinY - padY);
 
   return {
-    x: sx + Math.max(0, minX - padX),
-    y: sy + Math.max(0, minY - padY),
-    w: Math.min(sw - Math.max(0, minX - padX), maxX - minX + padX * 2),
-    h: Math.min(sh - Math.max(0, minY - padY), maxY - minY + padY * 2),
+    x: sx + localX,
+    y: sy + localY,
+    w: Math.min(sw - localX, absMaxX - absMinX + padX * 2),
+    h: Math.min(sh - localY, absMaxY - absMinY + padY * 2),
   };
 }
 
@@ -384,27 +630,19 @@ function variantsFromBounds(
   bounds: { x: number; y: number; w: number; h: number },
 ): string[] {
   const urls: string[] = [];
-  const scale = bounds.w < 120 ? 5 : 4;
-
-  const soft = cropAbsolute(img, bounds.x, bounds.y, bounds.w, bounds.h, scale);
-  enhanceNameSoft(soft);
-  urls.push(toDataUrl(padCanvas(soft, 12)));
+  const scale = bounds.w < 90 ? 7.2 : bounds.w < 140 ? 5.2 : 3.8;
 
   const hard = cropAbsolute(img, bounds.x, bounds.y, bounds.w, bounds.h, scale);
-  enhanceNameBlue(hard);
-  urls.push(toDataUrl(padCanvas(hard, 12)));
+  enhanceNameCyanHard(hard);
+  urls.push(toDataUrl(padCanvas(hard, 18)));
 
-  // Extra upscale of hard mask for small CJK
-  const hard2 = cropAbsolute(
-    img,
-    bounds.x,
-    bounds.y,
-    bounds.w,
-    bounds.h,
-    scale + 1.2,
-  );
-  enhanceNameBlue(hard2);
-  urls.push(toDataUrl(padCanvas(hard2, 16)));
+  const local = cropAbsolute(img, bounds.x, bounds.y, bounds.w, bounds.h, scale);
+  enhanceNameLocalBright(local);
+  urls.push(toDataUrl(padCanvas(local, 18)));
+
+  const gray = cropAbsolute(img, bounds.x, bounds.y, bounds.w, bounds.h, scale);
+  enhanceNameGray(gray);
+  urls.push(toDataUrl(padCanvas(gray, 18)));
 
   return urls;
 }
@@ -457,57 +695,57 @@ export async function buildPowerClickPreview(
 
 /**
  * Tight cyan-name crops around a click (auto-trimmed to glyph band).
+ * Returns OCR variants plus a preview so the image is only scanned once.
  */
 export async function buildNameClickCrops(
   source: File | Blob | string,
   xRatio: number,
   yRatio: number,
-): Promise<string[]> {
+): Promise<{ crops: string[]; previewDataUrl: string; colorDataUrl: string }> {
   const img = await loadImageForOcr(source);
   const probes = [
     nameRectAroundClick(xRatio, yRatio, NAME_CLICK_CROP),
     nameRectAroundClick(xRatio, yRatio, NAME_CLICK_CROP_WIDE),
   ];
 
-  const urls: string[] = [];
+  const crops: string[] = [];
+  let colorDataUrl = "";
   let bestBounds: { x: number; y: number; w: number; h: number } | null = null;
-
   for (const probe of probes) {
-    const bounds = findBlueNameBoundsInProbe(img, probe);
+    const bounds = findBlueNameBoundsInProbe(img, probe, xRatio, yRatio);
     if (!bounds) continue;
-    if (
-      !bestBounds ||
-      bounds.w * bounds.h < bestBounds.w * bestBounds.h * 0.9 ||
-      (bounds.w / Math.max(1, bounds.h) >
-        bestBounds.w / Math.max(1, bestBounds.h) &&
-        bounds.w > bestBounds.w * 0.7)
-    ) {
-      // Prefer wider-than-tall (text) and reasonably compact
-      const score =
-        (bounds.w / Math.max(1, bounds.h)) * 10 +
-        Math.min(bounds.w, img.width * 0.2);
-      const bestScore = bestBounds
-        ? (bestBounds.w / Math.max(1, bestBounds.h)) * 10 +
-          Math.min(bestBounds.w, img.width * 0.2)
-        : -1;
-      if (score >= bestScore) bestBounds = bounds;
-    }
+    bestBounds = bounds;
+    break;
   }
 
   if (bestBounds) {
-    urls.push(...variantsFromBounds(img, bestBounds));
+    crops.push(...variantsFromBounds(img, bestBounds));
+    const colorScale = bestBounds.w < 90 ? 5.5 : 4.5;
+    const color = cropAbsolute(
+      img,
+      bestBounds.x,
+      bestBounds.y,
+      bestBounds.w,
+      bestBounds.h,
+      colorScale,
+    );
+    colorDataUrl = toDataUrl(padCanvas(color, 18));
   } else {
-    // Fallback: small probe with blue enhance only
     const rect = probes[0];
-    const blue = cropRatio(img, rect, 4.5);
-    enhanceNameBlue(blue);
-    urls.push(toDataUrl(padCanvas(blue, 14)));
-    const soft = cropRatio(img, rect, 4.5);
-    enhanceNameSoft(soft);
-    urls.push(toDataUrl(padCanvas(soft, 14)));
+    const gray = cropRatio(img, rect, 4);
+    enhanceNameGray(gray);
+    crops.push(toDataUrl(padCanvas(gray, 14)));
+    const local = cropRatio(img, rect, 4);
+    enhanceNameLocalBright(local);
+    crops.push(toDataUrl(padCanvas(local, 14)));
+    colorDataUrl = toDataUrl(padCanvas(cropRatio(img, rect, 4), 14));
   }
 
-  return urls;
+  return {
+    crops,
+    colorDataUrl,
+    previewDataUrl: crops[0] ?? "",
+  };
 }
 
 /** Preview shows the trimmed blue-name crop (what OCR actually sees). */
@@ -516,28 +754,6 @@ export async function buildNameClickPreview(
   xRatio: number,
   yRatio: number,
 ): Promise<string> {
-  const img = await loadImageForOcr(source);
-  const probes = [
-    nameRectAroundClick(xRatio, yRatio, NAME_CLICK_CROP),
-    nameRectAroundClick(xRatio, yRatio, NAME_CLICK_CROP_WIDE),
-  ];
-
-  for (const probe of probes) {
-    const bounds = findBlueNameBoundsInProbe(img, probe);
-    if (!bounds) continue;
-    const canvas = cropAbsolute(
-      img,
-      bounds.x,
-      bounds.y,
-      bounds.w,
-      bounds.h,
-      3,
-    );
-    enhanceNameSoft(canvas);
-    return toDataUrl(padCanvas(canvas, 8));
-  }
-
-  const fallback = cropRatio(img, probes[0], 2.5);
-  enhanceNameSoft(fallback);
-  return toDataUrl(padCanvas(fallback, 8));
+  const { previewDataUrl } = await buildNameClickCrops(source, xRatio, yRatio);
+  return previewDataUrl;
 }

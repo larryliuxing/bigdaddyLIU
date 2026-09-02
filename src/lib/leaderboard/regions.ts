@@ -22,17 +22,16 @@ export const POWER_CLICK_CROP_WIDE = {
 } as const;
 
 /**
- * Initial probe around name click — intentionally modest so we don't pull in
- * nearby +N badges / portraits / skill icons. Auto-trim expands/shrinks
- * to the blue name glyphs afterward.
+ * Name probe is 2× the combat-power crop so 2–4 CJK glyphs and a middle
+ * 「丶」fit. Auto-trim still tightens to the blue glyph cluster before OCR.
  */
 export const NAME_CLICK_CROP = {
-  w: 0.16,
-  h: 0.055,
+  w: POWER_CLICK_CROP.w * 2,
+  h: POWER_CLICK_CROP.h * 2,
 } as const;
 
 /** Wider probe if the first trim finds too little blue ink. */
 export const NAME_CLICK_CROP_WIDE = {
-  w: 0.22,
-  h: 0.07,
+  w: POWER_CLICK_CROP_WIDE.w * 2,
+  h: POWER_CLICK_CROP_WIDE.h * 2,
 } as const;
