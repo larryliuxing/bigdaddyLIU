@@ -128,7 +128,7 @@ export function AdminPanel({
             <p className="text-sm text-[var(--text-muted)]">后台管理</p>
             <h1 className="mt-1 text-2xl font-bold">成员账户</h1>
             <p className="mt-1 text-sm text-[var(--text-muted)]">
-              管理员：{adminName} · 成员账户、拍卖物品、BOSS
+              管理员：{adminName} · 成员账户、拍卖物品、BOSS、排行榜
               均仅可在此后台管理
             </p>
           </div>
@@ -146,6 +146,13 @@ export function AdminPanel({
               onClick={() => router.push("/admin/boss")}
             >
               BOSS 设置
+            </button>
+            <button
+              type="button"
+              className="btn-ghost text-sm"
+              onClick={() => router.push("/admin/leaderboard")}
+            >
+              排行榜设置
             </button>
             <button
               type="button"

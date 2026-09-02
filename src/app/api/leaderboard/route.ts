@@ -10,7 +10,7 @@ import { parseCombatPowerScreenshot } from "@/lib/leaderboard/parse";
 export const runtime = "nodejs";
 
 export async function GET() {
-  return NextResponse.json(getLeaderboardBoard(0.85));
+  return NextResponse.json(getLeaderboardBoard());
 }
 
 export async function POST(request: Request) {
@@ -67,7 +67,7 @@ export async function POST(request: Request) {
     ok: true,
     combatPower: parsed.combatPower,
     detectedName: parsed.detectedName,
-    board: getLeaderboardBoard(0.85),
+    board: getLeaderboardBoard(),
   });
 }
 
@@ -84,12 +84,12 @@ export async function DELETE(request: Request) {
 
   if (admin && Number.isFinite(memberId) && memberId > 0) {
     deleteLeaderboardEntry(memberId);
-    return NextResponse.json({ ok: true, board: getLeaderboardBoard(0.85) });
+    return NextResponse.json({ ok: true, board: getLeaderboardBoard() });
   }
 
   if (member) {
     deleteLeaderboardEntry(member.id);
-    return NextResponse.json({ ok: true, board: getLeaderboardBoard(0.85) });
+    return NextResponse.json({ ok: true, board: getLeaderboardBoard() });
   }
 
   return NextResponse.json({ error: "缺少成员 ID" }, { status: 400 });

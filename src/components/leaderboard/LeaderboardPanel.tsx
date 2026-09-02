@@ -9,6 +9,10 @@ import type {
 } from "@/lib/types";
 import { extractDetectedName } from "@/lib/leaderboard/parse";
 import {
+  formatThresholdPercentLabel,
+  ratioToPercent,
+} from "@/lib/leaderboard/threshold";
+import {
   prewarmLeaderboardOcr,
   recognizeNameAtClick,
   recognizePowerAtClick,
@@ -686,7 +690,7 @@ export function LeaderboardPanel({
                 {stats.threshold ? formatPower(stats.threshold) : "-"}
               </span>
               {" "}
-              (平均的 85%)
+              (平均的 {formatThresholdPercentLabel(ratioToPercent(stats.thresholdRatio))}%)
             </p>
           </div>
 

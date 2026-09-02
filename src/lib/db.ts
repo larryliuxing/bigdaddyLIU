@@ -37,6 +37,12 @@ import {
   pickUnusedRoll,
   resolvePinkContest,
 } from "./auction/pink";
+import {
+  DEFAULT_LEADERBOARD_THRESHOLD_PERCENT,
+  normalizeLeaderboardThresholdPercent,
+  percentToRatio,
+  ratioToPercent,
+} from "./leaderboard/threshold";
 
 const dataDir = path.join(process.cwd(), "data");
 const dbPath = path.join(dataDir, "guild.db");
@@ -2450,7 +2456,7 @@ export function maybeAutoProgress(sessionId: number): AuctionSession | null {
   return getSessionById(sessionId);
 }
 
-export function getBelowThresholdMemberIds(thresholdRatio = 0.85): number[] {
+export function getBelowThresholdMemberIds(thresholdRatio?: number): number[] {
   const board = getLeaderboardBoard(thresholdRatio);
   return board.entries.filter((e) => e.belowThreshold).map((e) => e.memberId);
 }
@@ -2664,6 +2670,7 @@ export function getDividendReport(sessionId: number): DividendReport {
     totals,
     summary,
     belowThresholdMemberIds,
+    thresholdPercent: getLeaderboardThresholdPercent(),
   };
 }
 
@@ -3037,7 +3044,35 @@ export function deleteLeaderboardEntry(memberId: number): boolean {
   return result.changes > 0;
 }
 
-export function getLeaderboardBoard(thresholdRatio = 0.85) {
+const LEADERBOARD_THRESHOLD_PERCENT_KEY = "leaderboard_threshold_percent";
+
+export function getLeaderboardThresholdPercent(): number {
+  const row = ensureDb()
+    .prepare(`SELECT value FROM app_meta WHERE key = ?`)
+    .get(LEADERBOARD_THRESHOLD_PERCENT_KEY) as { value: string } | undefined;
+  if (!row) return DEFAULT_LEADERBOARD_THRESHOLD_PERCENT;
+  return normalizeLeaderboardThresholdPercent(Number(row.value));
+}
+
+export function getLeaderboardThresholdRatio(): number {
+  return percentToRatio(getLeaderboardThresholdPercent());
+}
+
+export function setLeaderboardThresholdPercent(percent: number): number {
+  const value = normalizeLeaderboardThresholdPercent(percent);
+  ensureDb()
+    .prepare(
+      `INSERT INTO app_meta (key, value) VALUES (?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+    )
+    .run(LEADERBOARD_THRESHOLD_PERCENT_KEY, String(value));
+  return value;
+}
+
+export function getLeaderboardBoard(thresholdRatio?: number) {
+  const ratio = Number.isFinite(thresholdRatio)
+    ? percentToRatio(ratioToPercent(Number(thresholdRatio)))
+    : getLeaderboardThresholdRatio();
   const rows = ensureDb()
     .prepare(
       `SELECT le.id, le.member_id, le.member_name, le.combat_power, le.ocr_name,
@@ -3063,7 +3098,7 @@ export function getLeaderboardBoard(thresholdRatio = 0.85) {
     count === 0
       ? 0
       : rows.reduce((sum, row) => sum + row.combat_power, 0) / count;
-  const threshold = average * thresholdRatio;
+  const threshold = average * ratio;
 
   const entries = rows.map((row, index) => ({
     id: row.id,
@@ -3084,7 +3119,7 @@ export function getLeaderboardBoard(thresholdRatio = 0.85) {
       count,
       average: Math.round(average * 10) / 10,
       threshold: Math.round(threshold * 10) / 10,
-      thresholdRatio,
+      thresholdRatio: ratio,
     },
   };
 }
