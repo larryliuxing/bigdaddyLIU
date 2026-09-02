@@ -3,7 +3,6 @@
 import { createWorker, PSM, type Worker } from "tesseract.js";
 import {
   buildNameClickCrops,
-  buildNameClickPreview,
   buildPowerClickCrops,
   buildPowerClickPreview,
 } from "./preprocess";
@@ -69,34 +68,18 @@ async function recognizeDigits(worker: Worker, dataUrl: string) {
   return chunks;
 }
 
-async function recognizeNameCrop(
+async function recognizeNameOnce(
   worker: Worker,
   dataUrl: string,
-  expectedName?: string,
+  psm: PSM,
 ) {
-  const chunks: string[] = [];
-  for (const psm of [PSM.SINGLE_LINE, PSM.SINGLE_WORD, PSM.RAW_LINE] as const) {
-    try {
-      await worker.setParameters({
-        tessedit_pageseg_mode: psm,
-        preserve_interword_spaces: "1",
-        tessedit_char_whitelist: "",
-      });
-      const result = await worker.recognize(dataUrl);
-      const text = (result.data.text || "").trim();
-      if (text) chunks.push(text);
-      if (
-        expectedName &&
-        chunks.length &&
-        extractDetectedName(uniqueJoinName(chunks), expectedName).matched
-      ) {
-        break;
-      }
-    } catch {
-      // next
-    }
-  }
-  return chunks;
+  await worker.setParameters({
+    tessedit_pageseg_mode: psm,
+    preserve_interword_spaces: "1",
+    tessedit_char_whitelist: "",
+  });
+  const result = await worker.recognize(dataUrl);
+  return (result.data.text || "").trim();
 }
 
 function uniqueJoin(chunks: string[]) {
@@ -117,7 +100,8 @@ function uniqueJoinName(chunks: string[]) {
       c
         .replace(/\+\d+/g, " ")
         .replace(/[0-9]+/g, " ")
-        .replace(/[^\u4e00-\u9fffA-Za-z·\s]/g, " ")
+        .replace(/[、·•．.･]/g, "丶")
+        .replace(/[^\u4e00-\u9fffA-Za-z丶\s]/g, " ")
         .replace(/\s+/g, " ")
         .trim(),
     )
@@ -130,6 +114,25 @@ function uniqueJoinName(chunks: string[]) {
   });
 
   return uniqueJoin(cleaned);
+}
+
+async function recognizeNameWithPaddle(colorDataUrl: string, maskDataUrl?: string) {
+  try {
+    const images = [colorDataUrl, maskDataUrl].filter(Boolean);
+    const res = await fetch("/api/leaderboard/ocr-name", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        image: images[0],
+        images: images.slice(1),
+      }),
+    });
+    if (!res.ok) return "";
+    const data = (await res.json()) as { text?: string };
+    return String(data?.text ?? "").trim();
+  } catch {
+    return "";
+  }
 }
 
 /**
@@ -200,25 +203,78 @@ export async function recognizeNameAtClick(
   yRatio: number,
   expectedName?: string,
 ): Promise<NameOcrResult> {
-  const [worker, crops, previewDataUrl] = await Promise.all([
+  const [worker, bundle] = await Promise.all([
     getNameWorker(),
     buildNameClickCrops(image, xRatio, yRatio),
-    buildNameClickPreview(image, xRatio, yRatio),
   ]);
+  const { crops, previewDataUrl, colorDataUrl } = bundle;
 
   const chunks: string[] = [];
-  for (const url of crops) {
-    try {
-      chunks.push(...(await recognizeNameCrop(worker, url, expectedName)));
-      if (
-        expectedName &&
-        chunks.length &&
-        extractDetectedName(uniqueJoinName(chunks), expectedName).matched
-      ) {
-        break;
+  const modes = [PSM.SINGLE_LINE, PSM.RAW_LINE] as const;
+  outer: for (const psm of modes) {
+    for (const url of crops) {
+      try {
+        const text = await recognizeNameOnce(worker, url, psm);
+        if (text) chunks.push(text);
+        if (
+          expectedName &&
+          chunks.length &&
+          extractDetectedName(uniqueJoinName(chunks), expectedName).matched
+        ) {
+          break outer;
+        }
+      } catch {
+        // continue
       }
-    } catch {
-      // continue
+    }
+  }
+
+  if (
+    expectedName &&
+    !extractDetectedName(uniqueJoinName(chunks), expectedName).matched
+  ) {
+    const extra = [PSM.SINGLE_WORD, PSM.SPARSE_TEXT] as const;
+    extraLoop: for (const psm of extra) {
+      for (const url of crops.slice(0, 2)) {
+        try {
+          const text = await recognizeNameOnce(worker, url, psm);
+          if (text) chunks.push(text);
+          if (extractDetectedName(uniqueJoinName(chunks), expectedName).matched) {
+            break extraLoop;
+          }
+        } catch {
+          // continue
+        }
+      }
+    }
+
+    const whitelist = [...expectedName]
+      .filter((ch) => /[\u4e00-\u9fff丶]/.test(ch))
+      .join("");
+    if (whitelist && crops[0]) {
+      try {
+        await worker.setParameters({
+          tessedit_pageseg_mode: PSM.SINGLE_LINE,
+          preserve_interword_spaces: "1",
+          tessedit_char_whitelist: whitelist,
+        });
+        const result = await worker.recognize(crops[0]);
+        const text = (result.data.text || "").trim();
+        if (text) chunks.push(text);
+      } catch {
+        // ignore
+      }
+    }
+
+    if (
+      !extractDetectedName(uniqueJoinName(chunks), expectedName).matched &&
+      (colorDataUrl || crops[0])
+    ) {
+      const paddleText = await recognizeNameWithPaddle(
+        colorDataUrl || crops[0],
+        crops[0],
+      );
+      if (paddleText) chunks.push(paddleText);
     }
   }
 
