@@ -29,6 +29,7 @@ import {
   unlockBidFanfare,
 } from "@/lib/auction/bidFanfare";
 import { mergeAuctionRoom } from "@/lib/auction/mergeRoom";
+import { getSoundVolume } from "@/lib/sound/volume";
 
 function HourglassIcon() {
   return (
@@ -224,7 +225,7 @@ export function AuctionRoom({
       osc.connect(gain);
       gain.connect(ctx.destination);
       osc.frequency.value = 880;
-      gain.gain.value = 0.04;
+      gain.gain.value = 0.04 * getSoundVolume();
       osc.start();
       osc.stop(ctx.currentTime + 0.08);
     } catch {

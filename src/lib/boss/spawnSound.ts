@@ -6,6 +6,8 @@
  * Also accepted: .m4a / .mp3 / .ogg / .wav with the same basename.
  */
 
+import { applySoundVolume, getSoundVolume, registerSoundElement } from "@/lib/sound/volume";
+
 const SOUND_CANDIDATES = [
   "/sounds/lai-la-lao-di.mp4",
   "/sounds/lai-la-lao-di.m4a",
@@ -53,6 +55,7 @@ async function getAudio() {
 
   sharedAudio = new Audio(resolvedSrc);
   sharedAudio.preload = "auto";
+  registerSoundElement(sharedAudio);
   return sharedAudio;
 }
 
@@ -61,12 +64,11 @@ export async function unlockBossSpawnSound() {
   const audio = await getAudio();
   if (!audio) return;
   try {
-    const prev = audio.volume;
     audio.volume = 0.01;
     await audio.play();
     audio.pause();
     audio.currentTime = 0;
-    audio.volume = prev || 1;
+    applySoundVolume(audio);
     unlocked = true;
   } catch {
     /* still locked until a real click */
@@ -75,6 +77,7 @@ export async function unlockBossSpawnSound() {
 
 export async function playLaiLaLaoDi() {
   if (typeof window === "undefined") return;
+  if (getSoundVolume() <= 0) return;
 
   try {
     if (!unlocked) await unlockBossSpawnSound();
@@ -85,7 +88,7 @@ export async function playLaiLaLaoDi() {
     }
     audio.pause();
     audio.currentTime = 0;
-    audio.volume = 1;
+    applySoundVolume(audio);
     await audio.play();
   } catch {
     speakFallback();
@@ -100,6 +103,7 @@ function speakFallback() {
     utter.lang = "zh-CN";
     utter.rate = 1.05;
     utter.pitch = 1.1;
+    utter.volume = getSoundVolume();
     window.speechSynthesis.speak(utter);
   } catch {
     /* ignore */

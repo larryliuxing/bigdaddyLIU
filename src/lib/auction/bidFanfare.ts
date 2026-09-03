@@ -11,6 +11,8 @@
  * a currently playing higher or same-tier track.
  */
 
+import { applySoundVolume, getSoundVolume, registerSoundElement } from "@/lib/sound/volume";
+
 export type BidFanfareTier = 300 | 600 | 1000;
 
 const SOURCES: Record<BidFanfareTier, string[]> = {
@@ -42,6 +44,7 @@ function getCached(tier: BidFanfareTier, src: string) {
   if (!audio) {
     audio = new Audio(src);
     audio.preload = "auto";
+    registerSoundElement(audio);
     audioCache.set(tier, audio);
     audio.addEventListener("ended", () => {
       if (playingTier === tier) playingTier = null;
@@ -92,12 +95,11 @@ export async function unlockBidFanfare() {
   try {
     const src = (await resolveSource(300)) || SOURCES[300][0];
     const audio = getCached(300, src);
-    const prev = audio.volume;
     audio.volume = 0.01;
     await audio.play();
     audio.pause();
     audio.currentTime = 0;
-    audio.volume = prev || 1;
+    applySoundVolume(audio);
     unlocked = true;
   } catch {
     /* need a real click */
@@ -127,6 +129,7 @@ export function parseFanfareKind(kind: string): BidFanfareTier | null {
  */
 export async function playBidFanfare(tier: BidFanfareTier) {
   if (typeof window === "undefined") return;
+  if (getSoundVolume() <= 0) return;
 
   // Same or lower cannot interrupt whatever is already playing
   if (playingTier != null && tier <= playingTier) {
@@ -148,7 +151,7 @@ export async function playBidFanfare(tier: BidFanfareTier) {
     const audio = getCached(tier, src);
     audio.pause();
     audio.currentTime = 0;
-    audio.volume = 1;
+    applySoundVolume(audio);
     playingTier = tier;
     await audio.play();
     if (token !== playToken) {
