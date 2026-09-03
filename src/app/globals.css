@@ -1,6 +1,7 @@
 @import "tailwindcss";
 
 :root {
+  --sound-bar-h: 44px;
   --bg-deep: #0b0d14;
   --bg-panel: #151925;
   --bg-chip: #1c2230;
@@ -55,7 +56,7 @@ select {
 }
 
 .app-shell {
-  min-height: 100dvh;
+  min-height: calc(100dvh - var(--sound-bar-h));
   width: 100%;
   display: flex;
   justify-content: center;
@@ -63,14 +64,14 @@ select {
 
 .app-frame {
   width: min(100%, 430px);
-  min-height: 100dvh;
+  min-height: calc(100dvh - var(--sound-bar-h));
   position: relative;
   padding: 28px 20px 40px;
 }
 
 .auction-frame {
   width: min(100%, 960px);
-  min-height: 100dvh;
+  min-height: calc(100dvh - var(--sound-bar-h));
   position: relative;
   padding: 24px 20px 40px;
 }
@@ -273,7 +274,7 @@ select {
 /* Leaderboard redesign */
 .lb-shell {
   width: min(100%, 480px);
-  min-height: 100dvh;
+  min-height: calc(100dvh - var(--sound-bar-h));
   position: relative;
   padding: 20px 16px 48px;
   margin: 0 auto;
@@ -764,53 +765,91 @@ select {
   white-space: nowrap;
 }
 
-/* Global volume slider: up = louder */
+/* Global volume: always-visible top bar */
+.sound-volume-bar {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: var(--sound-bar-h);
+  padding: 6px 16px;
+  background: rgba(11, 13, 20, 0.96);
+  border-bottom: 1px solid var(--border-soft);
+  backdrop-filter: blur(10px);
+}
+
+.sound-volume-mute {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: 999px;
+  background: rgba(232, 168, 74, 0.12);
+  color: var(--accent-gold);
+  cursor: pointer;
+}
+
+.sound-volume-mute:hover {
+  background: rgba(232, 168, 74, 0.22);
+}
+
+.sound-volume-label {
+  flex-shrink: 0;
+  font-size: 0.8rem;
+  font-weight: 650;
+  color: var(--text-primary);
+}
+
+.sound-volume-percent {
+  flex-shrink: 0;
+  min-width: 2.6rem;
+  text-align: right;
+  font-size: 0.8rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent-gold);
+}
+
 .sound-volume-slider {
-  appearance: slider-vertical;
-  writing-mode: vertical-lr;
-  direction: rtl;
-  width: 22px;
-  height: 112px;
+  appearance: none;
+  flex: 1;
+  width: 100%;
+  max-width: 360px;
+  height: 8px;
   margin: 0;
-  padding: 0;
-  background: transparent;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
   cursor: pointer;
   accent-color: var(--accent-gold);
 }
 
-.sound-volume-slider::-webkit-slider-runnable-track {
-  width: 6px;
-  border-radius: 999px;
-  background: linear-gradient(
-    to top,
-    rgba(232, 168, 74, 0.25),
-    rgba(232, 168, 74, 0.85)
-  );
-}
-
 .sound-volume-slider::-webkit-slider-thumb {
   appearance: none;
-  width: 16px;
-  height: 16px;
-  margin-left: -5px;
+  width: 18px;
+  height: 18px;
   border-radius: 999px;
   background: #f6e27a;
   border: 2px solid #2a1c05;
   box-shadow: 0 0 10px rgba(232, 168, 74, 0.45);
 }
 
-.sound-volume-slider::-moz-range-track {
-  width: 6px;
-  border-radius: 999px;
-  background: rgba(232, 168, 74, 0.35);
-}
-
 .sound-volume-slider::-moz-range-thumb {
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
+  border: none;
   border-radius: 999px;
   background: #f6e27a;
-  border: 2px solid #2a1c05;
+}
+
+@media (max-width: 380px) {
+  .sound-volume-label {
+    display: none;
+  }
 }
 
 

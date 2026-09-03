@@ -15,8 +15,8 @@ export default function RootLayout({
   return (
     <html lang="zh-CN">
       <body>
-        {children}
         <GlobalVolumeControl />
+        {children}
       </body>
     </html>
   );
