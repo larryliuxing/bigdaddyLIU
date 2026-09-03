@@ -28,20 +28,49 @@ export function AddAuctionItemForm({
   const [bidMax, setBidMax] = useState(100);
   const [imageData, setImageData] = useState<string | null>(null);
   const [namePreview, setNamePreview] = useState<string | null>(null);
+  const [roster, setRoster] = useState(members);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [tab, setTab] = useState<"members" | "ocr">("members");
   const [ocrStatus, setOcrStatus] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [refreshingRoster, setRefreshingRoster] = useState(false);
   const [priceStats, setPriceStats] = useState<ItemPriceStats | null>(null);
   const [priceStatsLoading, setPriceStatsLoading] = useState(false);
   const pasteRef = useRef<HTMLDivElement>(null);
   const memberPasteRef = useRef<HTMLDivElement>(null);
 
+  useEffect(() => {
+    setRoster(members);
+  }, [members]);
+
   const selectedMembers = useMemo(
-    () => members.filter((m) => selectedIds.includes(m.id)),
-    [members, selectedIds],
+    () => roster.filter((m) => selectedIds.includes(m.id)),
+    [roster, selectedIds],
   );
+
+  async function refreshRoster() {
+    setRefreshingRoster(true);
+    setError("");
+    try {
+      const res = await fetch("/api/admin/members");
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(
+          typeof data.error === "string" ? data.error : "刷新成员名单失败",
+        );
+        return;
+      }
+      const next = ((data.members || []) as Member[]).filter(
+        (m) => m.status !== "exited",
+      );
+      setRoster(next);
+    } catch {
+      setError("刷新成员名单失败");
+    } finally {
+      setRefreshingRoster(false);
+    }
+  }
 
   function toggleMember(id: number) {
     setSelectedIds((prev) =>
@@ -392,13 +421,13 @@ export function AddAuctionItemForm({
         </div>
         <div className="grid gap-3 lg:grid-cols-[1.4fr_1fr]">
           <div className="rounded-xl border border-[var(--border-soft)] bg-[#0f1320] p-3">
-            <div className="mb-3 flex gap-2">
+            <div className="mb-3 flex flex-wrap items-center gap-2">
               <button
                 type="button"
                 className={`rounded-lg px-3 py-1.5 text-xs ${tab === "members" ? "bg-[#2a3350] text-white" : "text-[var(--text-muted)]"}`}
                 onClick={() => setTab("members")}
               >
-                成员名单 ({members.length})
+                成员名单 ({roster.length})
               </button>
               <button
                 type="button"
@@ -407,11 +436,20 @@ export function AddAuctionItemForm({
               >
                 粘贴图片识别
               </button>
+              <button
+                type="button"
+                className="btn-ghost ml-auto text-xs"
+                disabled={refreshingRoster}
+                onClick={() => void refreshRoster()}
+                title="拉取最新盟成员，已点选的人不会被取消"
+              >
+                {refreshingRoster ? "刷新中…" : "刷新名单"}
+              </button>
             </div>
 
             {tab === "members" ? (
               <div className="flex max-h-56 flex-wrap gap-2 overflow-y-auto">
-                {members.map((member) => {
+                {roster.map((member) => {
                   const active = selectedIds.includes(member.id);
                   return (
                     <button
