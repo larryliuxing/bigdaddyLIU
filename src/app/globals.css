@@ -764,4 +764,53 @@ select {
   white-space: nowrap;
 }
 
+/* Global volume slider: up = louder */
+.sound-volume-slider {
+  appearance: slider-vertical;
+  writing-mode: vertical-lr;
+  direction: rtl;
+  width: 22px;
+  height: 112px;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+  accent-color: var(--accent-gold);
+}
+
+.sound-volume-slider::-webkit-slider-runnable-track {
+  width: 6px;
+  border-radius: 999px;
+  background: linear-gradient(
+    to top,
+    rgba(232, 168, 74, 0.25),
+    rgba(232, 168, 74, 0.85)
+  );
+}
+
+.sound-volume-slider::-webkit-slider-thumb {
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  margin-left: -5px;
+  border-radius: 999px;
+  background: #f6e27a;
+  border: 2px solid #2a1c05;
+  box-shadow: 0 0 10px rgba(232, 168, 74, 0.45);
+}
+
+.sound-volume-slider::-moz-range-track {
+  width: 6px;
+  border-radius: 999px;
+  background: rgba(232, 168, 74, 0.35);
+}
+
+.sound-volume-slider::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: #f6e27a;
+  border: 2px solid #2a1c05;
+}
+
 
