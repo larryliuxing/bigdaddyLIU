@@ -18,6 +18,9 @@ export function AdminPanel({
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
+  const [renamingId, setRenamingId] = useState<number | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [renaming, setRenaming] = useState(false);
 
   const activeCount = members.filter((m) => m.status !== "exited").length;
   const clearedCount = members.length - activeCount;
@@ -103,6 +106,59 @@ export function AdminPanel({
     }
   }
 
+  function startRename(id: number, memberName: string) {
+    setError("");
+    setMessage("");
+    setRenamingId(id);
+    setRenameValue(memberName);
+  }
+
+  function cancelRename() {
+    setRenamingId(null);
+    setRenameValue("");
+  }
+
+  async function saveRename(id: number, oldName: string) {
+    const next = renameValue.trim();
+    if (!next) {
+      setError("请输入新名字");
+      return;
+    }
+    if (next === oldName) {
+      cancelRename();
+      return;
+    }
+    if (
+      !window.confirm(
+        `确认把「${oldName}」改成「${next}」？排行榜、分红公示、拍卖成交记录和 BOSS 聊天里的名字会一起更新。`,
+      )
+    ) {
+      return;
+    }
+    setError("");
+    setMessage("");
+    setRenaming(true);
+    try {
+      const res = await fetch("/api/admin/members", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, action: "rename", name: next }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(typeof data.error === "string" ? data.error : "改名失败");
+        return;
+      }
+      setMessage(`「${oldName}」已改名为「${next}」`);
+      cancelRename();
+      await refresh();
+    } catch {
+      setError("网络错误，改名失败");
+    } finally {
+      setRenaming(false);
+    }
+  }
+
   async function restoreMember(id: number, memberName: string) {
     setError("");
     setMessage("");
@@ -129,7 +185,7 @@ export function AdminPanel({
             <h1 className="mt-1 text-2xl font-bold">成员账户</h1>
             <p className="mt-1 text-sm text-[var(--text-muted)]">
               管理员：{adminName} · 成员账户、拍卖物品、BOSS、排行榜
-              均仅可在此后台管理
+              均仅可在此后台管理。游戏内改名后可在下方改注册名。
             </p>
           </div>
           <div className="flex gap-2">
@@ -185,6 +241,7 @@ export function AdminPanel({
             <input
               className="field"
               placeholder="成员昵称"
+              maxLength={24}
               value={name}
               onChange={(e) => setName(e.target.value)}
             />
@@ -212,28 +269,75 @@ export function AdminPanel({
                   key={member.id}
                   className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
                 >
-                  <div>
-                    <p className="font-medium">{member.name}</p>
-                    <p className="mt-0.5 text-xs text-[var(--text-muted)]">
-                      {member.hasPassword ? "已设密码" : "未设密码"}
-                    </p>
+                  <div className="min-w-0 flex-1">
+                    {renamingId === member.id ? (
+                      <form
+                        className="flex flex-col gap-2 sm:flex-row sm:items-center"
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          void saveRename(member.id, member.name);
+                        }}
+                      >
+                        <input
+                          className="field"
+                          value={renameValue}
+                          maxLength={24}
+                          autoFocus
+                          aria-label={`给 ${member.name} 改名`}
+                          onChange={(e) => setRenameValue(e.target.value)}
+                        />
+                        <div className="flex gap-2">
+                          <button
+                            type="submit"
+                            className="btn-primary sm:w-auto sm:px-4"
+                            disabled={renaming}
+                          >
+                            {renaming ? "..." : "保存"}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-ghost text-sm"
+                            onClick={cancelRename}
+                            disabled={renaming}
+                          >
+                            取消
+                          </button>
+                        </div>
+                      </form>
+                    ) : (
+                      <>
+                        <p className="font-medium">{member.name}</p>
+                        <p className="mt-0.5 text-xs text-[var(--text-muted)]">
+                          {member.hasPassword ? "已设密码" : "未设密码"}
+                        </p>
+                      </>
+                    )}
                   </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      className="btn-ghost text-sm"
-                      onClick={() => resetPassword(member.id)}
-                    >
-                      重置密码
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-ghost text-sm text-[var(--accent-crimson)]"
-                      onClick={() => clearMember(member.id, member.name)}
-                    >
-                      清退
-                    </button>
-                  </div>
+                  {renamingId !== member.id && (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        className="btn-ghost text-sm"
+                        onClick={() => startRename(member.id, member.name)}
+                      >
+                        改名
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-ghost text-sm"
+                        onClick={() => resetPassword(member.id)}
+                      >
+                        重置密码
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-ghost text-sm text-[var(--accent-crimson)]"
+                        onClick={() => clearMember(member.id, member.name)}
+                      >
+                        清退
+                      </button>
+                    </div>
+                  )}
                 </li>
               ))}
             {activeCount === 0 && (
@@ -257,24 +361,73 @@ export function AdminPanel({
                     key={member.id}
                     className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
                   >
-                    <div>
-                      <p className="font-medium text-[var(--text-muted)]">
-                        {member.name}
-                      </p>
-                      <p className="mt-0.5 text-xs text-[var(--text-muted)]">
-                        已清退
-                        {member.exitedAt
-                          ? ` · ${member.exitedAt.slice(0, 10)}`
-                          : ""}
-                      </p>
+                    <div className="min-w-0 flex-1">
+                      {renamingId === member.id ? (
+                        <form
+                          className="flex flex-col gap-2 sm:flex-row sm:items-center"
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            void saveRename(member.id, member.name);
+                          }}
+                        >
+                          <input
+                            className="field"
+                            value={renameValue}
+                            maxLength={24}
+                            autoFocus
+                            aria-label={`给 ${member.name} 改名`}
+                            onChange={(e) => setRenameValue(e.target.value)}
+                          />
+                          <div className="flex gap-2">
+                            <button
+                              type="submit"
+                              className="btn-primary sm:w-auto sm:px-4"
+                              disabled={renaming}
+                            >
+                              {renaming ? "..." : "保存"}
+                            </button>
+                            <button
+                              type="button"
+                              className="btn-ghost text-sm"
+                              onClick={cancelRename}
+                              disabled={renaming}
+                            >
+                              取消
+                            </button>
+                          </div>
+                        </form>
+                      ) : (
+                        <>
+                          <p className="font-medium text-[var(--text-muted)]">
+                            {member.name}
+                          </p>
+                          <p className="mt-0.5 text-xs text-[var(--text-muted)]">
+                            已清退
+                            {member.exitedAt
+                              ? ` · ${member.exitedAt.slice(0, 10)}`
+                              : ""}
+                          </p>
+                        </>
+                      )}
                     </div>
-                    <button
-                      type="button"
-                      className="btn-ghost text-sm"
-                      onClick={() => restoreMember(member.id, member.name)}
-                    >
-                      恢复在盟
-                    </button>
+                    {renamingId !== member.id && (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          className="btn-ghost text-sm"
+                          onClick={() => startRename(member.id, member.name)}
+                        >
+                          改名
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-ghost text-sm"
+                          onClick={() => restoreMember(member.id, member.name)}
+                        >
+                          恢复在盟
+                        </button>
+                      </div>
+                    )}
                   </li>
                 ))}
             </ul>
