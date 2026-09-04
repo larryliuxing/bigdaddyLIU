@@ -695,12 +695,17 @@ export function getMemberByName(name: string): MemberRow | null {
   };
 }
 
+export const MAX_MEMBER_NAME_LENGTH = 24;
+
 export function createMember(name: string, role: MemberRole = "normal"): Member {
+  const trimmed = name.trim();
+  if (!trimmed) throw new Error("empty_name");
+  if (trimmed.length > MAX_MEMBER_NAME_LENGTH) throw new Error("name_too_long");
   const result = ensureDb()
     .prepare(
       "INSERT INTO members (name, role, status) VALUES (?, ?, 'active')",
     )
-    .run(name.trim(), role);
+    .run(trimmed, role);
   const row = getMemberById(Number(result.lastInsertRowid));
   if (!row) throw new Error("Create member failed");
   return toMember(row);
@@ -713,12 +718,71 @@ export function updateMember(
   const current = getMemberById(id);
   if (!current) return null;
 
-  const name = data.name?.trim() || current.name;
-  const role = data.role || current.role;
+  if (data.name != null) {
+    const renamed = renameMember(id, data.name);
+    if (!renamed) return null;
+  }
 
-  ensureDb()
-    .prepare("UPDATE members SET name = ?, role = ? WHERE id = ?")
-    .run(name, role, id);
+  if (data.role && data.role !== getMemberById(id)?.role) {
+    ensureDb()
+      .prepare("UPDATE members SET role = ? WHERE id = ?")
+      .run(data.role, id);
+  }
+
+  const row = getMemberById(id);
+  return row ? toMember(row) : null;
+}
+
+/**
+ * Rename a registered member and keep denormalized display names in sync
+ * (leaderboard, dividends, sale history, BOSS chat/votes/presence).
+ */
+export function renameMember(id: number, nextName: string): Member | null {
+  const name = nextName.trim();
+  if (!name) throw new Error("empty_name");
+  if (name.length > MAX_MEMBER_NAME_LENGTH) throw new Error("name_too_long");
+
+  const current = getMemberById(id);
+  if (!current) return null;
+  if (current.name === name) return toMember(current);
+
+  const clash = getMemberByName(name);
+  if (clash && clash.id !== id) throw new Error("name_taken");
+
+  const database = ensureDb();
+  const tx = database.transaction(() => {
+    database
+      .prepare("UPDATE members SET name = ? WHERE id = ?")
+      .run(name, id);
+    database
+      .prepare("UPDATE leaderboard_entries SET member_name = ? WHERE member_id = ?")
+      .run(name, id);
+    database
+      .prepare(
+        "UPDATE auction_dividend_entries SET member_name = ? WHERE member_id = ?",
+      )
+      .run(name, id);
+    database
+      .prepare(
+        "UPDATE auction_item_dividend_lines SET member_name = ? WHERE member_id = ?",
+      )
+      .run(name, id);
+    database
+      .prepare(
+        "UPDATE auction_item_sale_history SET winner_name = ? WHERE winner_member_id = ?",
+      )
+      .run(name, id);
+    database
+      .prepare("UPDATE boss_votes SET member_name = ? WHERE member_id = ?")
+      .run(name, id);
+    database
+      .prepare("UPDATE boss_chat SET member_name = ? WHERE member_id = ?")
+      .run(name, id);
+    database
+      .prepare("UPDATE boss_presence SET member_name = ? WHERE member_id = ?")
+      .run(name, id);
+  });
+  tx();
 
   const row = getMemberById(id);
   return row ? toMember(row) : null;
@@ -3075,7 +3139,8 @@ export function getLeaderboardBoard(thresholdRatio?: number) {
     : getLeaderboardThresholdRatio();
   const rows = ensureDb()
     .prepare(
-      `SELECT le.id, le.member_id, le.member_name, le.combat_power, le.ocr_name,
+      `SELECT le.id, le.member_id, COALESCE(m.name, le.member_name) as member_name,
+              le.combat_power, le.ocr_name,
               le.has_image, le.updated_at, m.role as member_role
        FROM leaderboard_entries le
        LEFT JOIN members m ON m.id = le.member_id
