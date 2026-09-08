@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {
   buildOcrTimerDraft,
+  formatParsedBeijingTimes,
   matchBossFromOcr,
   normalizeBossTimeOcr,
   parseBossTimesFromOcr,
@@ -15,6 +16,25 @@ const times = parseBossTimesFromOcr(sample);
 assert.equal(times.length, 2);
 assert.equal(times[0].iso, new Date("2026-08-31T10:46:00+08:00").toISOString());
 assert.equal(times[1].iso, new Date("2026-08-31T14:46:00+08:00").toISOString());
+
+assert.equal(
+  parseBossTimesFromOcr("2026年 09月 08日 05时 2749")[0]?.minute,
+  27,
+);
+assert.equal(
+  parseBossTimesFromOcr("2026年 09月 08日 05时 27分")[0]?.iso,
+  new Date("2026-09-08T05:27:00+08:00").toISOString(),
+);
+assert.equal(
+  formatParsedBeijingTimes(
+    parseBossTimesFromOcr("2026年 09月 08日 05时 27分"),
+  ),
+  "2026年 09月 08日 05时 27分",
+);
+assert.equal(
+  formatParsedBeijingTimes(parseBossTimesFromOcr(sample)),
+  "击退 2026年 08月 31日 10时 46分\n出没 2026年 08月 31日 14时 46分",
+);
 
 const compact = parseBossTimesFromOcr("2026年08月31日10时46分");
 assert.equal(compact.length, 1);

@@ -9,6 +9,8 @@ import {
 
 type RatioRect = { x: number; y: number; w: number; h: number };
 
+export type { RatioRect };
+
 const NAME_CROPS: Array<{ w: number; h: number; xBias: number }> = [
   { w: 0.3, h: 0.08, xBias: 0.08 },
   { w: 0.42, h: 0.11, xBias: 0.1 },
@@ -218,6 +220,36 @@ function enhanceTimeText(canvas: HTMLCanvasElement): HTMLCanvasElement {
   }
   ctx.putImageData(imageData, 0, 0);
   return canvas;
+}
+
+export async function buildBossRectCrops(
+  source: File | Blob | string,
+  rect: RatioRect,
+  kind: "name" | "time",
+): Promise<{ preview: string; crops: string[] }> {
+  const img = await loadImageForOcr(source);
+  const pad = 0.004;
+  const r: RatioRect = {
+    x: clamp01(Math.min(rect.x, rect.x + rect.w) - pad),
+    y: clamp01(Math.min(rect.y, rect.y + rect.h) - pad),
+    w: clamp01(Math.abs(rect.w) + pad * 2),
+    h: clamp01(Math.abs(rect.h) + pad * 2),
+  };
+  if (r.x + r.w > 1) r.w = 1 - r.x;
+  if (r.y + r.h > 1) r.h = 1 - r.y;
+  const scale = kind === "name" ? 4 : 3.4;
+  const raw = cropRatio(img, r, scale);
+  const ink = cropRatio(img, r, scale);
+  if (kind === "name") enhanceLightText(ink);
+  else enhanceTimeText(ink);
+  const preview = cropRatio(img, r, 2.2);
+  return {
+    preview: toDataUrl(padCanvas(preview, 6)),
+    crops: [
+      toDataUrl(padCanvas(raw, 12)),
+      toDataUrl(padCanvas(ink, 12)),
+    ],
+  };
 }
 
 export async function buildBossNameClickCrops(
