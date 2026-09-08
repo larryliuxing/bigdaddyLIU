@@ -3,9 +3,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ItemPriceStats, ItemQuality, Member } from "@/lib/types";
 import { recognizeItemName } from "@/lib/auction/itemOcr";
-import { recognizeParticipantNames } from "@/lib/auction/participantOcr";
 import { LockIcon } from "@/components/Icons";
 import { ItemPriceStatsLine } from "./ItemPriceStatsLine";
+import { ParticipantOcrPanel } from "./ParticipantOcrPanel";
 import { QUALITY_OPTIONS } from "@/lib/auction/client";
 import { isOrdinaryPinkAuction, isPinkAuction } from "@/lib/auction/pink";
 
@@ -32,13 +32,14 @@ export function AddAuctionItemForm({
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [tab, setTab] = useState<"members" | "ocr">("members");
   const [ocrStatus, setOcrStatus] = useState("");
+  const [memberQuery, setMemberQuery] = useState("");
+  const [ocrResetNonce, setOcrResetNonce] = useState(0);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [refreshingRoster, setRefreshingRoster] = useState(false);
   const [priceStats, setPriceStats] = useState<ItemPriceStats | null>(null);
   const [priceStatsLoading, setPriceStatsLoading] = useState(false);
   const pasteRef = useRef<HTMLDivElement>(null);
-  const memberPasteRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setRoster(members);
@@ -48,6 +49,12 @@ export function AddAuctionItemForm({
     () => roster.filter((m) => selectedIds.includes(m.id)),
     [roster, selectedIds],
   );
+
+  const visibleRoster = useMemo(() => {
+    const q = memberQuery.trim();
+    if (!q) return roster;
+    return roster.filter((m) => m.name.includes(q));
+  }, [roster, memberQuery]);
 
   async function refreshRoster() {
     setRefreshingRoster(true);
@@ -78,10 +85,19 @@ export function AddAuctionItemForm({
     );
   }
 
-  async function handleImagePaste(
-    e: React.ClipboardEvent,
-    mode: "item" | "members",
-  ) {
+  function addMember(id: number) {
+    setSelectedIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
+  }
+
+  function addMembers(ids: number[]) {
+    setSelectedIds((prev) => {
+      const set = new Set(prev);
+      ids.forEach((id) => set.add(id));
+      return [...set];
+    });
+  }
+
+  async function handleImagePaste(e: React.ClipboardEvent) {
     const items = e.clipboardData?.items;
     if (!items) return;
     for (const item of items) {
@@ -90,70 +106,29 @@ export function AddAuctionItemForm({
       const file = item.getAsFile();
       if (!file) return;
 
-      if (mode === "item") {
-        const reader = new FileReader();
-        reader.onload = async () => {
-          const dataUrl = String(reader.result || "");
-          setImageData(dataUrl);
-          setNamePreview(null);
-          setOcrStatus("正在识别顶部装备名称…");
-          try {
-            const result = await recognizeItemName(file);
-            setNamePreview(result.previewDataUrl);
-            if (result.name) {
-              setName(result.name);
-              setOcrStatus(`已识别名称：${result.name}`);
-            } else {
-              setOcrStatus("未识别到顶部名称，请手动填写");
-            }
-            if (result.quality) {
-              setQuality(result.quality);
-            }
-          } catch {
-            setOcrStatus("识别失败，可手动填写名称");
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const dataUrl = String(reader.result || "");
+        setImageData(dataUrl);
+        setNamePreview(null);
+        setOcrStatus("正在识别顶部装备名称…");
+        try {
+          const result = await recognizeItemName(file);
+          setNamePreview(result.previewDataUrl);
+          if (result.name) {
+            setName(result.name);
+            setOcrStatus(`已识别名称：${result.name}`);
+          } else {
+            setOcrStatus("未识别到顶部名称，请手动填写");
           }
-        };
-        reader.readAsDataURL(file);
-        return;
-      }
-
-      // members OCR — crop「名称」column, match against guild roster
-      setOcrStatus("正在识别参与者名称列…");
-      try {
-        const ocr = await recognizeParticipantNames(file);
-        const res = await fetch("/api/auction/ocr-match", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: ocr.text, names: ocr.names }),
-        });
-        const data = await res.json();
-        if (!res.ok) {
-          setOcrStatus(data.error || "匹配失败");
-          return;
+          if (result.quality) {
+            setQuality(result.quality);
+          }
+        } catch {
+          setOcrStatus("识别失败，可手动填写名称");
         }
-        const matched: Member[] = data.matched || [];
-        setSelectedIds((prev) => {
-          const set = new Set(prev);
-          matched.forEach((m) => set.add(m.id));
-          return [...set];
-        });
-        const extra = (data.unrecognized as string[]) || [];
-        const recognized = (ocr.names || []).slice(0, 10).join("、");
-        setOcrStatus(
-          matched.length
-            ? `已匹配 ${matched.length} 名盟成员加入分红` +
-                (recognized ? `；识别名称：${recognized}` : "") +
-                (extra.length
-                  ? `；未入库：${extra.slice(0, 8).join("、")}`
-                  : "")
-            : recognized
-              ? `未匹配到盟成员。识别到：${recognized}。请手动点选补全。`
-              : "未识别到名称，请换更清晰的参与者截图或手动点选。",
-        );
-        setTab("members");
-      } catch {
-        setOcrStatus("识别失败，请改用成员名单手动选择");
-      }
+      };
+      reader.readAsDataURL(file);
       return;
     }
   }
@@ -193,6 +168,8 @@ export function AddAuctionItemForm({
       setNamePreview(null);
       setSelectedIds([]);
       setOcrStatus("");
+      setMemberQuery("");
+      setOcrResetNonce((n) => n + 1);
       setPriceStats(null);
       setPriceStatsLoading(false);
       onCreated();
@@ -370,7 +347,7 @@ export function AddAuctionItemForm({
         <div
           ref={pasteRef}
           tabIndex={0}
-          onPaste={(e) => handleImagePaste(e, "item")}
+          onPaste={handleImagePaste}
           className="flex min-h-[140px] cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-[rgba(255,255,255,0.18)] bg-[#0f1320] px-4 text-center outline-none focus:border-[rgba(123,108,255,0.5)]"
         >
           {imageData ? (
@@ -448,33 +425,46 @@ export function AddAuctionItemForm({
             </div>
 
             {tab === "members" ? (
-              <div className="flex max-h-56 flex-wrap gap-2 overflow-y-auto">
-                {roster.map((member) => {
-                  const active = selectedIds.includes(member.id);
-                  return (
-                    <button
-                      key={member.id}
-                      type="button"
-                      className={`member-chip !py-2 ${active ? "!border-[rgba(123,108,255,0.55)] !bg-[#2a3350]" : ""}`}
-                      onClick={() => toggleMember(member.id)}
-                    >
-                      <LockIcon />
-                      <span className="text-sm">{member.name}</span>
-                    </button>
-                  );
-                })}
+              <div className="space-y-2">
+                <input
+                  className="field !py-2 text-sm"
+                  value={memberQuery}
+                  onChange={(e) => setMemberQuery(e.target.value)}
+                  placeholder="搜索名字，人多时更快找到"
+                />
+                <div className="flex max-h-56 flex-wrap gap-2 overflow-y-auto">
+                  {visibleRoster.length === 0 ? (
+                    <p className="text-sm text-[var(--text-muted)]">
+                      {roster.length === 0
+                        ? "暂无成员"
+                        : "没有叫这个名字的成员"}
+                    </p>
+                  ) : (
+                    visibleRoster.map((member) => {
+                      const active = selectedIds.includes(member.id);
+                      return (
+                        <button
+                          key={member.id}
+                          type="button"
+                          className={`member-chip !py-2 ${active ? "!border-[rgba(123,108,255,0.55)] !bg-[#2a3350]" : ""}`}
+                          onClick={() => toggleMember(member.id)}
+                        >
+                          <LockIcon />
+                          <span className="text-sm">{member.name}</span>
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
               </div>
             ) : (
-              <div
-                ref={memberPasteRef}
-                tabIndex={0}
-                onPaste={(e) => handleImagePaste(e, "members")}
-                className="flex min-h-40 items-center justify-center rounded-lg border border-dashed border-[rgba(255,255,255,0.15)] px-3 text-center text-sm text-[var(--text-muted)] outline-none focus:border-[rgba(123,108,255,0.5)]"
-              >
-                粘贴游戏「参与者」截图，自动识别左侧名称列，
-                <br />
-                与盟成员同名的会加入分红名单；其余请手动补选
-              </div>
+              <ParticipantOcrPanel
+                roster={roster}
+                selectedIds={selectedIds}
+                onAddMember={addMember}
+                onAddMembers={addMembers}
+                resetNonce={ocrResetNonce}
+              />
             )}
           </div>
 

@@ -39,7 +39,7 @@ function loadImage(source: File | Blob | string): Promise<HTMLImageElement> {
   });
 }
 
-type RatioRect = { x: number; y: number; w: number; h: number };
+export type RatioRect = { x: number; y: number; w: number; h: number };
 
 /**
  * Crops for already-cropped modal shots AND wider game screenshots.
@@ -170,7 +170,7 @@ function enhanceNameColumn(src: HTMLCanvasElement): HTMLCanvasElement {
 function cleanNameToken(raw: string) {
   return raw
     .replace(/\s+/g, "")
-    .replace(/[|｜\[\]【】()（）<>《》·•.,，。:：;；'"“”‘’\-_/\\=+~`!@#$%^&*]/g, "")
+    .replace(/[|｜\[\]【】()（）<>《》·•.,，、。:：;；'"“”‘’\-_/\\=+~`!@#$%^&*]/g, "")
     .replace(/[0-9A-Za-z]/g, "")
     .replace(GRADE_WORDS, "");
 }
@@ -180,7 +180,7 @@ function isPlausibleName(name: string) {
   if (!/^[\u4e00-\u9fff]+$/.test(name)) return false;
   if (GRADE_WORDS.test(name)) return false;
   // Reject obvious OCR junk fragments that are all the same char etc.
-  if (/^(.)\1+$/.test(name)) return false;
+  if (name.length >= 3 && /^(.)\1+$/.test(name)) return false;
   // Common guild / header leftovers
   if (/^(千帆舞|战盟|名称|品级|参与者)$/.test(name)) return false;
   return true;
@@ -289,6 +289,41 @@ async function runCrops(
     });
   }
   return attempts;
+}
+
+function mergeAttempts(attempts: Attempt[]): ParticipantOcrResult {
+  attempts.sort((a, b) => b.score - a.score);
+  const best = attempts[0];
+
+  const ordered: string[] = [];
+  const push = (name: string) => {
+    if (!ordered.includes(name)) ordered.push(name);
+  };
+  for (const attempt of attempts) {
+    for (const n of attempt.names) push(n);
+  }
+
+  return {
+    text: best?.text || "",
+    names: ordered,
+    previewDataUrl: best?.preview || null,
+  };
+}
+
+/**
+ * Recognize names inside a user-drawn ratio rectangle on a participant screenshot.
+ */
+export async function recognizeParticipantNamesInRect(
+  source: File | Blob | string,
+  rect: RatioRect,
+): Promise<ParticipantOcrResult> {
+  const img = await loadImage(source);
+  const worker = await getWorker();
+  const attempts = [
+    ...(await runCrops(img, worker, [rect], 3)),
+    ...(await runCrops(img, worker, [rect], 2.4)),
+  ];
+  return mergeAttempts(attempts);
 }
 
 /**
