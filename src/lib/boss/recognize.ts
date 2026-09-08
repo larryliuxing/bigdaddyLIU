@@ -61,6 +61,16 @@ async function recognizeCropTexts(
   return chunks;
 }
 
+function bossNameCharWhitelist(names: string[]) {
+  const chars = new Set<string>();
+  for (const name of names) {
+    for (const ch of name) {
+      if (/[\u4e00-\u9fff·]/.test(ch)) chars.add(ch);
+    }
+  }
+  return [...chars].join("");
+}
+
 function pickBestNameText(chunks: string[], bossNames: string[]) {
   const roster = bossNames.map((name, id) => ({ id, name }));
   let bestMatched = "";
@@ -113,14 +123,15 @@ export async function recognizeBossNameAtRect(
     getNameWorker(),
     buildBossRectCrops(image, rect, "name"),
   ]);
+  const whitelist = bossNameCharWhitelist(bossNames);
   const chunks = await recognizeCropTexts(
     worker,
     built.crops,
     {
       preserve_interword_spaces: "1",
-      tessedit_char_whitelist: "",
+      tessedit_char_whitelist: whitelist,
     },
-    [PSM.SINGLE_LINE, PSM.RAW_LINE, PSM.SPARSE_TEXT],
+    [PSM.SINGLE_LINE, PSM.RAW_LINE, PSM.SINGLE_WORD, PSM.SPARSE_TEXT],
   );
   return {
     text: pickBestNameText(chunks, bossNames),

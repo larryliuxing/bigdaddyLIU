@@ -2,10 +2,8 @@
  * Click crops for guild-boss screenshot OCR (white text on dark rows).
  */
 
-import {
-  enhanceLightText,
-  loadImageForOcr,
-} from "@/lib/leaderboard/preprocess";
+import { loadImageForOcr } from "@/lib/leaderboard/preprocess";
+import { bossNameInkCut, isBossNameInk } from "./nameInk";
 
 type RatioRect = { x: number; y: number; w: number; h: number };
 
@@ -103,16 +101,8 @@ function toDataUrl(canvas: HTMLCanvasElement) {
   return canvas.toDataURL("image/png");
 }
 
-function whiteInkScore(r: number, g: number, b: number) {
-  const brightness = (r + g + b) / 3;
-  const sat = Math.max(r, g, b) - Math.min(r, g, b);
-  if (brightness < 165) return 0;
-  if (sat > 70) return 0;
-  return brightness - sat * 0.4;
-}
-
 /**
- * Inside a probe, keep the sparse horizontal white glyph band and skip
+ * Inside a probe, keep the sparse horizontal name-glyph band and skip
  * the circular portrait on the left.
  */
 function findWhiteNameBounds(
@@ -138,7 +128,7 @@ function findWhiteNameBounds(
   for (let y = 0; y < sh; y += 1) {
     for (let x = 0; x < sw; x += 1) {
       const i = (y * sw + x) * 4;
-      if (whiteInkScore(data[i], data[i + 1], data[i + 2]) < 16) continue;
+      if (!isBossNameInk(data[i], data[i + 1], data[i + 2])) continue;
       total += 1;
       rowCounts[y] += 1;
       if (x < rowMinX[y]) rowMinX[y] = x;
@@ -180,11 +170,11 @@ function findWhiteNameBounds(
   for (let y = minY; y <= maxY; y += 1) {
     for (let x = minX; x <= Math.min(cut, maxX); x += 1) {
       const i = (y * sw + x) * 4;
-      if (whiteInkScore(data[i], data[i + 1], data[i + 2]) >= 16) leftDense += 1;
+      if (isBossNameInk(data[i], data[i + 1], data[i + 2])) leftDense += 1;
     }
     for (let x = Math.min(cut + 1, maxX); x <= maxX; x += 1) {
       const i = (y * sw + x) * 4;
-      if (whiteInkScore(data[i], data[i + 1], data[i + 2]) >= 16) rightSparse += 1;
+      if (isBossNameInk(data[i], data[i + 1], data[i + 2])) rightSparse += 1;
     }
   }
   if (rightSparse > 20 && leftDense > rightSparse * 0.9) {
@@ -203,7 +193,92 @@ function findWhiteNameBounds(
   };
 }
 
-/** Threshold a bit lower so gray 出没时间 still inks. */
+/** Keep pale-gray / gold name strokes; drop mint selection boxes. */
+function enhanceBossNameText(canvas: HTMLCanvasElement): HTMLCanvasElement {
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) return canvas;
+  const { width, height } = canvas;
+  const imageData = ctx.getImageData(0, 0, width, height);
+  const d = imageData.data;
+  let inkSum = 0;
+  let inkCount = 0;
+  for (let i = 0; i < d.length; i += 4) {
+    if (isBossNameInk(d[i], d[i + 1], d[i + 2])) {
+      inkSum += (d[i] + d[i + 1] + d[i + 2]) / 3;
+      inkCount += 1;
+    }
+  }
+  const inkMean = inkCount > 0 ? inkSum / inkCount : 110;
+  const cut = bossNameInkCut(inkMean);
+  for (let i = 0; i < d.length; i += 4) {
+    const r = d[i];
+    const g = d[i + 1];
+    const b = d[i + 2];
+    const brightness = (r + g + b) / 3;
+    const keep =
+      isBossNameInk(r, g, b) ||
+      (brightness >= cut &&
+        brightness >= 82 &&
+        Math.max(r, g, b) - Math.min(r, g, b) <= 36 &&
+        !(g >= r + 32 && g >= 150));
+    if (keep) {
+      const t = Math.max(0, Math.min(1, (brightness - cut) / 70));
+      const v = Math.round(36 - t * 28);
+      d[i] = v;
+      d[i + 1] = v;
+      d[i + 2] = v;
+    } else {
+      d[i] = 255;
+      d[i + 1] = 255;
+      d[i + 2] = 255;
+    }
+    d[i + 3] = 255;
+  }
+  ctx.putImageData(imageData, 0, 0);
+  return canvas;
+}
+
+/** Drop a left circular portrait if the remaining band looks like a name. */
+function trimLeftPortrait(canvas: HTMLCanvasElement): HTMLCanvasElement {
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx || canvas.width < 40) return canvas;
+  const { width, height } = canvas;
+  const { data } = ctx.getImageData(0, 0, width, height);
+  const colInk = new Array<number>(width).fill(0);
+  for (let x = 0; x < width; x += 1) {
+    let n = 0;
+    for (let y = 0; y < height; y += 1) {
+      const i = (y * width + x) * 4;
+      if (data[i] < 80) n += 1;
+    }
+    colInk[x] = n;
+  }
+  const split = Math.floor(width * 0.28);
+  let left = 0;
+  let right = 0;
+  for (let x = 0; x < split; x += 1) left += colInk[x];
+  for (let x = split; x < width; x += 1) right += colInk[x];
+  const leftAvg = left / Math.max(1, split);
+  const rightAvg = right / Math.max(1, width - split);
+  if (!(leftAvg > 8 && rightAvg > 3 && leftAvg > rightAvg * 1.35)) {
+    return canvas;
+  }
+  let cut = split;
+  for (let x = split; x > Math.floor(width * 0.08); x -= 1) {
+    if (colInk[x] < rightAvg * 0.55) {
+      cut = x;
+      break;
+    }
+  }
+  if (cut < 8 || width - cut < 20) return canvas;
+  const out = document.createElement("canvas");
+  out.width = width - cut;
+  out.height = height;
+  const octx = out.getContext("2d");
+  if (!octx) return canvas;
+  octx.drawImage(canvas, cut, 0, out.width, height, 0, 0, out.width, height);
+  return out;
+}
 function enhanceTimeText(canvas: HTMLCanvasElement): HTMLCanvasElement {
   const ctx = canvas.getContext("2d");
   if (!ctx) return canvas;
@@ -237,18 +312,33 @@ export async function buildBossRectCrops(
   };
   if (r.x + r.w > 1) r.w = 1 - r.x;
   if (r.y + r.h > 1) r.h = 1 - r.y;
-  const scale = kind === "name" ? 4 : 3.4;
+  const scale = kind === "name" ? 5 : 3.4;
   const raw = cropRatio(img, r, scale);
   const ink = cropRatio(img, r, scale);
-  if (kind === "name") enhanceLightText(ink);
-  else enhanceTimeText(ink);
+  if (kind === "name") {
+    enhanceBossNameText(ink);
+  } else {
+    enhanceTimeText(ink);
+  }
   const preview = cropRatio(img, r, 2.2);
+  const nameInk = kind === "name" ? trimLeftPortrait(ink) : ink;
+  const nameRaw = kind === "name" ? trimLeftPortrait(raw) : raw;
+  const crops =
+    kind === "name"
+      ? [
+          toDataUrl(padCanvas(nameRaw, 16)),
+          toDataUrl(padCanvas(nameInk, 16)),
+          toDataUrl(
+            padCanvas(
+              enhanceBossNameText(cropRatio(img, r, 3.6)),
+              16,
+            ),
+          ),
+        ]
+      : [toDataUrl(padCanvas(raw, 12)), toDataUrl(padCanvas(ink, 12))];
   return {
     preview: toDataUrl(padCanvas(preview, 6)),
-    crops: [
-      toDataUrl(padCanvas(raw, 12)),
-      toDataUrl(padCanvas(ink, 12)),
-    ],
+    crops,
   };
 }
 
@@ -272,13 +362,13 @@ export async function buildBossNameClickCrops(
         bounds.h,
         4,
       );
-      enhanceLightText(light);
+      enhanceBossNameText(light);
       urls.push(toDataUrl(padCanvas(raw, 14)));
       urls.push(toDataUrl(padCanvas(light, 14)));
     }
     const fallbackRaw = cropRatio(img, probe, 3.4);
     const fallbackLight = cropRatio(img, probe, 3.4);
-    enhanceLightText(fallbackLight);
+    enhanceBossNameText(fallbackLight);
     urls.push(toDataUrl(padCanvas(fallbackRaw, 12)));
     urls.push(toDataUrl(padCanvas(fallbackLight, 12)));
   }

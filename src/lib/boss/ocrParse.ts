@@ -234,6 +234,59 @@ export function cleanBossNameOcr(text: string) {
     .trim();
 }
 
+function lcsLength(a: string, b: string) {
+  const m = a.length;
+  const n = b.length;
+  if (!m || !n) return 0;
+  const prev = new Array<number>(n + 1).fill(0);
+  const cur = new Array<number>(n + 1).fill(0);
+  for (let i = 1; i <= m; i += 1) {
+    for (let j = 1; j <= n; j += 1) {
+      cur[j] =
+        a[i - 1] === b[j - 1] ? prev[j - 1] + 1 : Math.max(prev[j], cur[j - 1]);
+    }
+    for (let j = 0; j <= n; j += 1) prev[j] = cur[j];
+  }
+  return prev[n];
+}
+
+function charOverlapRatio(a: string, b: string) {
+  if (!a || !b) return 0;
+  const setA = new Set(a);
+  let shared = 0;
+  for (const ch of b) {
+    if (setA.has(ch)) shared += 1;
+  }
+  return shared / Math.max(a.length, b.length);
+}
+
+/** Dense glyphs Tesseract often swaps on this gold/gray HUD font. */
+const BOSS_NAME_CONFUSABLE: Record<string, string[]> = {
+  潘: ["渵", "藩", "番", "渖", "藩"],
+  柴: ["某", "荣", "菜", "紫", "禁", "某"],
+  特: ["持", "恃", "待", "诗", "搏", "特"],
+  鲁: ["曾", "鲁", "鱼"],
+  玛: ["玛", "马", "玛"],
+  斯: ["期", "斯", "析"],
+};
+
+function charsLooselyEqual(a: string, b: string) {
+  if (a === b) return true;
+  return (
+    (BOSS_NAME_CONFUSABLE[b] || []).includes(a) ||
+    (BOSS_NAME_CONFUSABLE[a] || []).includes(b)
+  );
+}
+
+function alignedHits(ocr: string, name: string) {
+  const n = Math.min(ocr.length, name.length);
+  let hits = 0;
+  for (let i = 0; i < n; i += 1) {
+    if (charsLooselyEqual(ocr[i], name[i])) hits += 1;
+  }
+  return hits;
+}
+
 export function matchBossFromOcr<T extends { id: number; name: string }>(
   ocrText: string,
   bosses: T[],
@@ -255,12 +308,25 @@ export function matchBossFromOcr<T extends { id: number; name: string }>(
       score = 70 + compact.length;
     } else if (extractDetectedName(cleaned || compact, name).matched) {
       score = 80;
-    } else if (nameCjk.length >= 2) {
+    } else if (nameCjk.length >= 2 && compact.length >= 2) {
       const dist = levenshtein(compact, nameCjk);
-      if (dist <= 1 && nameCjk.length >= 3) score = 60;
-      else if (dist <= 2 && nameCjk.length >= 5) score = 50;
+      const lcs = lcsLength(compact, nameCjk);
+      const overlap = charOverlapRatio(compact, nameCjk);
+      const aligned = alignedHits(compact, nameCjk);
+      if (dist <= 1 && nameCjk.length >= 3) score = 62;
+      else if (dist <= 2 && nameCjk.length >= 3 && lcs >= 2) score = 56;
+      else if (lcs >= 2 && lcs / nameCjk.length >= 0.6) score = 54 + lcs * 4;
+      else if (aligned >= 2 && nameCjk.length <= 4) score = 52;
+      else if (overlap >= 0.6 && Math.abs(compact.length - nameCjk.length) <= 1) {
+        score = 50;
+      }
     }
-    if (score > 0 && (!best || score > best.score)) {
+    if (
+      score > 0 &&
+      (!best ||
+        score > best.score ||
+        (score === best.score && name.length < best.boss.name.length))
+    ) {
       best = { boss, score };
     }
   }
