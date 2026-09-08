@@ -23,7 +23,7 @@ async function main() {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "guild-boss-click-"));
   try {
     process.chdir(tempDir);
-    const { createBoss, createMember, castBossVote, getBossById } =
+    const { createBoss, createMember, castBossVote, getBossById, setBossVoteNeed } =
       await import("../src/lib/db");
 
     const memberA = createMember("张三");
@@ -32,6 +32,7 @@ async function main() {
       name: "测试王",
       intervalHours: 2,
     });
+    setBossVoteNeed(1);
     assert.equal(boss.lastMark, null);
 
     const beforeKill = Date.now();

@@ -133,26 +133,30 @@ export async function PATCH(request: Request) {
   }
 
   try {
-    const boss = updateBoss(id, {
-      name: body?.name,
-      color: body?.color,
-      spawnRate:
-        body?.spawnRate !== undefined ? Number(body.spawnRate) : undefined,
-      intervalHours:
-        body?.intervalHours !== undefined
-          ? Number(body.intervalHours)
-          : undefined,
-      dropsNote: body?.dropsNote,
-      dropsImage:
-        body?.dropsImage === undefined
-          ? undefined
-          : body.dropsImage === null
-            ? null
-            : String(body.dropsImage),
-      enabled: body?.enabled,
-      lastKillAt: body?.lastKillAt,
-      nextSpawnAt: body?.nextSpawnAt,
-    });
+    const boss = updateBoss(
+      id,
+      {
+        name: body?.name,
+        color: body?.color,
+        spawnRate:
+          body?.spawnRate !== undefined ? Number(body.spawnRate) : undefined,
+        intervalHours:
+          body?.intervalHours !== undefined
+            ? Number(body.intervalHours)
+            : undefined,
+        dropsNote: body?.dropsNote,
+        dropsImage:
+          body?.dropsImage === undefined
+            ? undefined
+            : body.dropsImage === null
+              ? null
+              : String(body.dropsImage),
+        enabled: body?.enabled,
+        lastKillAt: body?.lastKillAt,
+        nextSpawnAt: body?.nextSpawnAt,
+      },
+      { adminName: admin.username },
+    );
     if (!boss) {
       return NextResponse.json({ error: "BOSS 不存在" }, { status: 404 });
     }
