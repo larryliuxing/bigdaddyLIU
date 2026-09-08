@@ -48,11 +48,48 @@ export function normalizeBossTimeOcr(text: string) {
     .trim();
 }
 
+function clampMinute(n: number) {
+  if (n >= 0 && n <= 59) return n;
+  const s = String(Math.trunc(Math.abs(n)));
+  if (s.length >= 2) {
+    const two = Number(s.slice(0, 2));
+    if (two <= 59) return two;
+  }
+  return n;
+}
+
+function clampHour(n: number) {
+  if (n >= 0 && n <= 23) return n;
+  const s = String(Math.trunc(Math.abs(n)));
+  if (s.length >= 2) {
+    const two = Number(s.slice(0, 2));
+    if (two <= 23) return two;
+  }
+  return n;
+}
+
+export function formatParsedBeijingTime(t: ParsedBeijingTime) {
+  return `${t.year}年 ${String(t.month).padStart(2, "0")}月 ${String(t.day).padStart(2, "0")}日 ${String(t.hour).padStart(2, "0")}时 ${String(t.minute).padStart(2, "0")}分`;
+}
+
+export function formatParsedBeijingTimes(times: ParsedBeijingTime[]) {
+  if (!times.length) return "";
+  const { kill, appearance } = splitKillAndAppearance(times);
+  if (kill && appearance) {
+    return `击退 ${formatParsedBeijingTime(kill)}\n出没 ${formatParsedBeijingTime(appearance)}`;
+  }
+  if (kill) return formatParsedBeijingTime(kill);
+  return times.map(formatParsedBeijingTime).join("\n");
+}
+
 const TIME_RE =
-  /(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日\s*(\d{1,2})\s*时\s*(\d{1,2})\s*分/g;
+  /(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日\s*(\d{1,2})\s*时\s*(\d{1,2})\s*分?/g;
 
 const TIME_RE_NO_YEAR =
-  /(\d{1,2})\s*月\s*(\d{1,2})\s*日\s*(\d{1,2})\s*时\s*(\d{1,2})\s*分/g;
+  /(\d{1,2})\s*月\s*(\d{1,2})\s*日\s*(\d{1,2})\s*时\s*(\d{1,2})\s*分?/g;
+
+const TIME_RE_DIGITS =
+  /(\d{4})\D+(\d{1,2})\D+(\d{1,2})\D+(\d{1,2})\D+(\d{1,2})/g;
 
 function toParsed(
   year: number,
@@ -62,6 +99,9 @@ function toParsed(
   minute: number,
   raw: string,
 ): ParsedBeijingTime | null {
+  hour = clampHour(hour);
+  minute = clampMinute(minute);
+  if (year < 2020 || year > 2038) return null;
   if (month < 1 || month > 12) return null;
   if (day < 1 || day > 31) return null;
   if (hour > 23 || minute > 59) return null;
@@ -121,6 +161,23 @@ export function parseBossTimesFromOcr(
       Number(match[2]),
       Number(match[3]),
       Number(match[4]),
+      match[0],
+    );
+    if (parsed && !seen.has(parsed.iso)) {
+      seen.add(parsed.iso);
+      found.push(parsed);
+    }
+  }
+  if (found.length) return found;
+
+  TIME_RE_DIGITS.lastIndex = 0;
+  while ((match = TIME_RE_DIGITS.exec(normalized))) {
+    const parsed = toParsed(
+      Number(match[1]),
+      Number(match[2]),
+      Number(match[3]),
+      Number(match[4]),
+      Number(match[5]),
       match[0],
     );
     if (parsed && !seen.has(parsed.iso)) {

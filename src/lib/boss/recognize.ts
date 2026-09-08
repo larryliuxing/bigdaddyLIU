@@ -4,8 +4,15 @@ import { createWorker, PSM, type Worker } from "tesseract.js";
 import {
   buildBossClickPreview,
   buildBossNameClickCrops,
+  buildBossRectCrops,
   buildBossTimeClickCrops,
+  type RatioRect,
 } from "./ocrCrops";
+import {
+  formatParsedBeijingTimes,
+  matchBossFromOcr,
+  parseBossTimesFromOcr,
+} from "./ocrParse";
 
 let nameWorkerPromise: Promise<Worker> | null = null;
 let timeWorkerPromise: Promise<Worker> | null = null;
@@ -29,19 +36,7 @@ export function prewarmBossTimerOcr() {
   void getTimeWorker();
 }
 
-function uniqueJoin(chunks: string[]) {
-  const seen = new Set<string>();
-  const merged: string[] = [];
-  for (const chunk of chunks) {
-    const key = chunk.replace(/\s+/g, "");
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    merged.push(chunk);
-  }
-  return merged.join("\n");
-}
-
-async function recognizeCrops(
+async function recognizeCropTexts(
   worker: Worker,
   crops: string[],
   params: Record<string, string>,
@@ -63,7 +58,40 @@ async function recognizeCrops(
       }
     }
   }
-  return uniqueJoin(chunks);
+  return chunks;
+}
+
+function pickBestNameText(chunks: string[], bossNames: string[]) {
+  const roster = bossNames.map((name, id) => ({ id, name }));
+  let bestMatched = "";
+  let bestScore = 0;
+  for (const chunk of chunks) {
+    const hit = matchBossFromOcr(chunk, roster);
+    if (hit && hit.score > bestScore) {
+      bestScore = hit.score;
+      bestMatched = hit.boss.name;
+    }
+  }
+  if (bestMatched) return bestMatched;
+  for (const chunk of chunks) {
+    const cjk = chunk.replace(/[^\u4e00-\u9fff·]/g, "");
+    if (cjk.length >= 2) return cjk;
+  }
+  return chunks[0] ?? "";
+}
+
+function pickBestTimeText(chunks: string[]) {
+  let bestCount = 0;
+  let bestFormatted = "";
+  for (const chunk of chunks) {
+    const times = parseBossTimesFromOcr(chunk);
+    if (times.length > bestCount) {
+      bestCount = times.length;
+      bestFormatted = formatParsedBeijingTimes(times);
+    }
+  }
+  if (bestFormatted) return bestFormatted;
+  return formatParsedBeijingTimes(parseBossTimesFromOcr(chunks.join("\n")));
 }
 
 export type BossNameOcrResult = {
@@ -76,6 +104,61 @@ export type BossTimeOcrResult = {
   previewDataUrl: string;
 };
 
+export async function recognizeBossNameAtRect(
+  image: File | Blob | string,
+  rect: RatioRect,
+  bossNames: string[] = [],
+): Promise<BossNameOcrResult> {
+  const [worker, built] = await Promise.all([
+    getNameWorker(),
+    buildBossRectCrops(image, rect, "name"),
+  ]);
+  const chunks = await recognizeCropTexts(
+    worker,
+    built.crops,
+    {
+      preserve_interword_spaces: "1",
+      tessedit_char_whitelist: "",
+    },
+    [PSM.SINGLE_LINE, PSM.RAW_LINE, PSM.SPARSE_TEXT],
+  );
+  return {
+    text: pickBestNameText(chunks, bossNames),
+    previewDataUrl: built.preview,
+  };
+}
+
+export async function recognizeBossTimeAtRect(
+  image: File | Blob | string,
+  rect: RatioRect,
+): Promise<BossTimeOcrResult> {
+  const [worker, built] = await Promise.all([
+    getTimeWorker(),
+    buildBossRectCrops(image, rect, "time"),
+  ]);
+  const chunks = await recognizeCropTexts(
+    worker,
+    built.crops,
+    {
+      preserve_interword_spaces: "1",
+      tessedit_char_whitelist: "0123456789年月日时分:：- ",
+    },
+    [PSM.SINGLE_LINE, PSM.SINGLE_BLOCK, PSM.AUTO],
+  );
+  try {
+    await worker.setParameters({
+      tessedit_pageseg_mode: PSM.AUTO,
+      tessedit_char_whitelist: "",
+    });
+  } catch {
+    // ignore
+  }
+  return {
+    text: pickBestTimeText(chunks),
+    previewDataUrl: built.preview,
+  };
+}
+
 export async function recognizeBossNameAtClick(
   image: File | Blob | string,
   xRatio: number,
@@ -86,7 +169,7 @@ export async function recognizeBossNameAtClick(
     buildBossNameClickCrops(image, xRatio, yRatio),
     buildBossClickPreview(image, xRatio, yRatio, "name"),
   ]);
-  const text = await recognizeCrops(
+  const chunks = await recognizeCropTexts(
     worker,
     crops,
     {
@@ -95,8 +178,7 @@ export async function recognizeBossNameAtClick(
     },
     [PSM.SINGLE_LINE, PSM.RAW_LINE, PSM.SPARSE_TEXT],
   );
-  const cjk = text.replace(/[^\u4e00-\u9fff·]/g, "");
-  return { text: cjk.length >= 2 ? cjk : text, previewDataUrl };
+  return { text: pickBestNameText(chunks, []), previewDataUrl };
 }
 
 export async function recognizeBossTimeAtClick(
@@ -109,7 +191,7 @@ export async function recognizeBossTimeAtClick(
     buildBossTimeClickCrops(image, xRatio, yRatio),
     buildBossClickPreview(image, xRatio, yRatio, "time"),
   ]);
-  const text = await recognizeCrops(
+  const chunks = await recognizeCropTexts(
     worker,
     crops,
     {
@@ -126,5 +208,5 @@ export async function recognizeBossTimeAtClick(
   } catch {
     // ignore
   }
-  return { text, previewDataUrl };
+  return { text: pickBestTimeText(chunks), previewDataUrl };
 }
