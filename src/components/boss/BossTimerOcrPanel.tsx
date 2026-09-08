@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Boss } from "@/lib/types";
 import { formatBeijingDateTime } from "@/lib/auction/client";
 import {
@@ -56,6 +56,16 @@ function boxStyle(
     width: Math.max(2, box.w * frame.dispW),
     height: Math.max(2, box.h * frame.dispH),
   };
+}
+
+function normalizeBossQuery(s: string) {
+  return s.trim().replace(/\s+/g, "");
+}
+
+function filterBossesByQuery(list: Boss[], query: string) {
+  const q = normalizeBossQuery(query);
+  if (!q) return list;
+  return list.filter((b) => normalizeBossQuery(b.name).includes(q));
 }
 
 function remainHint(nextIso: string, nowMs: number) {
@@ -120,9 +130,8 @@ export function BossTimerOcrPanel({
   const [busy, setBusy] = useState(false);
   const [recognizing, setRecognizing] = useState(false);
   const [applyingKey, setApplyingKey] = useState<string | null>(null);
-  const [nameManual, setNameManual] = useState(false);
   const [timeManual, setTimeManual] = useState(false);
-  const [nameDraft, setNameDraft] = useState("");
+  const [nameQuery, setNameQuery] = useState("");
   const [timeDraft, setTimeDraft] = useState("");
 
   useEffect(() => {
@@ -163,9 +172,8 @@ export function BossTimerOcrPanel({
     setTimePreview(null);
     setMatchedId(null);
     setPending(null);
-    setNameManual(false);
     setTimeManual(false);
-    setNameDraft("");
+    setNameQuery("");
     setTimeDraft("");
   }
 
@@ -259,11 +267,11 @@ export function BossTimerOcrPanel({
         bosses.map((b) => b.name),
       );
       setOcrName(result.text);
-      setNameDraft(result.text);
       setNamePreview(result.previewDataUrl);
       const hit = matchBossFromOcr(result.text, bosses);
       if (hit) {
         setMatchedId(hit.boss.id);
+        setNameQuery(hit.boss.name);
         setStep("time");
         setStatus(
           `已匹配「${hit.boss.name}」。请再拖框框出该行的击退时间`,
@@ -271,15 +279,16 @@ export function BossTimerOcrPanel({
         if (ocrTime) refreshPending(hit.boss.id, result.text, ocrTime);
       } else {
         setMatchedId(null);
+        setNameQuery(result.text.replace(/\s+/g, ""));
         setStep("time");
         setStatus(
           result.text
-            ? `识别为「${result.text.replace(/\s+/g, "")}」，未自动匹配。请手动选择或输入 BOSS，再拖出击退时间`
-            : "未识别到名字，可重新拉框、重新识别，或手动输入",
+            ? `识别为「${result.text.replace(/\s+/g, "")}」，未自动匹配。请搜索选择已有 BOSS，再拖出击退时间`
+            : "未识别到名字，可重新拉框、重新识别，或搜索选择已有 BOSS",
         );
       }
     } catch {
-      setStatus("名字识别失败，可重新拉框或手动输入");
+      setStatus("名字识别失败，可重新拉框或搜索选择已有 BOSS");
     } finally {
       setRecognizing(false);
     }
@@ -302,7 +311,7 @@ export function BossTimerOcrPanel({
       }
       if (matchedId == null) {
         setPending(null);
-        setStatus("已读到时间。请先选择或输入对应 BOSS");
+        setStatus("已读到时间。请先搜索选择对应 BOSS");
         return;
       }
       refreshPending(matchedId, ocrName, result.text);
@@ -363,6 +372,9 @@ export function BossTimerOcrPanel({
       setPending(null);
       return;
     }
+    setError("");
+    setNameQuery(boss.name);
+    setStep("time");
     if (!ocrTime) {
       setStatus(`已选择「${boss.name}」。请拖框框出该行的击退时间`);
       return;
@@ -370,27 +382,21 @@ export function BossTimerOcrPanel({
     refreshPending(boss.id, ocrName || boss.name, ocrTime);
   }
 
-  function applyManualName() {
-    const typed = nameDraft.trim();
-    if (!typed) {
-      setError("请输入 BOSS 名字");
-      return;
-    }
-    setOcrName(typed);
-    const hit = matchBossFromOcr(typed, bosses);
-    const exact = bosses.find((b) => b.name === typed);
-    const boss = exact ?? hit?.boss;
-    if (!boss) {
-      setMatchedId(null);
-      setError("没有叫这个名字的 BOSS，请对照下拉列表");
-      return;
-    }
+  function onNameQueryChange(value: string) {
+    setNameQuery(value);
     setError("");
-    setMatchedId(boss.id);
-    setNameManual(false);
-    setStep("time");
-    if (ocrTime) refreshPending(boss.id, typed, ocrTime);
-    else setStatus(`已选择「${boss.name}」。请拖框框出击退时间`);
+    const q = normalizeBossQuery(value);
+    if (matchedId == null) return;
+    const current = bosses.find((b) => b.id === matchedId);
+    if (!current) {
+      setMatchedId(null);
+      setPending(null);
+      return;
+    }
+    if (q && !normalizeBossQuery(current.name).includes(q)) {
+      setMatchedId(null);
+      setPending(null);
+    }
   }
 
   function applyManualTime() {
@@ -468,6 +474,10 @@ export function BossTimerOcrPanel({
 
   const nowMs = Date.now();
   const selectedBoss = bosses.find((b) => b.id === matchedId) ?? null;
+  const filteredBosses = useMemo(
+    () => filterBossesByQuery(bosses, nameQuery),
+    [bosses, nameQuery],
+  );
 
   return (
     <section className="mb-5 rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)] p-4">
@@ -475,7 +485,7 @@ export function BossTimerOcrPanel({
         截图识别批量改时间
       </h2>
       <p className="mt-1 text-xs leading-relaxed text-[var(--text-muted)]">
-        上传战盟「首领」列表截图后，自己拖框圈住名字，再圈住击退时间。认错了可以重新识别或手动输入。核对后再写入。
+        上传战盟「首领」列表截图后，自己拖框圈住名字，再圈住击退时间。认错了可以重新识别，或搜索点选已有 BOSS。核对后再写入。
       </p>
 
       <div
@@ -611,51 +621,52 @@ export function BossTimerOcrPanel({
               >
                 重新识别
               </button>
-              <button
-                type="button"
-                className="btn-ghost text-xs"
-                onClick={() => {
-                  setNameManual((v) => !v);
-                  setNameDraft(ocrName);
-                }}
-              >
-                手动输入
-              </button>
             </div>
-            {nameManual && (
-              <div className="mt-2 flex flex-col gap-2">
-                <input
-                  className="field !py-2 text-sm"
-                  value={nameDraft}
-                  placeholder="输入 BOSS 名字"
-                  onChange={(e) => setNameDraft(e.target.value)}
-                />
-                <button
-                  type="button"
-                  className="btn-primary text-sm"
-                  onClick={applyManualName}
-                >
-                  使用这个名字
-                </button>
-              </div>
-            )}
             <label className="mt-2 block space-y-1">
               <span className="text-[11px] text-[var(--text-muted)]">
                 对应 BOSS
               </span>
-              <select
-                className="field !py-2 text-sm"
-                value={matchedId ?? ""}
-                onChange={(e) => onPickBoss(Number(e.target.value))}
-              >
-                <option value="">请选择</option>
-                {bosses.map((boss) => (
-                  <option key={boss.id} value={boss.id}>
-                    {boss.name}（间隔 {boss.intervalHours} 小时）
-                  </option>
-                ))}
-              </select>
+              <div>
+                <input
+                  className="field !py-2 text-sm"
+                  value={nameQuery}
+                  placeholder="搜索已有 BOSS"
+                  autoComplete="off"
+                  onChange={(e) => onNameQueryChange(e.target.value)}
+                />
+                <ul className="mt-1 max-h-40 overflow-y-auto rounded-lg border border-[var(--border-soft)] bg-[#12172a] py-1">
+                  {filteredBosses.length === 0 ? (
+                    <li className="px-3 py-2 text-xs text-[var(--text-muted)]">
+                      无-请新建boss
+                    </li>
+                  ) : (
+                    filteredBosses.map((boss) => (
+                      <li key={boss.id}>
+                        <button
+                          type="button"
+                          className={`flex w-full px-3 py-2 text-left text-sm hover:bg-[#252d40] ${
+                            matchedId === boss.id
+                              ? "bg-[#252d40] text-[var(--accent-violet)]"
+                              : ""
+                          }`}
+                          onClick={() => onPickBoss(boss.id)}
+                        >
+                          {boss.name}
+                          <span className="ml-1 text-[11px] text-[var(--text-muted)]">
+                            （间隔 {boss.intervalHours} 小时）
+                          </span>
+                        </button>
+                      </li>
+                    ))
+                  )}
+                </ul>
+              </div>
             </label>
+            {selectedBoss && (
+              <p className="mt-1 text-[11px] text-[var(--accent-violet)]">
+                已选「{selectedBoss.name}」
+              </p>
+            )}
           </div>
           <div className="rounded-xl bg-[#151a2c] p-3">
             <p className="text-[11px] text-[var(--text-muted)]">时间识别</p>
