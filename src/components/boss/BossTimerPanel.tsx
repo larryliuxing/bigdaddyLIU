@@ -26,8 +26,12 @@ const SPARKS = [
   { sx: "44px", sy: "40px", left: "54%", top: "50%", delay: "120ms" },
 ];
 
-function lastMarkNames(boss: Boss) {
-  if (!boss.lastMark?.members.length) return "";
+function lastMarkTitle(boss: Boss) {
+  if (!boss.lastMark) return "";
+  if (boss.lastMark.source === "admin") {
+    return `管理员维护（${boss.lastMark.adminName || "管理员"}）`;
+  }
+  if (!boss.lastMark.members.length) return "";
   return boss.lastMark.members.map((m) => m.memberName).join("、");
 }
 
@@ -40,6 +44,7 @@ function BossCard({
   soundOn,
   onSpawnReady,
   now,
+  voteNeed,
 }: {
   boss: Boss;
   member: Extract<SessionUser, { type: "member" }> | null;
@@ -49,6 +54,7 @@ function BossCard({
   soundOn: boolean;
   onSpawnReady: (boss: Boss) => void;
   now: number;
+  voteNeed: number;
 }) {
   const [burstKey, setBurstKey] = useState(0);
   const prevRemain = useRef<number | null>(null);
@@ -98,7 +104,7 @@ function BossCard({
     return () => window.clearTimeout(t);
   }, [burstKey]);
 
-  const markNames = lastMarkNames(boss);
+  const markTitle = lastMarkTitle(boss);
   const hasDrops = Boolean(boss.hasDropsImage || boss.dropsImage || boss.dropsNote);
   const isReady = remain === 0 && Boolean(boss.nextSpawnAt);
   const isUrgent = remain != null && remain > 0 && remain <= URGENT_SECONDS;
@@ -175,23 +181,55 @@ function BossCard({
         </p>
       </div>
 
+      {boss.activeRound && (
+        <div className="mt-3 rounded-xl border border-[rgba(232,168,74,0.35)] bg-[#1a1620] px-3 py-2.5">
+          <p className="text-[11px] tracking-wide text-[var(--text-muted)]">
+            投票进行中
+          </p>
+          <p className="mt-0.5 text-sm font-semibold text-[var(--text-primary)]">
+            {boss.activeRound.voteType === "killed" ? "已击杀" : "未刷新"}
+            {" · "}
+            {boss.activeRound.voteCount}/{voteNeed} 人
+            {" · "}
+            剩余{" "}
+            {Math.max(
+              0,
+              Math.floor(
+                (new Date(boss.activeRound.expiresAt).getTime() - now) / 1000,
+              ),
+            )}
+            秒
+          </p>
+          <p className="mt-0.5 text-xs text-[var(--text-muted)]">
+            {boss.activeRound.votes.map((v) => v.memberName).join("、") ||
+              "等待投票"}
+            {" · "}
+            点另一项即反对；{voteNeed > 1 ? `${voteNeed} 人立刻通过，` : ""}
+            10 秒无人反对也会生效
+          </p>
+        </div>
+      )}
+
       <div className="mt-3 rounded-xl border border-[rgba(123,108,255,0.28)] bg-[#151a2c] px-3 py-2.5">
         <p className="text-[11px] tracking-wide text-[var(--text-muted)]">
-          上次投票
+          {boss.lastMark?.source === "admin" ? "上次维护" : "上次投票"}
         </p>
-        {boss.lastMark && markNames ? (
+        {boss.lastMark && markTitle ? (
           <>
             <p className="mt-0.5 text-base font-semibold text-[var(--text-primary)]">
-              {markNames}
+              {markTitle}
             </p>
             <p className="mt-0.5 text-xs text-[var(--text-muted)]">
-              {boss.lastMark.voteType === "killed" ? "已击杀" : "未刷新"}
-              {" · "}
+              {boss.lastMark.source === "vote" && boss.lastMark.voteType
+                ? `${boss.lastMark.voteType === "killed" ? "已击杀" : "未刷新"} · `
+                : ""}
               {formatBeijingDateTime(boss.lastMark.at)}
             </p>
           </>
         ) : (
-          <p className="mt-0.5 text-sm text-[var(--text-muted)]">还没有人点过</p>
+          <p className="mt-0.5 text-sm text-[var(--text-muted)]">
+            还没有投票或管理员维护
+          </p>
         )}
       </div>
 
@@ -220,7 +258,9 @@ function BossCard({
 }
 
 function isTerminalVoteLog(message: string) {
-  return /成功生效|已生效|已按当前时间|超时未通过|投票失败/.test(message);
+  return /成功生效|已生效（|已生效，|超时未通过|反对「|管理员维护|投票失败/.test(
+    message,
+  );
 }
 
 /** Member-facing BOSS timer. Admin CRUD lives under /admin/boss. */
@@ -385,11 +425,18 @@ export function BossTimerPanel({
       if (lastSystem) lastSystemId.current = lastSystem.id;
 
       const label = voteType === "killed" ? "已击杀" : "未刷新";
-      showPopup(
-        lastSystem?.message ||
-          `已标记「${label}」，倒计时已按当前时间重开`,
-        "ok",
-      );
+      if (data.passed) {
+        showPopup(
+          lastSystem?.message || `「${label}」已生效`,
+          "ok",
+        );
+      } else {
+        showPopup(
+          lastSystem?.message ||
+            `已投票「${label}」，等待其他人同意，或 10 秒无人反对即生效`,
+          "info",
+        );
+      }
     } catch {
       setError("网络错误");
       showPopup("网络错误，标记失败", "fail");
@@ -525,7 +572,8 @@ export function BossTimerPanel({
         </header>
 
         <p className="relative z-10 mb-3 text-xs text-[var(--text-muted)]">
-          点「已击杀」或「未刷新」会按当前时间加上刷新间隔立刻开始倒计时。倒计时归零播放「来啦老弟」。
+          点「已击杀」或「未刷新」开始投票。达到 {room?.voteNeed ?? 3}{" "}
+          人立刻生效；不够人数时 10 秒内没人点另一项（反对）也会生效。卡片会记下投票的人；管理员改时间记为管理员维护。
         </p>
 
         {error && (
@@ -552,6 +600,7 @@ export function BossTimerPanel({
                 soundOn={soundOn}
                 onSpawnReady={handleSpawnReady}
                 now={now}
+                voteNeed={room.voteNeed}
               />
             ))}
           {room && bosses.length === 0 && (

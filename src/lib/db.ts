@@ -254,6 +254,8 @@ export function ensureDb(): Database.Database {
       started_at TEXT NOT NULL,
       expires_at TEXT NOT NULL,
       resolved_at TEXT,
+      source TEXT NOT NULL DEFAULT 'vote',
+      admin_name TEXT,
       FOREIGN KEY(boss_id) REFERENCES bosses(id)
     );
 
@@ -349,6 +351,13 @@ function seedIfEmpty(database: Database.Database) {
   ensureColumn(database, "members", "exited_at", "TEXT");
 
   ensureColumn(database, "bosses", "drops_image", "TEXT");
+  ensureColumn(
+    database,
+    "boss_vote_rounds",
+    "source",
+    "TEXT NOT NULL DEFAULT 'vote'",
+  );
+  ensureColumn(database, "boss_vote_rounds", "admin_name", "TEXT");
   ensureColumn(database, "auction_items", "bid_min", "REAL");
   ensureColumn(database, "auction_items", "bid_max", "REAL");
   ensureColumn(database, "auction_items", "vote_ends_at", "TEXT");
@@ -3212,7 +3221,20 @@ type RoundRow = {
   started_at: string;
   expires_at: string;
   resolved_at: string | null;
+  source?: string | null;
+  admin_name?: string | null;
 };
+
+function voteTypeLabel(voteType: "killed" | "not_spawned") {
+  return voteType === "killed" ? "已击杀" : "未刷新";
+}
+
+function formatVoterNames(roundId: number) {
+  const names = getRoundVotes(roundId).map((v) => v.member_name);
+  return names.length ? names.join("、") : "未知";
+}
+
+let expireOpenRoundsGuard = false;
 
 function remainingFrom(iso: string | null): number | null {
   if (!iso) return null;
@@ -3220,36 +3242,55 @@ function remainingFrom(iso: string | null): number | null {
 }
 
 function expireOpenRounds(database: Database.Database = ensureDb()) {
-  const now = new Date().toISOString();
-  const expiring = database
-    .prepare(
-      `SELECT r.id, r.boss_id, r.vote_type, b.name as boss_name,
-              (SELECT COUNT(*) FROM boss_votes v WHERE v.round_id = r.id) as vote_count
-       FROM boss_vote_rounds r
-       JOIN bosses b ON b.id = r.boss_id
-       WHERE r.status = 'open' AND r.expires_at <= ?`,
-    )
-    .all(now) as Array<{
-    id: number;
-    boss_id: number;
-    vote_type: "killed" | "not_spawned";
-    boss_name: string;
-    vote_count: number;
-  }>;
+  if (expireOpenRoundsGuard) return;
+  expireOpenRoundsGuard = true;
+  try {
+    const now = new Date().toISOString();
+    const expiring = database
+      .prepare(
+        `SELECT r.id, r.boss_id, r.vote_type, b.name as boss_name,
+                (SELECT COUNT(*) FROM boss_votes v WHERE v.round_id = r.id) as vote_count
+         FROM boss_vote_rounds r
+         JOIN bosses b ON b.id = r.boss_id
+         WHERE r.status = 'open' AND r.expires_at <= ?`,
+      )
+      .all(now) as Array<{
+      id: number;
+      boss_id: number;
+      vote_type: "killed" | "not_spawned";
+      boss_name: string;
+      vote_count: number;
+    }>;
 
-  database
-    .prepare(
-      `UPDATE boss_vote_rounds
-       SET status = 'expired', resolved_at = ?
-       WHERE status = 'open' AND expires_at <= ?`,
-    )
-    .run(now, now);
-
-  for (const row of expiring) {
-    const label = row.vote_type === "killed" ? "已击杀" : "未刷新";
-    addBossChatSystem(
-      `「${row.boss_name}」投票「${label}」超时未通过（${row.vote_count}人同意）`,
-    );
+    for (const row of expiring) {
+      const label = voteTypeLabel(row.vote_type);
+      if (row.vote_count >= 1) {
+        database
+          .prepare(
+            `UPDATE boss_vote_rounds
+             SET status = 'passed', resolved_at = ?
+             WHERE id = ? AND status = 'open'`,
+          )
+          .run(now, row.id);
+        applyPassedVote(row.boss_id, row.vote_type);
+        addBossChatSystem(
+          `「${row.boss_name}」投票「${label}」已生效（${formatVoterNames(row.id)}，10秒无人反对）`,
+        );
+      } else {
+        database
+          .prepare(
+            `UPDATE boss_vote_rounds
+             SET status = 'expired', resolved_at = ?
+             WHERE id = ? AND status = 'open'`,
+          )
+          .run(now, row.id);
+        addBossChatSystem(
+          `「${row.boss_name}」投票「${label}」超时未通过（0人同意）`,
+        );
+      }
+    }
+  } finally {
+    expireOpenRoundsGuard = false;
   }
 }
 
@@ -3334,7 +3375,17 @@ function getLastMarkForBoss(bossId: number): import("./types").BossLastMark | nu
     )
     .get(bossId) as RoundRow | undefined;
   if (!row) return null;
+  const source = row.source === "admin" ? "admin" : "vote";
   const votes = getRoundVotes(row.id);
+  if (source === "admin") {
+    return {
+      voteType: null,
+      at: row.resolved_at || row.started_at,
+      members: [],
+      source: "admin",
+      adminName: row.admin_name || "管理员",
+    };
+  }
   if (!votes.length) return null;
   return {
     voteType: row.vote_type,
@@ -3343,6 +3394,7 @@ function getLastMarkForBoss(bossId: number): import("./types").BossLastMark | nu
       memberId: v.member_id,
       memberName: v.member_name,
     })),
+    source: "vote",
   };
 }
 
@@ -3418,11 +3470,17 @@ export function updateBoss(
     lastKillAt: string | null;
     nextSpawnAt: string | null;
   }>,
+  opts?: { adminName?: string },
 ) {
   const current = ensureDb()
     .prepare(`SELECT * FROM bosses WHERE id = ?`)
     .get(id) as BossRow | undefined;
   if (!current) return null;
+
+  const timerChanged =
+    (data.lastKillAt !== undefined && data.lastKillAt !== current.last_kill_at) ||
+    (data.nextSpawnAt !== undefined &&
+      data.nextSpawnAt !== current.next_spawn_at);
 
   ensureDb()
     .prepare(
@@ -3445,7 +3503,37 @@ export function updateBoss(
       data.nextSpawnAt === undefined ? current.next_spawn_at : data.nextSpawnAt,
       id,
     );
+
+  if (timerChanged && opts?.adminName) {
+    recordAdminTimerMaintenance(id, current.name, opts.adminName);
+  }
   return getBossById(id);
+}
+
+function recordAdminTimerMaintenance(
+  bossId: number,
+  bossName: string,
+  adminName: string,
+) {
+  const database = ensureDb();
+  const nowIso = new Date().toISOString();
+  database
+    .prepare(
+      `UPDATE boss_vote_rounds
+       SET status = 'expired', resolved_at = ?
+       WHERE boss_id = ? AND status = 'open'`,
+    )
+    .run(nowIso, bossId);
+  database
+    .prepare(
+      `INSERT INTO boss_vote_rounds
+         (boss_id, vote_type, status, started_at, expires_at, resolved_at, source, admin_name)
+       VALUES (?, 'killed', 'passed', ?, ?, ?, 'admin', ?)`,
+    )
+    .run(bossId, nowIso, nowIso, nowIso, adminName);
+  addBossChatSystem(
+    `「${bossName}」管理员维护了计时（${adminName}）`,
+  );
 }
 
 export function deleteBoss(id: number) {
@@ -3484,50 +3572,106 @@ export function castBossVote(input: {
 
   const database = ensureDb();
   const nowIso = new Date().toISOString();
+  const expiresAt = new Date(
+    Date.now() + BOSS_VOTE_WINDOW_SECONDS * 1000,
+  ).toISOString();
+  const voteNeed = getBossVoteNeed();
+  const label = voteTypeLabel(input.voteType);
 
-  const run = database.transaction(() => {
-    database
-      .prepare(
-        `UPDATE boss_vote_rounds
-         SET status = 'expired', resolved_at = ?
-         WHERE boss_id = ? AND status = 'open'`,
-      )
-      .run(nowIso, input.bossId);
+  const result = database.transaction(() => {
+    expireOpenRounds(database);
 
-    const inserted = database
+    let roundRow = database
       .prepare(
-        `INSERT INTO boss_vote_rounds (boss_id, vote_type, status, started_at, expires_at, resolved_at)
-         VALUES (?, ?, 'passed', ?, ?, ?)`,
+        `SELECT * FROM boss_vote_rounds
+         WHERE boss_id = ? AND status = 'open'
+         ORDER BY id DESC LIMIT 1`,
       )
-      .run(input.bossId, input.voteType, nowIso, nowIso, nowIso);
+      .get(input.bossId) as RoundRow | undefined;
 
-    database
-      .prepare(
-        `INSERT INTO boss_votes (round_id, boss_id, vote_type, member_id, member_name, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        Number(inserted.lastInsertRowid),
-        input.bossId,
-        input.voteType,
-        input.memberId,
-        input.memberName,
-        nowIso,
+    if (roundRow && roundRow.vote_type !== input.voteType) {
+      const oldLabel = voteTypeLabel(roundRow.vote_type);
+      database
+        .prepare(
+          `UPDATE boss_vote_rounds
+           SET status = 'expired', resolved_at = ?
+           WHERE id = ? AND status = 'open'`,
+        )
+        .run(nowIso, roundRow.id);
+      addBossChatSystem(
+        `「${boss.name}」${input.memberName} 反对「${oldLabel}」，投票已取消`,
       );
-  });
-  run();
+      roundRow = undefined;
+    }
 
-  applyPassedVote(input.bossId, input.voteType);
+    if (!roundRow) {
+      const inserted = database
+        .prepare(
+          `INSERT INTO boss_vote_rounds
+             (boss_id, vote_type, status, started_at, expires_at, source)
+           VALUES (?, ?, 'open', ?, ?, 'vote')`,
+        )
+        .run(input.bossId, input.voteType, nowIso, expiresAt);
+      roundRow = database
+        .prepare(`SELECT * FROM boss_vote_rounds WHERE id = ?`)
+        .get(Number(inserted.lastInsertRowid)) as RoundRow;
+    }
+
+    try {
+      database
+        .prepare(
+          `INSERT INTO boss_votes (round_id, boss_id, vote_type, member_id, member_name, created_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          roundRow.id,
+          input.bossId,
+          input.voteType,
+          input.memberId,
+          input.memberName,
+          nowIso,
+        );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (/UNIQUE/i.test(message)) {
+        throw new Error("你已在本轮投过票");
+      }
+      throw err;
+    }
+
+    const voteCount = (
+      database
+        .prepare(`SELECT COUNT(*) as count FROM boss_votes WHERE round_id = ?`)
+        .get(roundRow.id) as { count: number }
+    ).count;
+    const names = formatVoterNames(roundRow.id);
+
+    if (voteCount >= voteNeed) {
+      database
+        .prepare(
+          `UPDATE boss_vote_rounds
+           SET status = 'passed', resolved_at = ?
+           WHERE id = ? AND status = 'open'`,
+        )
+        .run(nowIso, roundRow.id);
+      applyPassedVote(input.bossId, input.voteType);
+      addBossChatSystem(
+        `「${boss.name}」投票「${label}」成功生效（${names}）`,
+      );
+      return { passed: true as const, voteCount };
+    }
+
+    addBossChatSystem(
+      `「${boss.name}」${input.memberName} 投票「${label}」（${voteCount}/${voteNeed}，${BOSS_VOTE_WINDOW_SECONDS}秒内无人反对即生效）`,
+    );
+    return { passed: false as const, voteCount };
+  })();
+
   const updated = getBossById(input.bossId)!;
-  const label = input.voteType === "killed" ? "已击杀" : "未刷新";
-  addBossChatSystem(
-    `「${boss.name}」${input.memberName} 标记「${label}」已生效，倒计时已按当前时间重开（间隔 ${boss.intervalHours} 小时）`,
-  );
-
   return {
     round: updated.activeRound,
-    passed: true,
-    voteCount: updated.lastMark?.members.length ?? 1,
+    passed: result.passed,
+    voteCount: result.voteCount,
     boss: updated,
   };
 }

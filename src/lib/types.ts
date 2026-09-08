@@ -275,9 +275,11 @@ export interface Boss {
 }
 
 export interface BossLastMark {
-  voteType: BossVoteType;
+  voteType: BossVoteType | null;
   at: string;
   members: Array<{ memberId: number; memberName: string }>;
+  source: "vote" | "admin";
+  adminName?: string;
 }
 
 export interface BossVoteRound {
