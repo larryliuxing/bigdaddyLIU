@@ -10,8 +10,8 @@ export type OcrNameHit<T extends Named = Named> = {
   member: T | null;
 };
 
-const SKIP =
-  /贡献|获得|品级|战盟|名称|普通|守护|参与|战斗力|能力值|力量|体质|灵巧|敏捷|智力|智慧|洪门|千帆/;
+const SKIP_EXACT =
+  /^(贡献|贡献度|获得|品级|战盟|名称|普通|守护|参与|参与者|战斗力|能力值|力量|体质|灵巧|敏捷|智力|智慧|洪门|千帆|千帆舞)$/;
 
 export function compactName(s: string) {
   return s
@@ -23,7 +23,7 @@ export function cleanOcrNameToken(raw: string): string | null {
   const cleaned = compactName(raw).replace(/[0-9A-Za-z]/g, "");
   if (cleaned.length < 2 || cleaned.length > 12) return null;
   if (!/^[\u4e00-\u9fff]+$/.test(cleaned)) return null;
-  if (SKIP.test(cleaned)) return null;
+  if (SKIP_EXACT.test(cleaned)) return null;
   return cleaned;
 }
 

@@ -67,15 +67,23 @@ const TABLE_BODY_CROPS: RatioRect[] = [
 const GRADE_WORDS =
   /普通|守护|洪门|精英|领袖|成员|品级|战盟|名称|参与者|贡献度|获得|能力值/;
 
-function isNameInk(r: number, g: number, b: number) {
-  const max = Math.max(r, g, b);
-  const min = Math.min(r, g, b);
-  const sat = max - min;
+/**
+ * Participant modal names are a fixed light gray on charcoal,
+ * about RGB(120,124,130) on RGB(11,15,19). Brightness often sits
+ * around 80–140 — far below the old 125/150 ink cut, which wiped
+ * the glyphs before Tesseract ran.
+ */
+export function isParticipantNameInk(r: number, g: number, b: number) {
+  const sat = Math.max(r, g, b) - Math.min(r, g, b);
   const brightness = (r + g + b) / 3;
-  // Light gray / white glyphs on dark rows (game UI)
-  if (brightness >= 150 && sat <= 55) return true;
-  if (brightness >= 125 && sat <= 35) return true;
+  if (sat > 40) return false;
+  if (brightness >= 82) return true;
+  if (brightness >= 70 && sat <= 18) return true;
   return false;
+}
+
+export function participantNameInkCut(inkMean: number) {
+  return Math.max(52, Math.min(118, inkMean - 32));
 }
 
 function cropRatio(
@@ -117,13 +125,13 @@ function enhanceNameColumn(src: HTMLCanvasElement): HTMLCanvasElement {
   let inkSum = 0;
   let inkCount = 0;
   for (let i = 0; i < data.length; i += 4) {
-    if (isNameInk(data[i], data[i + 1], data[i + 2])) {
+    if (isParticipantNameInk(data[i], data[i + 1], data[i + 2])) {
       inkSum += (data[i] + data[i + 1] + data[i + 2]) / 3;
       inkCount++;
     }
   }
-  const inkMean = inkCount > 0 ? inkSum / inkCount : 170;
-  const cut = Math.max(110, Math.min(175, inkMean - 25));
+  const inkMean = inkCount > 0 ? inkSum / inkCount : 110;
+  const cut = participantNameInkCut(inkMean);
 
   for (let i = 0; i < data.length; i += 4) {
     const r = data[i];
@@ -131,11 +139,11 @@ function enhanceNameColumn(src: HTMLCanvasElement): HTMLCanvasElement {
     const b = data[i + 2];
     const brightness = (r + g + b) / 3;
     const sat = Math.max(r, g, b) - Math.min(r, g, b);
-    // Reject saturated UI chrome (teal guild icons etc.)
+    // Reject saturated UI chrome (guild icons); keep the light-gray names.
     const isInk =
-      sat <= 60 &&
+      sat <= 40 &&
       brightness >= cut &&
-      (isNameInk(r, g, b) || brightness >= cut + 15);
+      (isParticipantNameInk(r, g, b) || brightness >= cut + 8);
     // Map to soft gray/black instead of pure binary to keep thin strokes
     if (isInk) {
       const t = Math.max(0, Math.min(1, (brightness - cut) / 80));
