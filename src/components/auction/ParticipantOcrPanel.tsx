@@ -291,22 +291,37 @@ export function ParticipantOcrPanel({
         <p className="text-xs leading-relaxed text-[var(--text-muted)]">
           粘贴游戏「参与者」截图后，自己拖框圈出名称列。每个人名会对上盟成员，核对后再加入分红。
         </p>
-        {imageData && (
-          <button
-            type="button"
-            className="btn-ghost mt-2 text-xs"
-            onClick={() => {
-              setImageData(null);
-              setImageSource(null);
-              setNameRect(null);
-              setPreview(null);
-              setHits([]);
-              setStatus("");
-            }}
-          >
-            清除图片
-          </button>
-        )}
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <label className="btn-ghost cursor-pointer text-xs">
+            选择图片
+            <input
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) handleImage(file);
+                e.target.value = "";
+              }}
+            />
+          </label>
+          {imageData && (
+            <button
+              type="button"
+              className="btn-ghost text-xs"
+              onClick={() => {
+                setImageData(null);
+                setImageSource(null);
+                setNameRect(null);
+                setPreview(null);
+                setHits([]);
+                setStatus("");
+              }}
+            >
+              清除图片
+            </button>
+          )}
+        </div>
       </div>
 
       {imageData && (
