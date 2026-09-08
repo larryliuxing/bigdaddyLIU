@@ -20,6 +20,7 @@ import {
   AuctionItemThumb,
 } from "./AuctionItemImage";
 import { ItemPriceStatsLine } from "./ItemPriceStatsLine";
+import { qualityExtendHint } from "@/lib/auction/bidExtend";
 import {
   buildNowPlayingDanmaku,
   parseFanfareKind,
@@ -449,13 +450,18 @@ export function AuctionRoom({
               </label>
             </div>
           </div>
+          {live && (
+            <p className="mb-2 text-xs text-[var(--accent-gold)]">
+              最后一分钟：紫色出价加时 30 秒，粉色加时 1 分钟
+            </p>
+          )}
           <ul className="space-y-1.5 text-sm text-[var(--text-muted)]">
             {(room?.recentEvents ?? []).length === 0 && <li>暂无动态</li>}
             {(room?.recentEvents ?? []).map((ev) => (
               <li
                 key={ev.id}
                 className={
-                  parseFanfareKind(ev.kind)
+                  parseFanfareKind(ev.kind) || ev.message.includes("本场延长")
                     ? "font-medium text-[var(--accent-gold)]"
                     : undefined
                 }
@@ -506,6 +512,7 @@ export function AuctionRoom({
           {live &&
             activeItems.map((item) => {
               const q = qualityMeta(item.quality);
+              const extendHint = qualityExtendHint(item.quality);
               const min = room?.minNextBids?.[item.id] ?? item.startPrice;
               const isMine =
                 member != null && item.leadingBidderId === member.id;
@@ -554,6 +561,11 @@ export function AuctionRoom({
                               ? item.dividendMemberNames.join("、")
                               : "未设置"}
                           </p>
+                          {extendHint && (
+                            <p className="mt-1 text-xs text-[var(--accent-gold)]">
+                              {extendHint}
+                            </p>
+                          )}
                         </div>
                         <span className="rounded-full bg-emerald-500/15 px-2.5 py-1 text-xs text-emerald-300">
                           竞拍中
