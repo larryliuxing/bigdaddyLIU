@@ -8,6 +8,7 @@ import {
   splitKillAndAppearance,
 } from "../src/lib/boss/ocrParse";
 import { planTimerFromOcrKill } from "../src/lib/boss/timer";
+import { isBossNameInk } from "../src/lib/boss/nameInk";
 
 const sample =
   "2026年 08月 31日 10时 46分\n2026年 08月 31日 14时 46分";
@@ -66,6 +67,22 @@ assert.equal(matchBossFromOcr("  卡 坦  ", bosses)?.boss.id, 2);
 assert.equal(matchBossFromOcr("被污染的克鲁玛", bosses)?.boss.id, 3);
 assert.equal(matchBossFromOcr("克鲁玛", bosses)?.boss.id, 3);
 assert.equal(matchBossFromOcr("参与(22)", bosses), null);
+
+const named = [
+  ...bosses,
+  { id: 6, name: "潘柴特" },
+  { id: 7, name: "坦佛斯特" },
+];
+assert.equal(matchBossFromOcr("潘柴特", named)?.boss.id, 6);
+assert.equal(matchBossFromOcr("潘某特", named)?.boss.id, 6);
+assert.equal(matchBossFromOcr("潘柴待", named)?.boss.id, 6);
+assert.equal(matchBossFromOcr("柴特", named)?.boss.id, 6);
+assert.equal(matchBossFromOcr("潘 柴 特", named)?.boss.id, 6);
+
+assert.equal(isBossNameInk(135, 136, 140), true);
+assert.equal(isBossNameInk(138, 125, 107), true);
+assert.equal(isBossNameInk(11, 15, 19), false);
+assert.equal(isBossNameInk(94, 233, 181), false);
 
 const now = new Date("2026-08-31T11:00:00+08:00").getTime();
 const planned = buildOcrTimerDraft({
