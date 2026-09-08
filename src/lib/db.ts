@@ -38,6 +38,10 @@ import {
   resolvePinkContest,
 } from "./auction/pink";
 import {
+  isNearName,
+  pairOcrNamesToMembers,
+} from "./auction/nameMatch";
+import {
   DEFAULT_LEADERBOARD_THRESHOLD_PERCENT,
   normalizeLeaderboardThresholdPercent,
   percentToRatio,
@@ -2962,14 +2966,16 @@ export function matchParticipantNames(
 ): {
   matched: Member[];
   unrecognized: string[];
+  hits: { ocrName: string; member: Member | null }[];
 } {
   const members = listMembers();
+  const paired = pairOcrNamesToMembers(names, members);
   const compactFull = `${names.join("")}${rawText}`.replace(/\s+/g, "");
   const compactLower = compactFull.toLowerCase();
 
-  const matchedIds = new Set<number>();
+  const matchedIds = new Set(paired.matched.map((m) => m.id));
 
-  // Primary: each guild member name appearing inside OCR text / names
+  // Extra: roster names that appear inside the concatenated OCR blob.
   for (const member of members) {
     const name = member.name.replace(/\s+/g, "");
     if (name.length < 2) continue;
@@ -2981,45 +2987,9 @@ export function matchParticipantNames(
     }
   }
 
-  const skip =
-    /贡献|获得|品级|战盟|名称|普通|守护|参与|战斗力|能力值|力量|体质|灵巧|敏捷|智力|智慧|洪门|千帆/;
-
-  const cleanedNames = names
-    .map((n) =>
-      n
-        .replace(/\s+/g, "")
-        .replace(/[0-9A-Za-z|｜]/g, "")
-        .trim(),
-    )
-    .filter((n) => n.length >= 2 && n.length <= 12)
-    .filter((n) => /^[\u4e00-\u9fff]+$/.test(n))
-    .filter((n) => !skip.test(n));
-
-  const unrecognized: string[] = [];
-
-  for (const token of cleanedNames) {
-    let hit = false;
-    for (const member of members) {
-      const name = member.name.replace(/\s+/g, "");
-      if (name.length < 2) continue;
-      if (
-        token === name ||
-        (token.length >= 2 && name.includes(token)) ||
-        (name.length >= 2 && token.includes(name)) ||
-        isNearName(token, name)
-      ) {
-        matchedIds.add(member.id);
-        hit = true;
-        break;
-      }
-    }
-    if (hit) continue;
-    if (!unrecognized.includes(token)) unrecognized.push(token);
-  }
-
   return {
     matched: members.filter((m) => matchedIds.has(m.id)),
-    unrecognized: unrecognized.filter((token) => {
+    unrecognized: paired.unrecognized.filter((token) => {
       return !members.some((m) => {
         if (!matchedIds.has(m.id)) return false;
         const name = m.name.replace(/\s+/g, "");
@@ -3030,27 +3000,8 @@ export function matchParticipantNames(
         );
       });
     }),
+    hits: paired.hits,
   };
-}
-
-function charOverlapRatio(a: string, b: string) {
-  if (!a || !b) return 0;
-  if (Math.abs(a.length - b.length) > 2) return 0;
-  const setA = new Set(a);
-  let shared = 0;
-  for (const ch of b) {
-    if (setA.has(ch)) shared += 1;
-  }
-  return shared / Math.max(a.length, b.length);
-}
-
-/** Tolerate minor OCR glyph mistakes against roster names. */
-function isNearName(token: string, name: string) {
-  if (!token || !name) return false;
-  if (Math.abs(token.length - name.length) > 1) return false;
-  const ratio = charOverlapRatio(token, name);
-  if (token.length <= 3) return token.length === name.length && ratio >= 0.5;
-  return ratio >= 0.6;
 }
 
 /* -------------------- Leaderboard -------------------- */
