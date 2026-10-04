@@ -84,7 +84,8 @@ def main() -> None:
         "name-5.png": "\u9468\u9468\u9f93\u9468\u9468\u9468",
         "name-6.png": "\u9468\u7216\u5dc4\u5dc3\u7932\u8c45",
         "name-7.png": "\u9468\u9f93\u5fbf\u8d1a\u8d1a\u9468",
-        "name-8.png": "\u5131\u6f0b\u6f0b\u6f0b\u6f0b\u6f0b",
+        "name-8.png": "\u5131\u5131\u5131\u6f0b\u6f0b\u6f0b",
+        "name-8b.png": "\u5131\u5131\u5131\u6f0b\u6f0b\u6f0b",
     }
     if NAME_1 != expected["name-luolong-1.png"]:
         raise SystemExit(f"NAME_1 codepoints wrong: {_hex(NAME_1)}")
