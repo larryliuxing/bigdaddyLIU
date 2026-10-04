@@ -1,6 +1,6 @@
 "use client";
 
-import { createWorker, PSM, type Worker } from "tesseract.js";
+import { prewarmPaddleOcr, recognizeWithPaddle } from "@/lib/ocr/client";
 import {
   buildNameClickCrops,
   buildPowerClickCrops,
@@ -26,60 +26,9 @@ export type NameOcrResult = {
   previewDataUrl: string;
 };
 
-let digitWorkerPromise: Promise<Worker> | null = null;
-let nameWorkerPromise: Promise<Worker> | null = null;
-
-async function getDigitWorker() {
-  if (!digitWorkerPromise) {
-    digitWorkerPromise = createWorker("eng");
-  }
-  return digitWorkerPromise;
-}
-
-async function getNameWorker() {
-  if (!nameWorkerPromise) {
-    nameWorkerPromise = createWorker("chi_sim");
-  }
-  return nameWorkerPromise;
-}
-
-/** Warm OCR packs when the upload panel opens. */
+/** Warm the local PaddleOCR service when the upload panel opens. */
 export function prewarmLeaderboardOcr() {
-  void getDigitWorker();
-  void getNameWorker();
-}
-
-async function recognizeDigits(worker: Worker, dataUrl: string) {
-  const chunks: string[] = [];
-  for (const psm of [PSM.SINGLE_LINE, PSM.RAW_LINE, PSM.SINGLE_WORD] as const) {
-    try {
-      await worker.setParameters({
-        tessedit_pageseg_mode: psm,
-        tessedit_char_whitelist: "0123456789",
-        preserve_interword_spaces: "0",
-      });
-      const result = await worker.recognize(dataUrl);
-      const text = (result.data.text || "").trim();
-      if (text) chunks.push(text);
-    } catch {
-      // next
-    }
-  }
-  return chunks;
-}
-
-async function recognizeNameOnce(
-  worker: Worker,
-  dataUrl: string,
-  psm: PSM,
-) {
-  await worker.setParameters({
-    tessedit_pageseg_mode: psm,
-    preserve_interword_spaces: "1",
-    tessedit_char_whitelist: "",
-  });
-  const result = await worker.recognize(dataUrl);
-  return (result.data.text || "").trim();
+  prewarmPaddleOcr();
 }
 
 function uniqueJoin(chunks: string[]) {
@@ -116,25 +65,6 @@ function uniqueJoinName(chunks: string[]) {
   return uniqueJoin(cleaned);
 }
 
-async function recognizeNameWithPaddle(colorDataUrl: string, maskDataUrl?: string) {
-  try {
-    const images = [colorDataUrl, maskDataUrl].filter(Boolean);
-    const res = await fetch("/api/leaderboard/ocr-name", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        image: images[0],
-        images: images.slice(1),
-      }),
-    });
-    if (!res.ok) return "";
-    const data = (await res.json()) as { text?: string };
-    return String(data?.text ?? "").trim();
-  } catch {
-    return "";
-  }
-}
-
 /**
  * OCR combat power from a user click on the number.
  * Only accepts 4–6 digit values.
@@ -144,33 +74,13 @@ export async function recognizePowerAtClick(
   xRatio: number,
   yRatio: number,
 ): Promise<PowerOcrResult> {
-  const [worker, crops, previewDataUrl] = await Promise.all([
-    getDigitWorker(),
+  const [crops, previewDataUrl] = await Promise.all([
     buildPowerClickCrops(image, xRatio, yRatio),
     buildPowerClickPreview(image, xRatio, yRatio),
   ]);
 
-  const chunks: string[] = [];
-  for (const url of crops) {
-    try {
-      chunks.push(...(await recognizeDigits(worker, url)));
-      const early = extractClickedCombatPower(uniqueJoin(chunks));
-      if (early != null) break;
-    } catch {
-      // continue
-    }
-  }
-
-  try {
-    await worker.setParameters({
-      tessedit_pageseg_mode: PSM.AUTO,
-      tessedit_char_whitelist: "",
-    });
-  } catch {
-    // ignore
-  }
-
-  const text = uniqueJoin(chunks);
+  const result = await recognizeWithPaddle(crops, "leaderboard_power");
+  const text = uniqueJoin([result.text, ...result.lines]);
   const combatPower = extractClickedCombatPower(text);
   if (combatPower == null) {
     return {
@@ -203,92 +113,24 @@ export async function recognizeNameAtClick(
   yRatio: number,
   expectedName?: string,
 ): Promise<NameOcrResult> {
-  const [worker, bundle] = await Promise.all([
-    getNameWorker(),
-    buildNameClickCrops(image, xRatio, yRatio),
-  ]);
-  const { crops, previewDataUrl, colorDataUrl } = bundle;
-
-  const chunks: string[] = [];
-  const modes = [PSM.SINGLE_LINE, PSM.RAW_LINE] as const;
-  outer: for (const psm of modes) {
-    for (const url of crops) {
-      try {
-        const text = await recognizeNameOnce(worker, url, psm);
-        if (text) chunks.push(text);
-        if (
-          expectedName &&
-          chunks.length &&
-          extractDetectedName(uniqueJoinName(chunks), expectedName).matched
-        ) {
-          break outer;
-        }
-      } catch {
-        // continue
-      }
-    }
-  }
-
+  const bundle = await buildNameClickCrops(image, xRatio, yRatio);
+  const result = await recognizeWithPaddle(
+    [bundle.colorDataUrl, ...bundle.crops],
+    "leaderboard_name",
+  );
+  const nameText = uniqueJoinName([result.text, ...result.lines]);
   if (
     expectedName &&
-    !extractDetectedName(uniqueJoinName(chunks), expectedName).matched
+    !extractDetectedName(nameText, expectedName).matched &&
+    result.text
   ) {
-    const extra = [PSM.SINGLE_WORD, PSM.SPARSE_TEXT] as const;
-    extraLoop: for (const psm of extra) {
-      for (const url of crops.slice(0, 2)) {
-        try {
-          const text = await recognizeNameOnce(worker, url, psm);
-          if (text) chunks.push(text);
-          if (extractDetectedName(uniqueJoinName(chunks), expectedName).matched) {
-            break extraLoop;
-          }
-        } catch {
-          // continue
-        }
-      }
-    }
-
-    const whitelist = [...expectedName]
-      .filter((ch) => /[\u4e00-\u9fff丶]/.test(ch))
-      .join("");
-    if (whitelist && crops[0]) {
-      try {
-        await worker.setParameters({
-          tessedit_pageseg_mode: PSM.SINGLE_LINE,
-          preserve_interword_spaces: "1",
-          tessedit_char_whitelist: whitelist,
-        });
-        const result = await worker.recognize(crops[0]);
-        const text = (result.data.text || "").trim();
-        if (text) chunks.push(text);
-      } catch {
-        // ignore
-      }
-    }
-
-    if (
-      !extractDetectedName(uniqueJoinName(chunks), expectedName).matched &&
-      (colorDataUrl || crops[0])
-    ) {
-      const paddleText = await recognizeNameWithPaddle(
-        colorDataUrl || crops[0],
-        crops[0],
-      );
-      if (paddleText) chunks.push(paddleText);
-    }
+    return {
+      nameText: uniqueJoinName([nameText, result.text]),
+      previewDataUrl: bundle.previewDataUrl,
+    };
   }
-
-  try {
-    await worker.setParameters({
-      tessedit_pageseg_mode: PSM.AUTO,
-      tessedit_char_whitelist: "",
-    });
-  } catch {
-    // ignore
-  }
-
   return {
-    nameText: uniqueJoinName(chunks),
-    previewDataUrl,
+    nameText,
+    previewDataUrl: bundle.previewDataUrl,
   };
 }

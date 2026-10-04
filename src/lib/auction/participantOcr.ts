@@ -3,22 +3,13 @@
  * then callers match those names against guild members for dividends.
  */
 
-import { createWorker, PSM, type Worker } from "tesseract.js";
+import { recognizeWithPaddle } from "@/lib/ocr/client";
 
 export type ParticipantOcrResult = {
   text: string;
   names: string[];
   previewDataUrl: string | null;
 };
-
-let participantWorkerPromise: Promise<Worker> | null = null;
-
-async function getWorker() {
-  if (!participantWorkerPromise) {
-    participantWorkerPromise = createWorker("chi_sim");
-  }
-  return participantWorkerPromise;
-}
 
 function loadImage(source: File | Blob | string): Promise<HTMLImageElement> {
   const url =
@@ -245,27 +236,9 @@ function scoreNames(names: string[]) {
   return names.length * 10 + avgLen * 3;
 }
 
-async function recognizePasses(worker: Worker, dataUrl: string) {
-  const chunks: string[] = [];
-  for (const psm of [
-    PSM.SINGLE_COLUMN,
-    PSM.SPARSE_TEXT,
-    PSM.SINGLE_BLOCK,
-    PSM.AUTO,
-  ] as const) {
-    try {
-      await worker.setParameters({
-        tessedit_pageseg_mode: psm,
-        preserve_interword_spaces: "1",
-      });
-      const result = await worker.recognize(dataUrl);
-      const text = (result.data.text || "").trim();
-      if (text) chunks.push(text);
-    } catch {
-      // next
-    }
-  }
-  return chunks;
+async function recognizePasses(...dataUrls: string[]) {
+  const result = await recognizeWithPaddle(dataUrls, "participant_names");
+  return [result.text, ...result.lines].filter(Boolean);
 }
 
 type Attempt = {
@@ -277,7 +250,6 @@ type Attempt = {
 
 async function runCrops(
   img: HTMLImageElement,
-  worker: Worker,
   crops: RatioRect[],
   scale: number,
 ): Promise<Attempt[]> {
@@ -286,7 +258,7 @@ async function runCrops(
     const crop = cropRatio(img, rect, scale);
     const enhanced = enhanceNameColumn(crop);
     const dataUrl = enhanced.toDataURL("image/png");
-    const texts = await recognizePasses(worker, dataUrl);
+    const texts = await recognizePasses(crop.toDataURL("image/png"), dataUrl);
     const mergedText = texts.join("\n");
     const names = extractNameCandidates(mergedText);
     attempts.push({
@@ -326,10 +298,9 @@ export async function recognizeParticipantNamesInRect(
   rect: RatioRect,
 ): Promise<ParticipantOcrResult> {
   const img = await loadImage(source);
-  const worker = await getWorker();
   const attempts = [
-    ...(await runCrops(img, worker, [rect], 3)),
-    ...(await runCrops(img, worker, [rect], 2.4)),
+    ...(await runCrops(img, [rect], 3)),
+    ...(await runCrops(img, [rect], 2.4)),
   ];
   return mergeAttempts(attempts);
 }
@@ -341,11 +312,10 @@ export async function recognizeParticipantNames(
   source: File | Blob | string,
 ): Promise<ParticipantOcrResult> {
   const img = await loadImage(source);
-  const worker = await getWorker();
 
   const attempts = [
-    ...(await runCrops(img, worker, NAME_COLUMN_CROPS, 3)),
-    ...(await runCrops(img, worker, TABLE_BODY_CROPS, 2.4)),
+    ...(await runCrops(img, NAME_COLUMN_CROPS, 3)),
+    ...(await runCrops(img, TABLE_BODY_CROPS, 2.4)),
   ];
 
   attempts.sort((a, b) => b.score - a.score);

@@ -5,7 +5,7 @@
  * Failure mode to avoid: left icon bleed → junk glyphs ("到巨荐生" for "巨斧").
  */
 
-import { createWorker, PSM, type Worker } from "tesseract.js";
+import { recognizeWithPaddle } from "@/lib/ocr/client";
 import type { ItemQuality } from "@/lib/types";
 
 export type ItemNameOcrResult = {
@@ -14,15 +14,6 @@ export type ItemNameOcrResult = {
   rawText: string;
   previewDataUrl: string | null;
 };
-
-let nameWorkerPromise: Promise<Worker> | null = null;
-
-async function getNameWorker() {
-  if (!nameWorkerPromise) {
-    nameWorkerPromise = createWorker("chi_sim");
-  }
-  return nameWorkerPromise;
-}
 
 function loadImage(source: File | Blob | string): Promise<HTMLImageElement> {
   const url =
@@ -578,56 +569,9 @@ function scoreNameCandidate(raw: string, votes: Map<string, number>) {
   return scoreCleanedName(cleaned) + voteBonus - latin * 6;
 }
 
-async function recognizeNameVariants(worker: Worker, dataUrl: string) {
-  const texts: string[] = [];
-  const modes = [
-    PSM.SINGLE_LINE,
-    PSM.SINGLE_WORD,
-    PSM.RAW_LINE,
-    PSM.SPARSE_TEXT,
-  ] as const;
-
-  for (const psm of modes) {
-    try {
-      await worker.setParameters({
-        tessedit_pageseg_mode: psm,
-        preserve_interword_spaces: "0",
-        tessedit_char_blacklist:
-          "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
-      });
-      const result = await worker.recognize(dataUrl);
-      const text = (result.data.text || "").trim();
-      if (text) texts.push(text);
-
-      // Harvest high-confidence words from layout tree
-      for (const block of result.data.blocks || []) {
-        for (const para of block.paragraphs || []) {
-          for (const line of para.lines || []) {
-            for (const w of line.words || []) {
-              const t = (w.text || "").trim();
-              if (t && (w.confidence ?? 0) >= 40) texts.push(t);
-            }
-          }
-        }
-      }
-    } catch {
-      // try next
-    }
-  }
-
-  try {
-    await worker.setParameters({
-      tessedit_pageseg_mode: PSM.SINGLE_LINE,
-      preserve_interword_spaces: "0",
-      tessedit_char_blacklist: "",
-    });
-    const result = await worker.recognize(dataUrl);
-    const text = (result.data.text || "").trim();
-    if (text) texts.push(text);
-  } catch {
-    // ignore
-  }
-  return texts;
+async function recognizeNameVariants(dataUrl: string) {
+  const result = await recognizeWithPaddle([dataUrl], "auction_item_name");
+  return [result.text, ...result.lines].filter(Boolean);
 }
 
 function pickBestName(candidates: string[]) {
@@ -693,20 +637,15 @@ export async function recognizeItemName(
   const enhancedPurple = enhanceNameCrop(trimmed, "purple");
   const previewDataUrl = enhancedPurple.toDataURL("image/png");
 
-  const worker = await getNameWorker();
   const rawChunks: string[] = [];
   rawChunks.push(
-    ...(await recognizeNameVariants(worker, previewDataUrl)),
-    ...(await recognizeNameVariants(
-      worker,
-      enhancedHard.toDataURL("image/png"),
-    )),
+    ...(await recognizeNameVariants(previewDataUrl)),
+    ...(await recognizeNameVariants(enhancedHard.toDataURL("image/png"))),
   );
 
   // Original crop purple pass as backup (in case trim cut into first glyph)
   rawChunks.push(
     ...(await recognizeNameVariants(
-      worker,
       enhanceNameCrop(crop, "purple").toDataURL("image/png"),
     )),
   );
@@ -714,9 +653,7 @@ export async function recognizeItemName(
   // Soft pass if still weak
   if (pickBestName(rawChunks).length < 2) {
     const soft = enhanceNameCrop(crop, "soft");
-    rawChunks.push(
-      ...(await recognizeNameVariants(worker, soft.toDataURL("image/png"))),
-    );
+    rawChunks.push(...(await recognizeNameVariants(soft.toDataURL("image/png"))));
   }
 
   // Slightly wider header retry (still past icon)
@@ -733,10 +670,7 @@ export async function recognizeItemName(
     );
     const enhancedFallback = enhanceNameCrop(fallback, "purple");
     rawChunks.push(
-      ...(await recognizeNameVariants(
-        worker,
-        enhancedFallback.toDataURL("image/png"),
-      )),
+      ...(await recognizeNameVariants(enhancedFallback.toDataURL("image/png"))),
     );
   }
 
