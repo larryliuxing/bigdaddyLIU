@@ -78,6 +78,7 @@ def main() -> None:
         "name-2.png": "\u9468\u8c45\u8d1a\u9468\u8d1a\u5dc4",
         "name-3.png": "\u9468\u9468\u7216\u9f93\u9468\u9468",
         "name-4.png": "\u9468\u8d1a\u8d1a\u8c45\u7216\u5dc3",
+        "name-4b.png": "\u9468\u8d1a\u8d1a\u8c45\u7216\u5dc3",
         "name-5.png": "\u9468\u9468\u9f93\u9468\u9468\u9468",
         "name-6.png": "\u9468\u7216\u5dc4\u5dc3\u7932\u8c45",
     }
