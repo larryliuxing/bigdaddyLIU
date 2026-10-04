@@ -21,6 +21,7 @@ NAME_4 = "\u9468\u8d1a\u8d1a\u8c45\u7216\u5dc3"
 NAME_5 = "\u9468\u9468\u9f93\u9468\u9468\u9468"
 NAME_6 = "\u9468\u7216\u5dc4\u5dc3\u7932\u8c45"
 NAME_7 = "\u9468\u9f93\u5fbf\u8d1a\u8d1a\u9468"
+NAME_8 = "\u5131\u6f0b\u6f0b\u6f0b\u6f0b\u6f0b"
 NAME_LUOLONG = NAME_1
 
 # Human-read labels for sample crops (left-to-right).
@@ -33,6 +34,7 @@ SEED_LABELS = {
     "name-5.png": list(NAME_5),
     "name-6.png": list(NAME_6),
     "name-7.png": list(NAME_7),
+    "name-8.png": list(NAME_8),
 }
 
 
