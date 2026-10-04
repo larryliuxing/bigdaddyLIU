@@ -9,15 +9,16 @@ import numpy as np
 from PIL import Image, ImageOps
 
 TEMPLATE_DIR = Path(__file__).resolve().parent / "font_templates"
+SAMPLE_DIR = Path(__file__).resolve().parent / "samples"
 MIN_SCORE = 0.62
 
-# Human-read labels for the user's sample rows (left-to-right, icon excluded).
+# User-confirmed name (6 glyphs). 3rd=U+5DC4 巄, 5th=U+5DC3 巃.
+# Do not use the lookalikes U+9458 鑘 / U+5D84 嶄 / U+5D83 嶃.
+NAME_LUOLONG = "\u9468\u9f93\u5dc4\u9f93\u5dc3\u9468"
+
+# Human-read labels for sample crops (left-to-right).
 SEED_LABELS = {
-    "row-1.png": list("鐘鏡嶠籠鏡"),
-    "row-2.png": list("鐘鏡驄籠嶠"),
-    "row-3.png": list("鐘鏡嶠籠驄"),
-    "row-4.png": list("鐘鏡嶠籠鏡"),
-    "row-5.png": list("鐘鏡驄籠鏡"),
+    "name-luolong-1.png": list(NAME_LUOLONG),
 }
 
 
@@ -70,15 +71,32 @@ def _left_text_x(ink: np.ndarray) -> int:
     if start is not None and width - start >= 4:
         runs.append((start, width))
     if not runs:
-        return int(width * 0.26)
-    # icon is the first blob; names sit after the gap / divider
+        return 0
+    # Game rows may start with a small weapon icon, then the name.
     if len(runs) >= 2:
-        return max(0, runs[1][0] - 1)
-    # fallback: skip a typical icon column
-    return max(runs[0][0], int(width * 0.26))
+        first_w = runs[0][1] - runs[0][0]
+        rest_w = runs[-1][1] - runs[1][0]
+        if first_w <= 22 and first_w < rest_w * 0.28:
+            return max(0, runs[1][0] - 1)
+    return max(0, runs[0][0])
 
 
-def split_glyphs(row: Image.Image, expected: int = 5) -> list[Image.Image]:
+def _ink_span(col: np.ndarray, min_val: float = 1.0) -> tuple[int, int] | None:
+    hits = np.where(col >= min_val)[0]
+    if hits.size == 0:
+        return None
+    return int(hits[0]), int(hits[-1]) + 1
+
+
+def _equal_bands(start: int, end: int, count: int) -> list[tuple[int, int]]:
+    span = max(0, end - start)
+    return [
+        (start + int(i * span / count), start + int((i + 1) * span / count))
+        for i in range(count)
+    ]
+
+
+def split_glyphs(row: Image.Image, expected: int | None = None) -> list[Image.Image]:
     gray = np.array(row.convert("L"))
     invert = gray.mean() > 140
     ink = _ink_mask(gray, invert=invert)
@@ -86,28 +104,22 @@ def split_glyphs(row: Image.Image, expected: int = 5) -> list[Image.Image]:
     text = ink[:, left:]
     height, width = text.shape
     col = text.sum(axis=0)
-    threshold = max(2, height * 0.18)
-    bands: list[tuple[int, int]] = []
-    start = None
-    for x, v in enumerate(col):
-        if v >= threshold and start is None:
-            start = x
-        elif v < threshold and start is not None:
-            if x - start >= 4:
-                bands.append((start, x))
-            start = None
-    if start is not None and width - start >= 4:
-        bands.append((start, width))
-    # merge tiny fragments that belong to one glyph
-    merged: list[tuple[int, int]] = []
-    for a, b in bands:
-        if merged and a - merged[-1][1] <= 3:
-            merged[-1] = (merged[-1][0], b)
+    span = _ink_span(col, min_val=2.0) or _ink_span(col, min_val=1.0)
+    if expected is None:
+        if span:
+            typical = max(28, height - 2)
+            guess = int(round((span[1] - span[0]) / typical))
+            expected = 6 if guess >= 6 else 5 if guess >= 5 else max(2, guess)
         else:
-            merged.append((a, b))
-    if len(merged) != expected and width >= expected * 8:
-        step = width / expected
-        merged = [(int(i * step), int((i + 1) * step)) for i in range(expected)]
+            expected = 6
+    # This gold-radical font is near-monospaced. Split the ink box, not
+    # the padded row — trailing dark space used to become an empty 6th glyph.
+    if span and (span[1] - span[0]) >= expected * 8:
+        merged = _equal_bands(span[0], span[1], expected)
+    elif width >= expected * 8:
+        merged = _equal_bands(0, width, expected)
+    else:
+        merged = [(0, width)]
     glyphs = []
     for a, b in merged:
         crop = row.crop((left + max(0, a - 1), 0, left + min(width, b + 1), row.height))
@@ -192,10 +204,15 @@ def recognize_ornate_image(img: Image.Image) -> list[tuple[str, float]]:
         rows = [img]
     found: list[tuple[str, float]] = []
     for row in rows:
-        glyphs = split_glyphs(row)
-        if len(glyphs) < 2:
-            continue
-        name, score = match_glyphs(glyphs, templates)
-        if name and score >= MIN_SCORE:
-            found.append((name, score))
+        best_name = ""
+        best_score = 0.0
+        for count in (6, 5):
+            glyphs = split_glyphs(row, expected=count)
+            if len(glyphs) < 2:
+                continue
+            name, score = match_glyphs(glyphs, templates)
+            if score > best_score:
+                best_name, best_score = name, score
+        if best_name and best_score >= MIN_SCORE:
+            found.append((best_name, best_score))
     return found
