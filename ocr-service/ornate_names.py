@@ -34,6 +34,7 @@ SEED_LABELS = {
     "name-5.png": list(NAME_5),
     "name-6.png": list(NAME_6),
     "name-7.png": list(NAME_7),
+    "name-7b.png": list(NAME_7),
     "name-8.png": list(NAME_8),
     "name-8b.png": list(NAME_8),
 }
