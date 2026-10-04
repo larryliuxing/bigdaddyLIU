@@ -199,6 +199,38 @@ def run_one(img: Image.Image) -> list[tuple[float, str, float]]:
     raise RuntimeError("unsupported PaddleOCR API")
 
 
+def _looks_like_name(text: str) -> bool:
+    compact = re.sub(r"\s+", "", text)
+    cjk = re.sub(r"[^\u4e00-\u9fff]", "", compact)
+    return len(cjk) >= 2
+
+
+def _stack_bands(bands: list[Image.Image]) -> Image.Image:
+    if len(bands) == 1:
+        return bands[0]
+    width = max(band.width for band in bands)
+    gap = 8
+    height = sum(band.height for band in bands) + gap * (len(bands) - 1)
+    out = Image.new("RGB", (width, height), (11, 15, 19))
+    y = 0
+    for band in bands:
+        out.paste(band, (0, y))
+        y += band.height + gap
+    return out
+
+
+def run_paddle_for_text(img: Image.Image) -> list[tuple[float, str, float]]:
+    rows = run_one(img)
+    if any(_looks_like_name(text) for _y, text, _score in rows):
+        return rows
+    for variant in prepare_variants(img)[1:]:
+        extra = run_one(variant)
+        rows.extend(extra)
+        if any(_looks_like_name(text) for _y, text, _score in extra):
+            break
+    return rows
+
+
 def merge_rows(rows: list[tuple[float, str, float]]) -> list[str]:
     rows.sort(key=lambda row: (row[0], -row[2]))
     seen: set[str] = set()
@@ -241,21 +273,22 @@ def recognize_images(images: list[str]) -> dict[str, Any]:
     for raw in images[:MAX_IMAGES]:
         img = decode_image(raw)
         bands = split_rows(img) or [img]
+        leftover: list[Image.Image] = []
         if len(bands) == 1:
             found = recognize_ornate_image(img)
             if found:
                 ornate.extend(name for name, _score in found)
                 continue
-            for variant in prepare_variants(img):
-                rows.extend(run_one(variant))
-            continue
-        for band in bands:
-            found = recognize_ornate_image(band)
-            if found:
-                ornate.extend(name for name, _score in found)
-            else:
-                for variant in prepare_variants(band):
-                    rows.extend(run_one(variant))
+            leftover.append(img)
+        else:
+            for band in bands:
+                found = recognize_ornate_image(band)
+                if found:
+                    ornate.extend(name for name, _score in found)
+                else:
+                    leftover.append(band)
+        if leftover:
+            rows.extend(run_paddle_for_text(_stack_bands(leftover)))
     paddle_lines = [
         line for line in merge_rows(rows) if not _paddle_redundant(line, ornate)
     ]
@@ -350,6 +383,7 @@ def _load_models() -> None:
         print("[guild-ocr] loading PaddleOCR models…", flush=True)
         try:
             get_ocr()
+            run_one(Image.new("RGB", (96, 32), (20, 24, 28)))
             _models_ready = True
             print("[guild-ocr] models ready", flush=True)
         except Exception as exc:

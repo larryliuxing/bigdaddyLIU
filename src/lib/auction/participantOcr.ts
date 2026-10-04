@@ -326,7 +326,7 @@ export async function recognizeParticipantNamesInRect(
 ): Promise<ParticipantOcrResult> {
   const img = await loadImage(source);
   const attempts = await runCrops(img, [rect], 1);
-  if (img.height * rect.h < 280) {
+  if (!attempts[0]?.names.length && img.height * rect.h < 280) {
     attempts.push(...(await runCrops(img, [rect], 1.4)));
   }
   return mergeAttempts(attempts);
