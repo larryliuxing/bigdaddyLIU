@@ -13,11 +13,13 @@ from ornate_names import (
     NAME_4,
     SAMPLE_DIR,
     SEED_LABELS,
+    collect_seed_pairs,
     load_templates,
     match_glyphs,
     recognize_ornate_image,
     split_glyphs,
     split_rows,
+    templates_from_pairs,
 )
 from server import recognize_images
 
@@ -42,7 +44,7 @@ def _check_sample(filename: str, expected: str) -> None:
     templates = load_templates()
     if not templates:
         raise SystemExit("no font templates")
-    name, score = match_glyphs(glyphs, templates)
+    name, score, _parts = match_glyphs(glyphs, templates)
     print(filename, "match", name, _hex(name), f"{score:.4f}")
     if name != expected:
         raise SystemExit(
@@ -89,6 +91,18 @@ def main() -> None:
     for filename, name in expected.items():
         _check_sample(filename, name)
         print("OK", filename, name, _hex(name))
+
+    # Name 4 is only a new arrangement of glyphs from 1–3.
+    holdout = "name-4.png"
+    want = expected[holdout]
+    templates = templates_from_pairs(collect_seed_pairs(exclude={holdout}))
+    img = Image.open(SAMPLE_DIR / holdout).convert("RGB")
+    found = recognize_ornate_image(img, templates=templates)
+    got = found[0][0] if found else ""
+    print("holdout", holdout, "want", _hex(want), "got", _hex(got), found[0][1] if found else 0)
+    if got != want:
+        raise SystemExit(f"leave-one-out {holdout}: {got} {_hex(got)} != {want} {_hex(want)}")
+    print("OK holdout", holdout)
 
 
 if __name__ == "__main__":

@@ -13,11 +13,11 @@ SAMPLE_DIR = Path(__file__).resolve().parent / "samples"
 MIN_SCORE = 0.62
 
 # User-confirmed names (6 glyphs each).
-# Do not use the lookalikes U+9458 鑘 / U+5D84 嶄 / U+5D83 嶃.
-NAME_1 = "\u9468\u9f93\u5dc4\u9f93\u5dc3\u9468"  # 鑨龓巄龓巃鑨
-NAME_2 = "\u9468\u8c45\u8d1a\u9468\u8d1a\u5dc4"  # �NAME_2 = "\u9468\u8c45\u8d1a\u9468\u8d1a\u5dc4"  # 鑨豅贚鑨贚�\u8d1a\u9468\u8d1a\u5dc4"  # 鑨豅贚鑨贚巄
-NAME_3 = "\u9468\u9468\u7216\u9f93\u9468\u9468"  # 鑨鑨爖龓鑨鑨
-NAME_4 = "\u9468\u8d1a\u8d1a\u8c45\u7216\u5dc3"  # 鑨贚贚豅�d1a\u8d1a\u8c45\u7216\u5dc3"  # 鑨贚贚豅爖巃
+# Do not use the lookalikes U+9458 / U+5D84 / U+5D83.
+NAME_1 = "\u9468\u9f93\u5dc4\u9f93\u5dc3\u9468"
+NAME_2 = "\u9468\u8c45\u8d1a\u9468\u8d1a\u5dc4"
+NAME_3 = "\u9468\u9468\u7216\u9f93\u9468\u9468"
+NAME_4 = "\u9468\u8d1a\u8d1a\u8c45\u7216\u5dc3"
 NAME_LUOLONG = NAME_1
 
 # Human-read labels for sample crops (left-to-right).
@@ -40,7 +40,6 @@ def split_rows(img: Image.Image) -> list[Image.Image]:
     gray = np.array(img.convert("L"))
     height, width = gray.shape
     ink = _ink_mask(gray, invert=False)
-    # dark HUD: text is bright
     if ink.mean() < 0.04:
         ink = _ink_mask(gray, invert=True)
     row_hits = ink.sum(axis=1) > max(3, width * 0.015)
@@ -79,7 +78,6 @@ def _left_text_x(ink: np.ndarray) -> int:
         runs.append((start, width))
     if not runs:
         return 0
-    # Game rows may start with a small weapon icon, then the name.
     if len(runs) >= 2:
         first_w = runs[0][1] - runs[0][0]
         rest_w = runs[-1][1] - runs[1][0]
@@ -103,6 +101,23 @@ def _equal_bands(start: int, end: int, count: int) -> list[tuple[int, int]]:
     ]
 
 
+def _refine_bands(col: np.ndarray, bands: list[tuple[int, int]], search: int = 5) -> list[tuple[int, int]]:
+    if len(bands) < 2:
+        return bands
+    cuts = [bands[0][0]]
+    for i in range(1, len(bands)):
+        guess = bands[i][0]
+        lo = max(cuts[-1] + 4, guess - search)
+        hi = min(bands[i][1] - 4, guess + search)
+        if hi <= lo:
+            cuts.append(guess)
+            continue
+        window = col[lo:hi]
+        cuts.append(lo + int(np.argmin(window)))
+    cuts.append(bands[-1][1])
+    return [(cuts[i], cuts[i + 1]) for i in range(len(cuts) - 1)]
+
+
 def split_glyphs(row: Image.Image, expected: int | None = None) -> list[Image.Image]:
     gray = np.array(row.convert("L"))
     invert = gray.mean() > 140
@@ -119,12 +134,10 @@ def split_glyphs(row: Image.Image, expected: int | None = None) -> list[Image.Im
             expected = 6 if guess >= 6 else 5 if guess >= 5 else max(2, guess)
         else:
             expected = 6
-    # This gold-radical font is near-monospaced. Split the ink box, not
-    # the padded row — trailing dark space used to become an empty 6th glyph.
     if span and (span[1] - span[0]) >= expected * 8:
-        merged = _equal_bands(span[0], span[1], expected)
+        merged = _refine_bands(col, _equal_bands(span[0], span[1], expected))
     elif width >= expected * 8:
-        merged = _equal_bands(0, width, expected)
+        merged = _refine_bands(col, _equal_bands(0, width, expected))
     else:
         merged = [(0, width)]
     glyphs = []
@@ -134,16 +147,19 @@ def split_glyphs(row: Image.Image, expected: int | None = None) -> list[Image.Im
     return glyphs
 
 
-def _normalize(glyph: Image.Image, size: int = 48) -> np.ndarray:
+def _tight_ink(glyph: Image.Image) -> np.ndarray:
     gray = glyph.convert("L")
     if np.array(gray).mean() > 140:
         gray = ImageOps.invert(gray)
     arr = np.array(gray, dtype=np.float32)
-    # tight crop to ink
     mask = arr > 40
     if mask.any():
         ys, xs = np.where(mask)
         arr = arr[ys.min() : ys.max() + 1, xs.min() : xs.max() + 1]
+    return arr
+
+
+def _unit(arr: np.ndarray, size: int = 48) -> np.ndarray:
     img = Image.fromarray(arr.astype(np.uint8)).resize((size, size), Image.Resampling.LANCZOS)
     out = np.array(img, dtype=np.float32)
     out -= out.mean()
@@ -153,15 +169,70 @@ def _normalize(glyph: Image.Image, size: int = 48) -> np.ndarray:
     return out
 
 
+def _normalize(glyph: Image.Image, size: int = 48) -> np.ndarray:
+    return _unit(_tight_ink(glyph), size)
+
+
+def _left_ink(glyph: Image.Image) -> np.ndarray:
+    arr = _tight_ink(glyph)
+    width = arr.shape[1]
+    cut = max(4, int(round(width * 0.42)))
+    return arr[:, :cut]
+
+
+def _feature(glyph: Image.Image) -> np.ndarray:
+    # Full glyph plus the left radical. These names share a dragon body
+    # and differ by 金 / 贝 / 豕 / 火 / 山.
+    full = _unit(_tight_ink(glyph)).ravel()
+    left = _unit(_left_ink(glyph)).ravel()
+    feat = np.concatenate([full, left, left])
+    norm = np.linalg.norm(feat)
+    if norm > 1e-6:
+        feat = feat / norm
+    return feat
+
+
+def _shifted_glyphs(glyph: Image.Image) -> list[Image.Image]:
+    width, height = glyph.size
+    out = [glyph]
+    for dx in (-3, -2, -1, 1, 2, 3):
+        if dx > 0 and dx < width - 4:
+            out.append(glyph.crop((dx, 0, width, height)))
+        if dx < 0 and width + dx > 4:
+            out.append(glyph.crop((0, 0, width + dx, height)))
+    return out
+
+
+def collect_seed_pairs(exclude: set[str] | None = None) -> list[tuple[str, Image.Image]]:
+    skip = exclude or set()
+    pairs: list[tuple[str, Image.Image]] = []
+    for filename, chars in SEED_LABELS.items():
+        if filename in skip:
+            continue
+        path = SAMPLE_DIR / filename
+        if not path.is_file():
+            raise FileNotFoundError(path)
+        img = Image.open(path).convert("RGB")
+        glyphs = split_glyphs((split_rows(img) or [img])[0], expected=len(chars))
+        if len(glyphs) != len(chars):
+            raise ValueError(f"{filename}: glyph count mismatch")
+        pairs.extend(zip(chars, glyphs))
+    return pairs
+
+
+def templates_from_pairs(pairs: Iterable[tuple[str, Image.Image]]) -> dict[str, np.ndarray]:
+    buckets: dict[str, list[np.ndarray]] = {}
+    for label, glyph in pairs:
+        buckets.setdefault(label, []).append(_feature(glyph))
+    return {label: np.stack(items, axis=0) for label, items in buckets.items()}
+
+
 def save_templates(pairs: Iterable[tuple[str, Image.Image]]) -> None:
     TEMPLATE_DIR.mkdir(parents=True, exist_ok=True)
     for old in TEMPLATE_DIR.glob("*.npy"):
         old.unlink()
-    buckets: dict[str, list[np.ndarray]] = {}
-    for label, glyph in pairs:
-        buckets.setdefault(label, []).append(_normalize(glyph))
-    for label, items in buckets.items():
-        np.save(TEMPLATE_DIR / f"{label}.npy", np.stack(items, axis=0))
+    for label, bank in templates_from_pairs(pairs).items():
+        np.save(TEMPLATE_DIR / f"{label}.npy", bank)
 
 
 def load_templates() -> dict[str, np.ndarray]:
@@ -173,34 +244,82 @@ def load_templates() -> dict[str, np.ndarray]:
     return out
 
 
+def _score_vec(vec: np.ndarray, templates: dict[str, np.ndarray]) -> tuple[str, float]:
+    best_label = ""
+    best = -1.0
+    for label, tmpl in templates.items():
+        bank = tmpl if tmpl.ndim == 2 else tmpl.reshape(tmpl.shape[0], -1)
+        for item in bank:
+            score = float(np.dot(vec, item.ravel()))
+            if score > best:
+                best = score
+                best_label = label
+    return best_label, best
+
+
 def match_glyphs(
     glyphs: list[Image.Image],
     templates: dict[str, np.ndarray],
-) -> tuple[str, float]:
+) -> tuple[str, float, list[float]]:
     if not templates or not glyphs:
-        return "", 0.0
+        return "", 0.0, []
     chars: list[str] = []
     scores: list[float] = []
     for glyph in glyphs:
-        vec = _normalize(glyph).ravel()
         best_label = ""
         best = -1.0
-        for label, tmpl in templates.items():
-            bank = tmpl if tmpl.ndim == 3 else tmpl[None, ...]
-            for item in bank:
-                score = float(np.dot(vec, item.ravel()))
-                if score > best:
-                    best = score
-                    best_label = label
+        for variant in _shifted_glyphs(glyph):
+            label, score = _score_vec(_feature(variant), templates)
+            if score > best:
+                best = score
+                best_label = label
         chars.append(best_label)
         scores.append(best)
     if not scores:
-        return "", 0.0
-    return "".join(chars), float(sum(scores) / len(scores))
+        return "", 0.0, []
+    return "".join(chars), float(sum(scores) / len(scores)), scores
 
 
-def recognize_ornate_image(img: Image.Image) -> list[tuple[str, float]]:
-    templates = load_templates()
+def _split_candidates(row: Image.Image) -> list[list[Image.Image]]:
+    gray = np.array(row.convert("L"))
+    invert = gray.mean() > 140
+    ink = _ink_mask(gray, invert=invert)
+    left = _left_text_x(ink)
+    text = ink[:, left:]
+    _height, width = text.shape
+    col = text.sum(axis=0)
+    span = _ink_span(col, min_val=2.0) or _ink_span(col, min_val=1.0) or (0, width)
+    out: list[list[Image.Image]] = []
+    for count in (6, 5):
+        if (span[1] - span[0]) < count * 8:
+            continue
+        for off in range(-3, 4):
+            start = max(0, span[0] + off)
+            end = min(width, span[1] + off)
+            if end - start < count * 8:
+                continue
+            bands = _refine_bands(col, _equal_bands(start, end, count))
+            glyphs = []
+            for a, b in bands:
+                crop = row.crop(
+                    (
+                        left + max(0, a - 3),
+                        0,
+                        left + min(width, b + 3),
+                        row.height,
+                    )
+                )
+                glyphs.append(crop)
+            out.append(glyphs)
+    return out
+
+
+def recognize_ornate_image(
+    img: Image.Image,
+    templates: dict[str, np.ndarray] | None = None,
+) -> list[tuple[str, float]]:
+    if templates is None:
+        templates = load_templates()
     if not templates:
         return []
     gray = img.convert("L")
@@ -212,14 +331,18 @@ def recognize_ornate_image(img: Image.Image) -> list[tuple[str, float]]:
     found: list[tuple[str, float]] = []
     for row in rows:
         best_name = ""
-        best_score = 0.0
-        for count in (6, 5):
-            glyphs = split_glyphs(row, expected=count)
+        best_key = (-1.0, -1.0)
+        candidates = [split_glyphs(row, expected=6)]
+        candidates.extend(_split_candidates(row))
+        for glyphs in candidates:
             if len(glyphs) < 2:
                 continue
-            name, score = match_glyphs(glyphs, templates)
-            if score > best_score:
-                best_name, best_score = name, score
+            name, score, parts = match_glyphs(glyphs, templates)
+            key = (min(parts) if parts else -1.0, score)
+            if key > best_key:
+                best_key = key
+                best_name = name
+        best_score = best_key[1]
         if best_name and best_score >= MIN_SCORE:
             found.append((best_name, best_score))
     return found
