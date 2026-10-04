@@ -736,6 +736,9 @@ export function AuctionManagePanel({
                             {item.soldPrice != null
                               ? ` · 成交 ¥${item.soldPrice}`
                               : ""}
+                            {item.remainingSeconds != null
+                              ? ` · 本件剩余 ${formatCountdown(item.remainingSeconds)}`
+                              : ""}
                           </p>
                           <ItemPriceStatsLine
                             stats={item.priceStats}

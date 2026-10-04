@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { AuctionRoom } from "@/components/auction/AuctionRoom";
+import { buildRoomState } from "@/lib/auction/room";
 import { getAdminSession, getMemberSession } from "@/lib/auth";
 
 export const runtime = "nodejs";
@@ -11,5 +12,12 @@ export default async function AuctionPage() {
   if (!member && !admin) {
     redirect("/");
   }
-  return <AuctionRoom member={member} />;
+  const initialRoom = buildRoomState(undefined, {
+    lite: true,
+    includeDividends: true,
+    includePriceStats: true,
+    includeDividendReport: true,
+    viewerMemberId: member?.id,
+  });
+  return <AuctionRoom member={member} initialRoom={initialRoom} />;
 }
