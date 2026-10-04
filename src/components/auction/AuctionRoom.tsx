@@ -51,15 +51,19 @@ function itemStatusLabel(status: AuctionItem["status"]) {
 
 export function AuctionRoom({
   member,
+  initialRoom = null,
 }: {
   member: Extract<SessionUser, { type: "member" }> | null;
+  initialRoom?: AuctionRoomState | null;
 }) {
   const router = useRouter();
-  const [room, setRoom] = useState<AuctionRoomState | null>(null);
+  const [room, setRoom] = useState<AuctionRoomState | null>(initialRoom);
   const [soundOn, setSoundOn] = useState(true);
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
-  const [remaining, setRemaining] = useState<number | null>(null);
+  const [remaining, setRemaining] = useState<number | null>(
+    initialRoom?.remainingSeconds ?? null,
+  );
   const [bidDrafts, setBidDrafts] = useState<
     Record<number, { value: string; touched: boolean }>
   >({});
@@ -69,8 +73,12 @@ export function AuctionRoom({
   const [danmaku, setDanmaku] = useState<
     Array<{ id: string; text: string; top: number; variant: "bid" | "track" }>
   >([]);
-  const staticItemsKeyRef = useRef("");
-  const staticSessionStatusRef = useRef<string | null>(null);
+  const staticItemsKeyRef = useRef(
+    (initialRoom?.items ?? []).map((item) => item.id).join(","),
+  );
+  const staticSessionStatusRef = useRef<string | null>(
+    initialRoom?.session?.status ?? null,
+  );
   const audioCtxRef = useRef<AudioContext | null>(null);
   const lastEventIdRef = useRef(0);
   const eventsBootstrapped = useRef(false);
