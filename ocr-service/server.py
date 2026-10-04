@@ -208,19 +208,61 @@ def merge_rows(rows: list[tuple[float, str, float]]) -> list[str]:
     return lines
 
 
+def _norm_line(text: str) -> str:
+    return re.sub(r"\s+", "", text)
+
+
+def _paddle_redundant(text: str, ornate: list[str]) -> bool:
+    key = _norm_line(text)
+    if not key:
+        return True
+    for name in ornate:
+        other = _norm_line(name)
+        if not other:
+            continue
+        if key == other or key in other or other in key:
+            return True
+        if len(key) >= 4 and len(other) >= 4:
+            shared = sum(1 for ch in key if ch in other)
+            if shared / max(len(key), len(other)) >= 0.5:
+                return True
+    return False
+
+
 def recognize_images(images: list[str]) -> dict[str, Any]:
-    from ornate_names import recognize_ornate_image
+    from ornate_names import recognize_ornate_image, split_rows
 
     ornate: list[str] = []
     rows: list[tuple[float, str, float]] = []
     for raw in images[:MAX_IMAGES]:
         img = decode_image(raw)
-        ornate.extend(name for name, _score in recognize_ornate_image(img))
-        if ornate:
+        bands = split_rows(img) or [img]
+        if len(bands) == 1:
+            found = recognize_ornate_image(img)
+            if found:
+                ornate.extend(name for name, _score in found)
+                continue
+            for variant in prepare_variants(img):
+                rows.extend(run_one(variant))
             continue
-        for variant in prepare_variants(img):
-            rows.extend(run_one(variant))
-    lines = ornate or merge_rows(rows)
+        for band in bands:
+            found = recognize_ornate_image(band)
+            if found:
+                ornate.extend(name for name, _score in found)
+            else:
+                for variant in prepare_variants(band):
+                    rows.extend(run_one(variant))
+    paddle_lines = [
+        line for line in merge_rows(rows) if not _paddle_redundant(line, ornate)
+    ]
+    seen: set[str] = set()
+    lines: list[str] = []
+    for text in ornate + paddle_lines:
+        key = _norm_line(text)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        lines.append(text)
     return {
         "ok": True,
         "text": "\n".join(lines),

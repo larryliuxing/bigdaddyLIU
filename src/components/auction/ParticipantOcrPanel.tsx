@@ -289,7 +289,7 @@ export function ParticipantOcrPanel({
         className="rounded-lg border border-dashed border-[rgba(255,255,255,0.15)] px-3 py-3 outline-none focus:border-[rgba(123,108,255,0.5)]"
       >
         <p className="text-xs leading-relaxed text-[var(--text-muted)]">
-          粘贴游戏「参与者」截图后，自己拖框圈出名称列。每个人名会对上盟成员，核对后再加入分红。
+          粘贴游戏「参与者」截图后，自己拖框圈出名称列。花体六字名按字模识别，并匹配成员名里的前缀（如六字-灰豆）。对的按确定，不对可重选。
         </p>
         <div className="mt-2 flex flex-wrap items-center gap-2">
           <label className="btn-ghost cursor-pointer text-xs">

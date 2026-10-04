@@ -64,6 +64,38 @@ assert.equal(paired.hits[4].member?.id, 5);
 assert.equal(paired.matched.length, 4);
 assert.deepEqual(paired.unrecognized, ["随便谁"]);
 
+const name1 = "\u9468\u9f93\u5dc4\u9f93\u5dc3\u9468";
+const name7 = "\u9468\u9f93\u5fbf\u8d1a\u8d1a\u9468";
+const name8 = "\u5131\u5131\u5131\u6f0b\u6f0b\u6f0b";
+const hyphenRoster = [
+  { id: 21, name: `${name1}-\u7070\u8c46` },
+  { id: 22, name: `${name8}-\u67aa\u52b2\u597d\u91ce` },
+  { id: 23, name: `${name7}-\u60ca\u7075` },
+  { id: 24, name: "\u82b1\u5996" },
+  { id: 2, name: "\u7070\u8c46" },
+];
+assert.equal(findBestMemberForOcrName(name1, hyphenRoster)?.id, 21);
+assert.equal(findBestMemberForOcrName(name8, hyphenRoster)?.id, 22);
+assert.equal(findBestMemberForOcrName(name7, hyphenRoster)?.id, 23);
+assert.equal(findBestMemberForOcrName("\u7070\u8c46", hyphenRoster)?.id, 2);
+assert.ok(
+  scoreNameMatch(name1, `${name1}-\u7070\u8c46`) >
+    scoreNameMatch("\u7070\u8c46", `${name1}-\u7070\u8c46`),
+);
+assert.ok(
+  scoreNameMatch(name1, `${name1}-\u7070\u8c46`) >
+    scoreNameMatch(name1, `${name7}-\u60ca\u7075`),
+);
+
+const hyphenPaired = pairOcrNamesToMembers(
+  [name1, name8, "\u82b1\u5996"],
+  hyphenRoster,
+);
+assert.equal(hyphenPaired.hits[0].member?.id, 21);
+assert.equal(hyphenPaired.hits[1].member?.id, 22);
+assert.equal(hyphenPaired.hits[2].member?.id, 24);
+assert.deepEqual(hyphenPaired.unrecognized, []);
+
 // Real screenshot samples: charcoal bg vs light-gray names.
 assert.equal(isParticipantNameInk(11, 15, 19), false);
 assert.equal(isParticipantNameInk(7, 11, 15), false);

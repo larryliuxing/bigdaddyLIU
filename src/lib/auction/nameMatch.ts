@@ -13,15 +13,35 @@ export type OcrNameHit<T extends Named = Named> = {
 const SKIP_EXACT =
   /^(贡献|贡献度|获得|品级|战盟|名称|普通|守护|参与|参与者|战斗力|能力值|力量|体质|灵巧|敏捷|智力|智慧|洪门|千帆|千帆舞)$/;
 
+const NAME_SEP = /[-－—–﹣_]/;
+const NAME_SEP_ALL = /[-－—–﹣_]/g;
+
 export function compactName(s: string) {
   return s
     .replace(/\s+/g, "")
     .replace(/[、·•.,，。:：;；'"“”‘’|｜]/g, "");
 }
 
+/** Roster names are often `花体六字-昵称`. Matching uses the prefix. */
+export function splitRosterName(name: string): {
+  prefix: string;
+  nickname: string;
+  compact: string;
+} {
+  const compact = compactName(name);
+  const parts = compact.split(NAME_SEP).filter(Boolean);
+  return {
+    prefix: parts[0] || compact,
+    nickname: parts.slice(1).join(""),
+    compact: parts.join(""),
+  };
+}
+
 export function cleanOcrNameToken(raw: string): string | null {
-  const cleaned = compactName(raw).replace(/[0-9A-Za-z]/g, "");
-  if (cleaned.length < 2 || cleaned.length > 12) return null;
+  const cleaned = compactName(raw)
+    .replace(NAME_SEP_ALL, "")
+    .replace(/[0-9A-Za-z]/g, "");
+  if (cleaned.length < 2 || cleaned.length > 16) return null;
   if (!/^[\u4e00-\u9fff]+$/.test(cleaned)) return null;
   if (SKIP_EXACT.test(cleaned)) return null;
   return cleaned;
@@ -48,19 +68,32 @@ export function isNearName(token: string, name: string) {
 }
 
 export function scoreNameMatch(ocrName: string, memberName: string): number {
-  const token = compactName(ocrName);
-  const name = compactName(memberName);
-  if (!token || !name) return 0;
-  if (token === name) return 100;
-  if (token.toLowerCase() === name.toLowerCase()) return 99;
-  if (token.length >= 2 && name.includes(token)) {
-    return 80 + (token.length / name.length) * 10;
+  const token = compactName(ocrName).replace(NAME_SEP_ALL, "");
+  const { prefix, nickname, compact } = splitRosterName(memberName);
+  if (!token || !compact) return 0;
+  if (token === compact) return 100;
+  if (token.toLowerCase() === compact.toLowerCase()) return 99;
+  // Game screenshots only show the ornate 6-glyph prefix.
+  if (token === prefix && prefix.length >= 2) return 94;
+  if (token === nickname && nickname.length >= 2) return 88;
+  if (
+    prefix.length >= 4 &&
+    token.length >= 4 &&
+    (prefix.startsWith(token) || token.startsWith(prefix))
+  ) {
+    return 82 + (Math.min(token.length, prefix.length) / Math.max(token.length, prefix.length)) * 10;
   }
-  if (name.length >= 2 && token.includes(name)) {
-    return 78 + (name.length / token.length) * 10;
+  if (token.length >= 2 && compact.includes(token)) {
+    return 80 + (token.length / compact.length) * 10;
   }
-  if (isNearName(token, name)) {
-    return 50 + charOverlapRatio(token, name) * 20;
+  if (compact.length >= 2 && token.includes(compact)) {
+    return 78 + (compact.length / token.length) * 10;
+  }
+  if (prefix.length >= 4 && isNearName(token, prefix)) {
+    return 60 + charOverlapRatio(token, prefix) * 25;
+  }
+  if (isNearName(token, compact)) {
+    return 50 + charOverlapRatio(token, compact) * 20;
   }
   return 0;
 }
