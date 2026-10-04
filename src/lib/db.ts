@@ -38,6 +38,12 @@ import {
   resolvePinkContest,
 } from "./auction/pink";
 import {
+  applyLastMinuteExtend,
+  itemIsDue,
+  laterIso,
+  resolveItemEndMs,
+} from "./auction/itemClock";
+import {
   isNearName,
   pairOcrNamesToMembers,
 } from "./auction/nameMatch";
@@ -362,6 +368,7 @@ function seedIfEmpty(database: Database.Database) {
   ensureColumn(database, "auction_items", "bid_max", "REAL");
   ensureColumn(database, "auction_items", "vote_ends_at", "TEXT");
   ensureColumn(database, "auction_items", "roll_ends_at", "TEXT");
+  ensureColumn(database, "auction_items", "ends_at", "TEXT");
   ensureColumn(
     database,
     "auction_items",
@@ -937,6 +944,7 @@ type ItemRow = {
   winner_member_id: number | null;
   sold_price: number | null;
   activated_at: string | null;
+  ends_at: string | null;
   closed_at: string | null;
   bid_min: number | null;
   bid_max: number | null;
@@ -950,7 +958,7 @@ const ITEM_COLUMNS = `auction_items.id, auction_items.session_id, auction_items.
   auction_items.quality, auction_items.start_price, auction_items.bid_increment,
   auction_items.sort_order, auction_items.status, auction_items.current_price,
   auction_items.winner_member_id, auction_items.sold_price,
-  auction_items.activated_at, auction_items.closed_at, auction_items.bid_min,
+  auction_items.activated_at, auction_items.ends_at, auction_items.closed_at, auction_items.bid_min,
   auction_items.bid_max, auction_items.vote_ends_at, auction_items.roll_ends_at,
   auction_items.has_image`;
 
@@ -1024,6 +1032,7 @@ function toItem(
     winnerName,
     soldPrice: row.sold_price,
     activatedAt: row.activated_at,
+    endsAt: row.ends_at ?? null,
     closedAt: row.closed_at,
     bidMin: row.bid_min ?? null,
     bidMax: row.bid_max ?? null,
@@ -2108,14 +2117,16 @@ export function activateAllPendingItems(sessionId: number): AuctionItem[] {
   }
 
   const activatedAt = nowIso();
+  const session = getSessionById(sessionId);
+  const itemEndsAt = session?.endsAt ?? null;
   const update = database.prepare(
     `UPDATE auction_items
-     SET status = 'active', activated_at = ?, current_price = start_price
+     SET status = 'active', activated_at = ?, current_price = start_price, ends_at = ?
      WHERE id = ?`,
   );
   const tx = database.transaction(() => {
     for (const row of pending) {
-      update.run(activatedAt, row.id);
+      update.run(activatedAt, itemEndsAt, row.id);
     }
     database
       .prepare(
@@ -2297,6 +2308,72 @@ export function startAuctionSession(
   return getSessionById(sessionId)!;
 }
 
+function freezeSharedItemClocks(
+  sessionId: number,
+  sessionEndsAt: string | null | undefined,
+) {
+  if (!sessionEndsAt) return;
+  ensureDb()
+    .prepare(
+      `UPDATE auction_items
+       SET ends_at = ?
+       WHERE session_id = ? AND status = 'active' AND ends_at IS NULL`,
+    )
+    .run(sessionEndsAt, sessionId);
+}
+
+function maybeExtendItemOnBid(itemId: number, sessionId: number) {
+  const item = getItemById(itemId);
+  const session = getSessionById(sessionId);
+  if (!item || !session) return;
+
+  freezeSharedItemClocks(session.id, session.endsAt);
+
+  const result = applyLastMinuteExtend(
+    resolveItemEndMs(item.endsAt, session.endsAt),
+    Date.now(),
+  );
+  if (!result.extended || !result.endsAtIso) return;
+
+  ensureDb()
+    .prepare(`UPDATE auction_items SET ends_at = ? WHERE id = ?`)
+    .run(result.endsAtIso, item.id);
+
+  const sessionEnds = laterIso(session.endsAt, result.endsAtIso);
+  if (sessionEnds !== session.endsAt) {
+    ensureDb()
+      .prepare(`UPDATE auction_sessions SET ends_at = ? WHERE id = ?`)
+      .run(sessionEnds, session.id);
+  }
+
+  addEvent(
+    session.id,
+    "item",
+    `${item.name} 最后一分钟有出价，本件加时 60 秒`,
+  );
+}
+
+function closeDueActiveItems(sessionId: number) {
+  const session = getSessionById(sessionId);
+  if (!session) return;
+
+  freezeSharedItemClocks(session.id, session.endsAt);
+  const now = Date.now();
+  const active = ensureDb()
+    .prepare(
+      `SELECT id, ends_at FROM auction_items
+       WHERE session_id = ? AND status = 'active'`,
+    )
+    .all(sessionId) as Array<{ id: number; ends_at: string | null }>;
+
+  for (const row of active) {
+    const endMs = resolveItemEndMs(row.ends_at, session.endsAt);
+    if (itemIsDue(endMs, now)) {
+      closeItem(row.id);
+    }
+  }
+}
+
 export function placeBid(input: {
   sessionId: number;
   itemId: number;
@@ -2307,17 +2384,18 @@ export function placeBid(input: {
   if (!session || session.status !== "live") {
     throw new Error("当前没有进行中的拍卖");
   }
-  if (session.endsAt && new Date(session.endsAt).getTime() <= Date.now()) {
-    endAuctionSession(input.sessionId);
-    throw new Error("拍卖时间已结束");
-  }
-
   const item = getItemById(input.itemId);
   if (!item || item.sessionId !== input.sessionId) {
     throw new Error("拍品不存在");
   }
   if (item.status !== "active") {
     throw new Error("该拍品当前不可出价");
+  }
+  const itemEndMs = resolveItemEndMs(item.endsAt, session.endsAt);
+  if (itemIsDue(itemEndMs, Date.now())) {
+    closeItem(item.id);
+    finishSessionIfIdle(input.sessionId);
+    throw new Error("该拍品已截止出价");
   }
 
   const member = getMemberById(input.memberId);
@@ -2362,6 +2440,7 @@ export function placeBid(input: {
       "bid",
       `${member.name} 出价 ¥${input.amount}（${item.name}）`,
     );
+    maybeExtendItemOnBid(item.id, input.sessionId);
 
     const bidRow = ensureDb()
       .prepare(`SELECT * FROM auction_bids WHERE item_id = ? AND member_id = ? ORDER BY id DESC LIMIT 1`)
@@ -2415,20 +2494,7 @@ export function placeBid(input: {
     .prepare(`UPDATE auction_items SET current_price = ? WHERE id = ?`)
     .run(input.amount, item.id);
 
-  // Soft extend session near the end when bids come in
-  const settings = getAuctionSettings();
-  if (session.endsAt) {
-    const ends = new Date(session.endsAt).getTime();
-    const remain = ends - Date.now();
-    if (remain < settings.bidExtensionSeconds * 1000) {
-      const newEnds = new Date(
-        Date.now() + settings.bidExtensionSeconds * 1000,
-      ).toISOString();
-      ensureDb()
-        .prepare(`UPDATE auction_sessions SET ends_at = ? WHERE id = ?`)
-        .run(newEnds, input.sessionId);
-    }
-  }
+  maybeExtendItemOnBid(item.id, input.sessionId);
 
   addEvent(
     input.sessionId,
@@ -2507,10 +2573,8 @@ export function maybeAutoProgress(sessionId: number): AuctionSession | null {
     }
   }
 
-  if (session.status === "live" && session.endsAt) {
-    if (new Date(session.endsAt).getTime() <= Date.now()) {
-      endAuctionSession(sessionId);
-    }
+  if (session.status === "live") {
+    closeDueActiveItems(sessionId);
   }
 
   const latest = getSessionById(sessionId);

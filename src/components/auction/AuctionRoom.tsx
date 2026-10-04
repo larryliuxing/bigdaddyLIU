@@ -21,6 +21,7 @@ import {
   type AuctionItemViewerPayload,
 } from "./AuctionItemImage";
 import { ItemPriceStatsLine } from "./ItemPriceStatsLine";
+import { ITEM_LAST_MINUTE_MS } from "@/lib/auction/itemClock";
 import { isOrdinaryPinkAuction, isPinkAuction, isParticipantOnlyAuction, ORDINARY_PINK_BID_DENIED } from "@/lib/auction/pink";
 import {
   buildNowPlayingDanmaku,
@@ -74,6 +75,7 @@ export function AuctionRoom({
   const lastEventIdRef = useRef(0);
   const eventsBootstrapped = useRef(false);
   const remainingActive = remaining != null;
+  const LAST_MINUTE_SECONDS = ITEM_LAST_MINUTE_MS / 1000;
   const DANMAKU_MS = 12000;
 
   function pushDanmaku(
@@ -191,12 +193,29 @@ export function AuctionRoom({
   }, []);
 
   useEffect(() => {
-    if (!remainingActive) return;
+    const liveRoom = remainingActive || room?.session?.status === "live";
+    if (!liveRoom) return;
     const timer = window.setInterval(() => {
       setRemaining((prev) => (prev == null ? prev : Math.max(0, prev - 1)));
+      setRoom((prev) => {
+        if (!prev) return prev;
+        const tickItem = (item: AuctionItem) =>
+          item.remainingSeconds == null
+            ? item
+            : {
+                ...item,
+                remainingSeconds: Math.max(0, item.remainingSeconds - 1),
+              };
+        return {
+          ...prev,
+          items: prev.items.map(tickItem),
+          activeItems: prev.activeItems.map(tickItem),
+          activeItem: prev.activeItem ? tickItem(prev.activeItem) : null,
+        };
+      });
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [remainingActive]);
+  }, [remainingActive, room?.session?.status]);
 
   const session = room?.session;
   const live = session?.status === "live";
@@ -555,9 +574,22 @@ export function AuctionRoom({
                               : "未设置"}
                           </p>
                         </div>
-                        <span className="rounded-full bg-emerald-500/15 px-2.5 py-1 text-xs text-emerald-300">
-                          {itemStatusLabel(item.status)}
-                        </span>
+                        <div className="flex flex-col items-end gap-1">
+                          <span className="rounded-full bg-emerald-500/15 px-2.5 py-1 text-xs text-emerald-300">
+                            {itemStatusLabel(item.status)}
+                          </span>
+                          {item.remainingSeconds != null && (
+                            <span
+                              className={`text-xs tabular-nums ${
+                                item.remainingSeconds <= LAST_MINUTE_SECONDS
+                                  ? "font-semibold text-[var(--accent-crimson)]"
+                                  : "text-[var(--text-muted)]"
+                              }`}
+                            >
+                              本件剩余 {formatCountdown(item.remainingSeconds)}
+                            </span>
+                          )}
+                        </div>
                       </div>
                       <p className="mt-3 text-2xl font-bold text-[var(--accent-gold)]">
                         ¥{item.currentPrice}
@@ -666,9 +698,11 @@ export function AuctionRoom({
                             {item.voteNeed
                               ? ` · ${item.voteCastCount ?? 0}/${item.voteNeed}`
                               : ""}
-                            {item.voteEndsAt
-                              ? ` · 截止 ${formatBeijingDateTime(item.voteEndsAt)}`
-                              : ""}
+                            {item.remainingSeconds != null
+                              ? ` · 剩余 ${formatCountdown(item.remainingSeconds)}`
+                              : item.voteEndsAt
+                                ? ` · 截止 ${formatBeijingDateTime(item.voteEndsAt)}`
+                                : ""}
                           </p>
                           {member &&
                           item.dividendMemberIds.includes(member.id) ? (
@@ -707,6 +741,9 @@ export function AuctionRoom({
                         <div className="mt-3 space-y-2">
                           <p className="text-sm text-[var(--accent-gold)]">
                             同票同价，掷 1–100 点（不可重复，先掷到先占有）
+                            {item.remainingSeconds != null
+                              ? ` · 剩余 ${formatCountdown(item.remainingSeconds)}`
+                              : ""}
                           </p>
                           <ul className="text-sm text-[var(--text-muted)]">
                             {(item.rolls ?? []).map((row) => (
@@ -812,7 +849,7 @@ export function AuctionRoom({
         </section>
 
         <p className="relative z-10 mt-6 text-center text-xs text-[var(--text-muted)]">
-          不提倡倒爷。本场拍品同时竞拍；出价实名显示。
+          不提倡倒爷。本场拍品同时竞拍；最后一分钟出价只给该件加时 60 秒。
         </p>
 
         {toast && (

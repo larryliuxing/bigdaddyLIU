@@ -90,6 +90,8 @@ export interface AuctionItem {
   winnerName: string | null;
   soldPrice: number | null;
   activatedAt: string | null;
+  /** Per-lot close time. Last-minute bids only push this item out. */
+  endsAt: string | null;
   closedAt: string | null;
   dividendMemberIds: number[];
   dividendMemberNames: string[];
@@ -98,6 +100,8 @@ export interface AuctionItem {
   bidMax: number | null;
   voteEndsAt: string | null;
   rollEndsAt: string | null;
+  /** Seconds until this lot's bid / vote / roll clock ends. */
+  remainingSeconds?: number | null;
   /** Latest bid per participant (pink), visible to the room. */
   standingBids?: Array<{
     memberId: number;
