@@ -12,13 +12,16 @@ TEMPLATE_DIR = Path(__file__).resolve().parent / "font_templates"
 SAMPLE_DIR = Path(__file__).resolve().parent / "samples"
 MIN_SCORE = 0.62
 
-# User-confirmed name (6 glyphs). 3rd=U+5DC4 巄, 5th=U+5DC3 巃.
+# User-confirmed names (6 glyphs each).
 # Do not use the lookalikes U+9458 鑘 / U+5D84 嶄 / U+5D83 嶃.
-NAME_LUOLONG = "\u9468\u9f93\u5dc4\u9f93\u5dc3\u9468"
+NAME_1 = "\u9468\u9f93\u5dc4\u9f93\u5dc3\u9468"  # 鑨龓巄龓巃鑨
+NAME_2 = "\u9468\u8c45\u8d1a\u9468\u8d1a\u5dc4"  # �NAME_2 = "\u9468\u8c45\u8d1a\u9468\u8d1a\u5dc4"  # 鑨豅贚鑨贚巄
+NAME_LUOLONG = NAME_1
 
 # Human-read labels for sample crops (left-to-right).
 SEED_LABELS = {
-    "name-luolong-1.png": list(NAME_LUOLONG),
+    "name-luolong-1.png": list(NAME_1),
+    "name-2.png": list(NAME_2),
 }
 
 
