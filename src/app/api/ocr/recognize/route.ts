@@ -7,7 +7,7 @@ const OCR_BASE = (process.env.GUILD_OCR_URL || "http://127.0.0.1:8765").replace(
   /\/$/,
   "",
 );
-const MAX_IMAGE_CHARS = 3_500_000;
+const MAX_IMAGE_CHARS = 8_000_000;
 
 export async function POST(request: Request) {
   const user = await getSession();

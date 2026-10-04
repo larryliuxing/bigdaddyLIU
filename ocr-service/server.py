@@ -19,7 +19,7 @@ from PIL import Image, ImageEnhance, ImageOps
 
 HOST = os.environ.get("GUILD_OCR_HOST", "127.0.0.1")
 PORT = int(os.environ.get("GUILD_OCR_PORT", "8765"))
-MAX_IMAGE_BYTES = 3_500_000
+MAX_IMAGE_BYTES = 6_000_000
 MAX_IMAGES = 4
 
 DATA_URL_RE = re.compile(

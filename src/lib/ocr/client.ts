@@ -35,11 +35,14 @@ export async function recognizeWithPaddle(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ task, images: cleaned.slice(0, 4) }),
   });
-  if (!res.ok) return { text: "", lines: [] };
   const data = (await res.json().catch(() => ({}))) as {
     text?: string;
     lines?: unknown;
+    error?: string;
   };
+  if (!res.ok) {
+    throw new Error(data.error || "识别服务失败");
+  }
   const lines = Array.isArray(data.lines)
     ? data.lines.map((line) => String(line || "").trim()).filter(Boolean)
     : [];

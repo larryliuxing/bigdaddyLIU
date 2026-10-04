@@ -8,6 +8,7 @@ import {
 } from "../src/lib/auction/nameMatch";
 import {
   isParticipantNameInk,
+  namesFromOcrResult,
   parseParticipantRowName,
   participantNameInkCut,
 } from "../src/lib/auction/participantOcr";
@@ -95,6 +96,18 @@ assert.equal(hyphenPaired.hits[0].member?.id, 21);
 assert.equal(hyphenPaired.hits[1].member?.id, 22);
 assert.equal(hyphenPaired.hits[2].member?.id, 24);
 assert.deepEqual(hyphenPaired.unrecognized, []);
+
+const pasteLines = [
+  name1,
+  name7,
+  "\u6ca7\u7b19\u8e0f\u6b4c",
+  "\u5168\u6027\u3001\u79d2\u6740",
+];
+const fromService = namesFromOcrResult(pasteLines.join("\n"), pasteLines);
+assert.ok(fromService.includes(name1));
+assert.ok(fromService.includes(name7));
+assert.ok(fromService.includes("\u6ca7\u7b19\u8e0f\u6b4c"));
+assert.ok(fromService.includes("\u5168\u6027\u79d2\u6740"));
 
 // Real screenshot samples: charcoal bg vs light-gray names.
 assert.equal(isParticipantNameInk(11, 15, 19), false);
