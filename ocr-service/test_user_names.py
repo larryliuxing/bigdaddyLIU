@@ -11,6 +11,7 @@ from ornate_names import (
     NAME_2,
     NAME_3,
     NAME_4,
+    NAME_5,
     SAMPLE_DIR,
     SEED_LABELS,
     collect_seed_pairs,
@@ -76,6 +77,7 @@ def main() -> None:
         "name-2.png": "\u9468\u8c45\u8d1a\u9468\u8d1a\u5dc4",
         "name-3.png": "\u9468\u9468\u7216\u9f93\u9468\u9468",
         "name-4.png": "\u9468\u8d1a\u8d1a\u8c45\u7216\u5dc3",
+        "name-5.png": "\u9468\u9468\u9f93\u9468\u9468\u9468",
     }
     if NAME_1 != expected["name-luolong-1.png"]:
         raise SystemExit(f"NAME_1 codepoints wrong: {_hex(NAME_1)}")
@@ -85,6 +87,8 @@ def main() -> None:
         raise SystemExit(f"NAME_3 codepoints wrong: {_hex(NAME_3)}")
     if NAME_4 != expected["name-4.png"]:
         raise SystemExit(f"NAME_4 codepoints wrong: {_hex(NAME_4)}")
+    if NAME_5 != expected["name-5.png"]:
+        raise SystemExit(f"NAME_5 codepoints wrong: {_hex(NAME_5)}")
     if set(SEED_LABELS) != set(expected):
         raise SystemExit("SEED_LABELS keys mismatch")
 
@@ -92,17 +96,17 @@ def main() -> None:
         _check_sample(filename, name)
         print("OK", filename, name, _hex(name))
 
-    # Name 4 is only a new arrangement of glyphs from 1–3.
-    holdout = "name-4.png"
-    want = expected[holdout]
-    templates = templates_from_pairs(collect_seed_pairs(exclude={holdout}))
-    img = Image.open(SAMPLE_DIR / holdout).convert("RGB")
-    found = recognize_ornate_image(img, templates=templates)
-    got = found[0][0] if found else ""
-    print("holdout", holdout, "want", _hex(want), "got", _hex(got), found[0][1] if found else 0)
-    if got != want:
-        raise SystemExit(f"leave-one-out {holdout}: {got} {_hex(got)} != {want} {_hex(want)}")
-    print("OK holdout", holdout)
+    # New arrangements of already-seen glyphs must not need their own sample.
+    for holdout in ("name-4.png", "name-5.png"):
+        want = expected[holdout]
+        templates = templates_from_pairs(collect_seed_pairs(exclude={holdout}))
+        img = Image.open(SAMPLE_DIR / holdout).convert("RGB")
+        found = recognize_ornate_image(img, templates=templates)
+        got = found[0][0] if found else ""
+        print("holdout", holdout, "want", _hex(want), "got", _hex(got), found[0][1] if found else 0)
+        if got != want:
+            raise SystemExit(f"leave-one-out {holdout}: {got} {_hex(got)} != {want} {_hex(want)}")
+        print("OK holdout", holdout)
 
 
 if __name__ == "__main__":
