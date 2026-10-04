@@ -13,6 +13,7 @@ from ornate_names import (
     NAME_4,
     NAME_5,
     NAME_6,
+    NAME_7,
     SAMPLE_DIR,
     SEED_LABELS,
     collect_seed_pairs,
@@ -81,6 +82,7 @@ def main() -> None:
         "name-4b.png": "\u9468\u8d1a\u8d1a\u8c45\u7216\u5dc3",
         "name-5.png": "\u9468\u9468\u9f93\u9468\u9468\u9468",
         "name-6.png": "\u9468\u7216\u5dc4\u5dc3\u7932\u8c45",
+        "name-7.png": "\u9468\u9f93\u5fbf\u8d1a\u8d1a\u9468",
     }
     if NAME_1 != expected["name-luolong-1.png"]:
         raise SystemExit(f"NAME_1 codepoints wrong: {_hex(NAME_1)}")
@@ -94,6 +96,8 @@ def main() -> None:
         raise SystemExit(f"NAME_5 codepoints wrong: {_hex(NAME_5)}")
     if NAME_6 != expected["name-6.png"]:
         raise SystemExit(f"NAME_6 codepoints wrong: {_hex(NAME_6)}")
+    if NAME_7 != expected["name-7.png"]:
+        raise SystemExit(f"NAME_7 codepoints wrong: {_hex(NAME_7)}")
     if set(SEED_LABELS) != set(expected):
         raise SystemExit("SEED_LABELS keys mismatch")
 
