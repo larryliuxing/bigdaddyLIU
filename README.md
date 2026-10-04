@@ -18,14 +18,20 @@
 ```bash
 cp .env.example .env.local
 npm install
+python3 -m venv ocr-service/.venv
+ocr-service/.venv/bin/pip install paddlepaddle==3.2.2 -i https://www.paddlepaddle.org.cn/packages/stable/cpu/
+ocr-service/.venv/bin/pip install -r requirements-ocr.txt
+ocr-service/.venv/bin/python ocr-service/server.py
 npm run dev
 ```
 
-访问 http://localhost:3000
+访问 http://localhost:3000。识别服务默认监听 `http://127.0.0.1:8765`，可用 `GUILD_OCR_URL` 覆盖。生产环境用 `pm2 start ocr-service/ecosystem.config.cjs` 常驻。
+
+花体名单自检：`ocr-service/.venv/bin/python ocr-service/test_user_names.py`
 
 ## 技术栈
 
 - Next.js (App Router) + TypeScript + Tailwind CSS
 - SQLite (`better-sqlite3`)
 - JWT Cookie Session + bcrypt
-- Tesseract.js OCR
+- 本机 PaddleOCR（`ocr-service/server.py`，默认 `127.0.0.1:8765`）

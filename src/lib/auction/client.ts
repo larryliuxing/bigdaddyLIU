@@ -1,20 +1,11 @@
 "use client";
 
-import { createWorker } from "tesseract.js";
-
-let workerPromise: ReturnType<typeof createWorker> | null = null;
-
-async function getWorker() {
-  if (!workerPromise) {
-    workerPromise = createWorker("chi_sim+eng");
-  }
-  return workerPromise;
-}
+import { recognizeWithPaddle, toOcrDataUrl } from "@/lib/ocr/client";
 
 export async function recognizeImageText(image: string | File | Blob) {
-  const worker = await getWorker();
-  const result = await worker.recognize(image);
-  return result.data.text || "";
+  const dataUrl = await toOcrDataUrl(image);
+  const result = await recognizeWithPaddle([dataUrl], "general");
+  return result.text || "";
 }
 
 export const QUALITY_OPTIONS = [

@@ -1,53 +1,13 @@
-import { spawn } from "node:child_process";
-import path from "node:path";
 import { NextResponse } from "next/server";
 import { requireMemberSession } from "@/lib/auth";
 
 export const runtime = "nodejs";
 
+const OCR_BASE = (process.env.GUILD_OCR_URL || "http://127.0.0.1:8765").replace(
+  /\/$/,
+  "",
+);
 const MAX_IMAGE_CHARS = 3_500_000;
-
-function runHudNameOcr(payload: { image?: string; images?: string[] }) {
-  const script = path.join(process.cwd(), "scripts/ocr_hud_name.py");
-  return new Promise<{ text: string; error?: string }>((resolve) => {
-    const child = spawn("python3", [script], {
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    const timer = setTimeout(() => {
-      child.kill("SIGKILL");
-    }, 20_000);
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk;
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk;
-    });
-    child.on("error", () => {
-      clearTimeout(timer);
-      resolve({ text: "" });
-    });
-    child.on("close", () => {
-      clearTimeout(timer);
-      try {
-        const parsed = JSON.parse(stdout || "{}") as {
-          text?: string;
-          error?: string;
-        };
-        resolve({
-          text: String(parsed.text ?? "").trim(),
-          error: parsed.error,
-        });
-      } catch {
-        resolve({ text: "", error: stderr.slice(0, 200) || "ocr-parse" });
-      }
-    });
-    child.stdin.end(JSON.stringify(payload));
-  });
-}
 
 export async function POST(request: Request) {
   const member = await requireMemberSession();
@@ -67,6 +27,15 @@ export async function POST(request: Request) {
     return NextResponse.json({ text: "" });
   }
 
-  const result = await runHudNameOcr({ image: images[0], images: images.slice(1) });
-  return NextResponse.json({ text: result.text || "" });
+  try {
+    const res = await fetch(`${OCR_BASE}/ocr/recognize`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ task: "leaderboard_name", images }),
+    });
+    const data = (await res.json().catch(() => ({}))) as { text?: string };
+    return NextResponse.json({ text: String(data.text || "").trim() });
+  } catch {
+    return NextResponse.json({ text: "", error: "识别服务未启动" }, { status: 503 });
+  }
 }

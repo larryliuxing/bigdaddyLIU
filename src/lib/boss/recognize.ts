@@ -1,6 +1,6 @@
 "use client";
 
-import { createWorker, PSM, type Worker } from "tesseract.js";
+import { recognizeWithPaddle, prewarmPaddleOcr } from "@/lib/ocr/client";
 import {
   buildBossClickPreview,
   buildBossNameClickCrops,
@@ -14,61 +14,13 @@ import {
   parseBossTimesFromOcr,
 } from "./ocrParse";
 
-let nameWorkerPromise: Promise<Worker> | null = null;
-let timeWorkerPromise: Promise<Worker> | null = null;
-
-async function getNameWorker() {
-  if (!nameWorkerPromise) {
-    nameWorkerPromise = createWorker("chi_sim");
-  }
-  return nameWorkerPromise;
-}
-
-async function getTimeWorker() {
-  if (!timeWorkerPromise) {
-    timeWorkerPromise = createWorker("chi_sim+eng");
-  }
-  return timeWorkerPromise;
-}
-
 export function prewarmBossTimerOcr() {
-  void getNameWorker();
-  void getTimeWorker();
+  prewarmPaddleOcr();
 }
 
-async function recognizeCropTexts(
-  worker: Worker,
-  crops: string[],
-  params: Record<string, string>,
-  psms: Array<(typeof PSM)[keyof typeof PSM]>,
-) {
-  const chunks: string[] = [];
-  for (const url of crops) {
-    for (const psm of psms) {
-      try {
-        await worker.setParameters({
-          tessedit_pageseg_mode: psm,
-          ...params,
-        });
-        const result = await worker.recognize(url);
-        const text = (result.data.text || "").trim();
-        if (text) chunks.push(text);
-      } catch {
-        // next
-      }
-    }
-  }
-  return chunks;
-}
-
-function bossNameCharWhitelist(names: string[]) {
-  const chars = new Set<string>();
-  for (const name of names) {
-    for (const ch of name) {
-      if (/[\u4e00-\u9fff·]/.test(ch)) chars.add(ch);
-    }
-  }
-  return [...chars].join("");
+async function recognizeCropTexts(crops: string[], task: string) {
+  const result = await recognizeWithPaddle(crops, task);
+  return [result.text, ...result.lines].filter(Boolean);
 }
 
 function pickBestNameText(chunks: string[], bossNames: string[]) {
@@ -119,20 +71,8 @@ export async function recognizeBossNameAtRect(
   rect: RatioRect,
   bossNames: string[] = [],
 ): Promise<BossNameOcrResult> {
-  const [worker, built] = await Promise.all([
-    getNameWorker(),
-    buildBossRectCrops(image, rect, "name"),
-  ]);
-  const whitelist = bossNameCharWhitelist(bossNames);
-  const chunks = await recognizeCropTexts(
-    worker,
-    built.crops,
-    {
-      preserve_interword_spaces: "1",
-      tessedit_char_whitelist: whitelist,
-    },
-    [PSM.SINGLE_LINE, PSM.RAW_LINE, PSM.SINGLE_WORD, PSM.SPARSE_TEXT],
-  );
+  const built = await buildBossRectCrops(image, rect, "name");
+  const chunks = await recognizeCropTexts(built.crops, "boss_name");
   return {
     text: pickBestNameText(chunks, bossNames),
     previewDataUrl: built.preview,
@@ -143,27 +83,8 @@ export async function recognizeBossTimeAtRect(
   image: File | Blob | string,
   rect: RatioRect,
 ): Promise<BossTimeOcrResult> {
-  const [worker, built] = await Promise.all([
-    getTimeWorker(),
-    buildBossRectCrops(image, rect, "time"),
-  ]);
-  const chunks = await recognizeCropTexts(
-    worker,
-    built.crops,
-    {
-      preserve_interword_spaces: "1",
-      tessedit_char_whitelist: "0123456789年月日时分:：- ",
-    },
-    [PSM.SINGLE_LINE, PSM.SINGLE_BLOCK, PSM.AUTO],
-  );
-  try {
-    await worker.setParameters({
-      tessedit_pageseg_mode: PSM.AUTO,
-      tessedit_char_whitelist: "",
-    });
-  } catch {
-    // ignore
-  }
+  const built = await buildBossRectCrops(image, rect, "time");
+  const chunks = await recognizeCropTexts(built.crops, "boss_time");
   return {
     text: pickBestTimeText(chunks),
     previewDataUrl: built.preview,
@@ -175,20 +96,11 @@ export async function recognizeBossNameAtClick(
   xRatio: number,
   yRatio: number,
 ): Promise<BossNameOcrResult> {
-  const [worker, crops, previewDataUrl] = await Promise.all([
-    getNameWorker(),
+  const [crops, previewDataUrl] = await Promise.all([
     buildBossNameClickCrops(image, xRatio, yRatio),
     buildBossClickPreview(image, xRatio, yRatio, "name"),
   ]);
-  const chunks = await recognizeCropTexts(
-    worker,
-    crops,
-    {
-      preserve_interword_spaces: "1",
-      tessedit_char_whitelist: "",
-    },
-    [PSM.SINGLE_LINE, PSM.RAW_LINE, PSM.SPARSE_TEXT],
-  );
+  const chunks = await recognizeCropTexts(crops, "boss_name");
   return { text: pickBestNameText(chunks, []), previewDataUrl };
 }
 
@@ -197,27 +109,10 @@ export async function recognizeBossTimeAtClick(
   xRatio: number,
   yRatio: number,
 ): Promise<BossTimeOcrResult> {
-  const [worker, crops, previewDataUrl] = await Promise.all([
-    getTimeWorker(),
+  const [crops, previewDataUrl] = await Promise.all([
     buildBossTimeClickCrops(image, xRatio, yRatio),
     buildBossClickPreview(image, xRatio, yRatio, "time"),
   ]);
-  const chunks = await recognizeCropTexts(
-    worker,
-    crops,
-    {
-      preserve_interword_spaces: "1",
-      tessedit_char_whitelist: "0123456789年月日时分:：- ",
-    },
-    [PSM.SINGLE_BLOCK, PSM.AUTO, PSM.SINGLE_LINE],
-  );
-  try {
-    await worker.setParameters({
-      tessedit_pageseg_mode: PSM.AUTO,
-      tessedit_char_whitelist: "",
-    });
-  } catch {
-    // ignore
-  }
+  const chunks = await recognizeCropTexts(crops, "boss_time");
   return { text: pickBestTimeText(chunks), previewDataUrl };
 }

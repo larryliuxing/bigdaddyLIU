@@ -1,0 +1,67 @@
+import { NextResponse } from "next/server";
+import { getSession } from "@/lib/auth";
+
+export const runtime = "nodejs";
+
+const OCR_BASE = (process.env.GUILD_OCR_URL || "http://127.0.0.1:8765").replace(
+  /\/$/,
+  "",
+);
+const MAX_IMAGE_CHARS = 3_500_000;
+
+export async function POST(request: Request) {
+  const user = await getSession();
+  if (!user) {
+    return NextResponse.json({ error: "请先登录" }, { status: 401 });
+  }
+
+  const body = await request.json().catch(() => null);
+  const extra = Array.isArray(body?.images)
+    ? body.images.filter((v: unknown) => typeof v === "string")
+    : [];
+  const images = [body?.image, body?.imageData, ...extra]
+    .filter(
+      (v: unknown): v is string =>
+        typeof v === "string" &&
+        v.startsWith("data:image/") &&
+        v.length < MAX_IMAGE_CHARS,
+    )
+    .slice(0, 4);
+  if (!images.length) {
+    return NextResponse.json({ text: "", lines: [] });
+  }
+
+  try {
+    const res = await fetch(`${OCR_BASE}/ocr/recognize`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        task: String(body?.task || "general"),
+        images,
+      }),
+    });
+    const data = (await res.json().catch(() => ({}))) as {
+      text?: string;
+      lines?: unknown;
+      error?: string;
+    };
+    if (!res.ok) {
+      return NextResponse.json(
+        { text: "", lines: [], error: data.error || "识别服务失败" },
+        { status: 502 },
+      );
+    }
+    const lines = Array.isArray(data.lines)
+      ? data.lines.map((line) => String(line || "").trim()).filter(Boolean)
+      : [];
+    return NextResponse.json({
+      text: String(data.text || lines.join("\n")).trim(),
+      lines,
+    });
+  } catch {
+    return NextResponse.json(
+      { text: "", lines: [], error: "识别服务未启动" },
+      { status: 503 },
+    );
+  }
+}

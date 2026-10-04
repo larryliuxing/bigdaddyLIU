@@ -43,3 +43,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local PaddleOCR
+/ocr-service/.venv/
+/ocr-service/__pycache__/
+__pycache__/
+*.pyc
