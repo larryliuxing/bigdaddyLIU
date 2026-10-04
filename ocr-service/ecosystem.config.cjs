@@ -1,15 +1,14 @@
 const path = require("path");
 
 const root = path.resolve(__dirname, "..");
-const python = path.join(root, "ocr-service/.venv/bin/python");
 
 module.exports = {
   apps: [
     {
       name: "guild-ocr",
       cwd: root,
-      script: "ocr-service/server.py",
-      interpreter: python,
+      script: "ocr-service/start.sh",
+      interpreter: "bash",
       instances: 1,
       autorestart: true,
       max_memory_restart: "1500M",
