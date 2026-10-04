@@ -8,6 +8,7 @@ import json
 import os
 import re
 import sys
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -29,6 +30,9 @@ DATA_URL_RE = re.compile(
 
 _ocr: Any = None
 _ocr_api = ""
+_models_ready = False
+_models_error = ""
+_load_lock = threading.Lock()
 
 
 def get_ocr() -> Any:
@@ -288,7 +292,13 @@ class Handler(BaseHTTPRequestHandler):
         if path in {"/health", "/ocr/health"}:
             self._send(
                 200,
-                {"ok": True, "service": "guild-ocr", "engine": "paddleocr"},
+                {
+                    "ok": True,
+                    "service": "guild-ocr",
+                    "engine": "paddleocr",
+                    "ready": _models_ready,
+                    "error": _models_error or None,
+                },
             )
             return
         self._send(404, {"ok": False, "error": "not found"})
@@ -316,6 +326,12 @@ class Handler(BaseHTTPRequestHandler):
         if not images:
             self._send(400, {"ok": False, "error": "missing image"})
             return
+        if _models_error:
+            self._send(503, {"ok": False, "error": f"识别模型加载失败：{_models_error}"})
+            return
+        if not _models_ready:
+            self._send(503, {"ok": False, "error": "识别模型加载中，请稍等再试"})
+            return
         started = time.time()
         try:
             result = recognize_images(images)
@@ -326,9 +342,23 @@ class Handler(BaseHTTPRequestHandler):
             self._send(500, {"ok": False, "error": f"ocr failed: {exc}"})
 
 
+def _load_models() -> None:
+    global _models_ready, _models_error
+    with _load_lock:
+        if _models_ready or _models_error:
+            return
+        print("[guild-ocr] loading PaddleOCR models…", flush=True)
+        try:
+            get_ocr()
+            _models_ready = True
+            print("[guild-ocr] models ready", flush=True)
+        except Exception as exc:
+            _models_error = str(exc)
+            print(f"[guild-ocr] model load failed: {exc}", flush=True)
+
+
 def main() -> None:
-    print("[guild-ocr] loading PaddleOCR models…", flush=True)
-    get_ocr()
+    threading.Thread(target=_load_models, name="ocr-load", daemon=True).start()
     print(f"[guild-ocr] listening on http://{HOST}:{PORT}", flush=True)
     ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
 

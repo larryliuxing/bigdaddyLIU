@@ -60,7 +60,11 @@ export async function POST(request: Request) {
     });
   } catch {
     return NextResponse.json(
-      { text: "", lines: [], error: "识别服务未启动" },
+      {
+        text: "",
+        lines: [],
+        error: "连不上识别服务（8765）。请看 pm2 logs guild-ocr，等模型加载完再试",
+      },
       { status: 503 },
     );
   }
