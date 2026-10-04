@@ -9,6 +9,7 @@ from PIL import Image
 from ornate_names import (
     NAME_1,
     NAME_2,
+    NAME_3,
     SAMPLE_DIR,
     SEED_LABELS,
     load_templates,
@@ -67,21 +68,23 @@ def _check_sample(filename: str, expected: str) -> None:
 
 
 def main() -> None:
-    if NAME_1 != "\u9468\u9f93\u5dc4\u9f93\u5dc3\u9468":
+    expected = {
+        "name-luolong-1.png": "\u9468\u9f93\u5dc4\u9f93\u5dc3\u9468",
+        "name-2.png": "\u9468\u8c45\u8d1a\u9468\u8d1a\u5dc4",
+        "name-3.png": "\u9468\u9468\u7216\u9f93\u9468\u9468",
+    }
+    if NAME_1 != expected["name-luolong-1.png"]:
         raise SystemExit(f"NAME_1 codepoints wrong: {_hex(NAME_1)}")
-    if NAME_2 != "\u9468\u8c45\u8d1a\u9468\u8d1a\u5dc4":
+    if NAME_2 != expected["name-2.png"]:
         raise SystemExit(f"NAME_2 codepoints wrong: {_hex(NAME_2)}")
+    if NAME_3 != expected["name-3.png"]:
+        raise SystemExit(f"NAME_3 codepoints wrong: {_hex(NAME_3)}")
+    if set(SEED_LABELS) != set(expected):
+        raise SystemExit("SEED_LABELS keys mismatch")
 
-    _check_sample("name-luolong-1.png", NAME_1)
-    if NAME_1[2] != "\u5dc4" or NAME_1[4] != "\u5dc3":
-        raise SystemExit("NAME_1 3rd/5th constant wrong")
-
-    _check_sample("name-2.png", NAME_2)
-    if NAME_2[2] != "\u8d1a" or NAME_2[4] != "\u8d1a" or NAME_2[5] != "\u5dc4":
-        raise SystemExit("NAME_2 3rd/5th/6th constant wrong")
-
-    print("OK", NAME_1, _hex(NAME_1))
-    print("OK", NAME_2, _hex(NAME_2))
+    for filename, name in expected.items():
+        _check_sample(filename, name)
+        print("OK", filename, name, _hex(name))
 
 
 if __name__ == "__main__":
