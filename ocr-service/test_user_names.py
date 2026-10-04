@@ -10,6 +10,7 @@ from ornate_names import (
     NAME_1,
     NAME_2,
     NAME_3,
+    NAME_4,
     SAMPLE_DIR,
     SEED_LABELS,
     load_templates,
@@ -72,6 +73,7 @@ def main() -> None:
         "name-luolong-1.png": "\u9468\u9f93\u5dc4\u9f93\u5dc3\u9468",
         "name-2.png": "\u9468\u8c45\u8d1a\u9468\u8d1a\u5dc4",
         "name-3.png": "\u9468\u9468\u7216\u9f93\u9468\u9468",
+        "name-4.png": "\u9468\u8d1a\u8d1a\u8c45\u7216\u5dc3",
     }
     if NAME_1 != expected["name-luolong-1.png"]:
         raise SystemExit(f"NAME_1 codepoints wrong: {_hex(NAME_1)}")
@@ -79,6 +81,8 @@ def main() -> None:
         raise SystemExit(f"NAME_2 codepoints wrong: {_hex(NAME_2)}")
     if NAME_3 != expected["name-3.png"]:
         raise SystemExit(f"NAME_3 codepoints wrong: {_hex(NAME_3)}")
+    if NAME_4 != expected["name-4.png"]:
+        raise SystemExit(f"NAME_4 codepoints wrong: {_hex(NAME_4)}")
     if set(SEED_LABELS) != set(expected):
         raise SystemExit("SEED_LABELS keys mismatch")
 
