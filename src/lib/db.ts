@@ -19,6 +19,7 @@ import type {
   ItemPriceStats,
   GuildFund,
   ItemQuality,
+  ItemCatalogEntry,
   Member,
   MemberRole,
   MemberRow,
@@ -228,6 +229,22 @@ export function ensureDb(): Database.Database {
     CREATE INDEX IF NOT EXISTS idx_sale_history_name_key
       ON auction_item_sale_history(item_name_key);
 
+    CREATE TABLE IF NOT EXISTS auction_item_catalog (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      name_key TEXT NOT NULL UNIQUE,
+      quality TEXT NOT NULL DEFAULT 'green',
+      last_start_price REAL NOT NULL DEFAULT 5,
+      last_bid_increment REAL NOT NULL DEFAULT 5,
+      last_bid_min REAL,
+      last_bid_max REAL,
+      last_sold_price REAL,
+      use_count INTEGER NOT NULL DEFAULT 1,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_item_catalog_updated
+      ON auction_item_catalog(updated_at DESC, use_count DESC);
+
     CREATE TABLE IF NOT EXISTS leaderboard_entries (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       member_id INTEGER NOT NULL UNIQUE,
@@ -404,6 +421,7 @@ function seedIfEmpty(database: Database.Database) {
   }
 
   backfillSaleHistory(database);
+  backfillItemCatalog(database);
   migrateLegacyPinkToSpecialOnce(database);
   migrateHasImageFlagsOnce(database);
   // Legacy: wipe leftover total-table temporary rows (feature removed).
@@ -665,6 +683,184 @@ function backfillSaleHistory(database: Database.Database) {
     }
   });
   tx();
+}
+
+function toCatalogEntry(row: {
+  name: string;
+  quality: string;
+  last_start_price: number;
+  last_bid_increment: number;
+  last_bid_min: number | null;
+  last_bid_max: number | null;
+  last_sold_price: number | null;
+  use_count: number;
+}): ItemCatalogEntry {
+  return {
+    name: row.name,
+    quality: row.quality as ItemQuality,
+    lastStartPrice: row.last_start_price,
+    lastBidIncrement: row.last_bid_increment,
+    lastBidMin: row.last_bid_min ?? null,
+    lastBidMax: row.last_bid_max ?? null,
+    lastSoldPrice: row.last_sold_price ?? null,
+    useCount: row.use_count,
+  };
+}
+
+export function upsertItemCatalog(input: {
+  name: string;
+  quality: ItemQuality;
+  startPrice: number;
+  bidIncrement: number;
+  bidMin?: number | null;
+  bidMax?: number | null;
+  soldPrice?: number | null;
+}): void {
+  const name = input.name.trim();
+  const key = normalizeItemNameKey(name);
+  if (!key) return;
+  ensureDb()
+    .prepare(
+      `INSERT INTO auction_item_catalog
+       (name, name_key, quality, last_start_price, last_bid_increment, last_bid_min, last_bid_max, last_sold_price, use_count, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, datetime('now'))
+       ON CONFLICT(name_key) DO UPDATE SET
+         name = excluded.name,
+         quality = excluded.quality,
+         last_start_price = excluded.last_start_price,
+         last_bid_increment = excluded.last_bid_increment,
+         last_bid_min = excluded.last_bid_min,
+         last_bid_max = excluded.last_bid_max,
+         last_sold_price = COALESCE(excluded.last_sold_price, auction_item_catalog.last_sold_price),
+         use_count = auction_item_catalog.use_count + 1,
+         updated_at = excluded.updated_at`,
+    )
+    .run(
+      name,
+      key,
+      input.quality,
+      input.startPrice,
+      input.bidIncrement,
+      input.bidMin ?? null,
+      input.bidMax ?? null,
+      input.soldPrice ?? null,
+    );
+}
+
+export function searchItemCatalog(query: string, limit = 20): ItemCatalogEntry[] {
+  const cap = Math.min(40, Math.max(1, limit));
+  const database = ensureDb();
+  const q = query.trim();
+  if (!q) {
+    const rows = database
+      .prepare(
+        `SELECT name, quality, last_start_price, last_bid_increment, last_bid_min, last_bid_max, last_sold_price, use_count
+         FROM auction_item_catalog
+         ORDER BY updated_at DESC, use_count DESC, id DESC
+         LIMIT ?`,
+      )
+      .all(cap) as Array<{
+      name: string;
+      quality: string;
+      last_start_price: number;
+      last_bid_increment: number;
+      last_bid_min: number | null;
+      last_bid_max: number | null;
+      last_sold_price: number | null;
+      use_count: number;
+    }>;
+    return rows.map(toCatalogEntry);
+  }
+  const key = normalizeItemNameKey(q);
+  const like = `%${q.replace(/[%_\\]/g, (ch) => `\\${ch}`)}%`;
+  const keyLike = `%${key.replace(/[%_\\]/g, (ch) => `\\${ch}`)}%`;
+  const rows = database
+    .prepare(
+      `SELECT name, quality, last_start_price, last_bid_increment, last_bid_min, last_bid_max, last_sold_price, use_count
+       FROM auction_item_catalog
+       WHERE name LIKE ? ESCAPE '\\' OR name_key LIKE ? ESCAPE '\\'
+       ORDER BY
+         CASE
+           WHEN name_key = ? THEN 0
+           WHEN name_key LIKE ? ESCAPE '\\' THEN 1
+           ELSE 2
+         END,
+         use_count DESC,
+         updated_at DESC
+       LIMIT ?`,
+    )
+    .all(like, keyLike, key, `${key}%`, cap) as Array<{
+    name: string;
+    quality: string;
+    last_start_price: number;
+    last_bid_increment: number;
+    last_bid_min: number | null;
+    last_bid_max: number | null;
+    last_sold_price: number | null;
+    use_count: number;
+  }>;
+  return rows.map(toCatalogEntry);
+}
+
+function backfillItemCatalog(database: Database.Database) {
+  const done = database
+    .prepare(`SELECT value FROM app_meta WHERE key = ?`)
+    .get("backfill_item_catalog_v1") as { value: string } | undefined;
+  if (done) return;
+  const rows = database
+    .prepare(
+      `SELECT name, quality, start_price, bid_increment, bid_min, bid_max, sold_price
+       FROM auction_items
+       ORDER BY id ASC`,
+    )
+    .all() as Array<{
+    name: string;
+    quality: ItemQuality;
+    start_price: number;
+    bid_increment: number;
+    bid_min: number | null;
+    bid_max: number | null;
+    sold_price: number | null;
+  }>;
+  const upsert = database.prepare(
+    `INSERT INTO auction_item_catalog
+     (name, name_key, quality, last_start_price, last_bid_increment, last_bid_min, last_bid_max, last_sold_price, use_count, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, datetime('now'))
+     ON CONFLICT(name_key) DO UPDATE SET
+       name = excluded.name,
+       quality = excluded.quality,
+       last_start_price = excluded.last_start_price,
+       last_bid_increment = excluded.last_bid_increment,
+       last_bid_min = excluded.last_bid_min,
+       last_bid_max = excluded.last_bid_max,
+       last_sold_price = COALESCE(excluded.last_sold_price, auction_item_catalog.last_sold_price),
+       use_count = auction_item_catalog.use_count + 1,
+       updated_at = excluded.updated_at`,
+  );
+  const tx = database.transaction(() => {
+    for (const row of rows) {
+      const name = String(row.name || "").trim();
+      const key = normalizeItemNameKey(name);
+      if (!key) continue;
+      upsert.run(
+        name,
+        key,
+        row.quality || "green",
+        row.start_price,
+        row.bid_increment,
+        row.bid_min,
+        row.bid_max,
+        row.sold_price,
+      );
+    }
+  });
+  tx();
+  database
+    .prepare(
+      `INSERT INTO app_meta (key, value) VALUES (?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+    )
+    .run("backfill_item_catalog_v1", new Date().toISOString());
 }
 
 function toMember(row: MemberRow): Member {
@@ -1454,6 +1650,13 @@ export function recordItemSale(input: {
       input.winnerName,
       input.soldAt || nowIso(),
     );
+  ensureDb()
+    .prepare(
+      `UPDATE auction_item_catalog
+       SET last_sold_price = ?, updated_at = datetime('now')
+       WHERE name_key = ?`,
+    )
+    .run(input.soldPrice, key);
 }
 
 function toPriceStats(
@@ -1658,6 +1861,15 @@ export function createAuctionItem(input: {
     }
   });
   tx(input.dividendMemberIds);
+
+  upsertItemCatalog({
+    name: input.name,
+    quality: input.quality,
+    startPrice,
+    bidIncrement: input.bidIncrement,
+    bidMin,
+    bidMax,
+  });
 
   return getItemById(itemId)!;
 }
