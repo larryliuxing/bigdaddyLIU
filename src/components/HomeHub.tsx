@@ -1,10 +1,11 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
-import type { SessionUser } from "@/lib/types";
+import { useEffect, useState } from "react";
+import type { GuildFund, SessionUser } from "@/lib/types";
 import {
   ChevronRightIcon,
+  FundIcon,
   GavelIcon,
   SettingsIcon,
   TimerIcon,
@@ -13,6 +14,7 @@ import {
 import { AdminLoginModal } from "./AdminLoginModal";
 import { logoutAndRedirect } from "@/lib/nav";
 import { HOME_CHANGELOG } from "@/lib/changelog";
+import { formatFundAmount } from "@/lib/fund";
 
 const FEATURES = [
   {
@@ -36,12 +38,47 @@ const FEATURES = [
     iconBg: "linear-gradient(145deg, #3a3a20, #222214)",
     icon: <TrophyIcon />,
   },
+  {
+    key: "fund",
+    title: "战盟基金",
+    description: "管理员公示战盟资金，全体成员可见",
+    iconBg: "linear-gradient(145deg, #3a2a12, #24180c)",
+    icon: <FundIcon />,
+  },
 ] as const;
 
-export function HomeHub({ user }: { user: Extract<SessionUser, { type: "member" }> }) {
+export function HomeHub({
+  user,
+  fund,
+}: {
+  user: Extract<SessionUser, { type: "member" }>;
+  fund: GuildFund;
+}) {
   const router = useRouter();
   const [showAdmin, setShowAdmin] = useState(false);
   const [toast, setToast] = useState("");
+  const [currentFund, setCurrentFund] = useState(fund);
+
+  useEffect(() => {
+    setCurrentFund(fund);
+  }, [fund]);
+
+  useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      const res = await fetch("/api/fund");
+      const data = await res.json().catch(() => ({}));
+      if (!alive || !res.ok || !data.fund) return;
+      setCurrentFund(data.fund);
+    };
+    const timeout = window.setTimeout(() => {
+      void load();
+    }, 0);
+    return () => {
+      alive = false;
+      window.clearTimeout(timeout);
+    };
+  }, []);
 
   async function logout() {
     await logoutAndRedirect("member", router);
@@ -58,6 +95,10 @@ export function HomeHub({ user }: { user: Extract<SessionUser, { type: "member" 
     }
     if (key === "boss") {
       router.push("/boss");
+      return;
+    }
+    if (key === "fund") {
+      router.push("/fund");
       return;
     }
     setToast(`${title} 功能开发中，敬请期待`);
@@ -115,7 +156,11 @@ export function HomeHub({ user }: { user: Extract<SessionUser, { type: "member" 
               <span className="min-w-0 flex-1">
                 <span className="block text-base font-semibold">{feature.title}</span>
                 <span className="mt-1 block text-sm text-[var(--text-muted)]">
-                  {feature.description}
+                  {feature.key === "fund"
+                    ? currentFund.amount == null
+                      ? feature.description
+                      : `当前 ${formatFundAmount(currentFund.amount)} · 点开查看公示`
+                    : feature.description}
                 </span>
               </span>
               <span className="text-[var(--text-muted)]">
