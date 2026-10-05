@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { GuildFund, SessionUser } from "@/lib/types";
 import {
   ChevronRightIcon,
@@ -57,6 +57,28 @@ export function HomeHub({
   const router = useRouter();
   const [showAdmin, setShowAdmin] = useState(false);
   const [toast, setToast] = useState("");
+  const [currentFund, setCurrentFund] = useState(fund);
+
+  useEffect(() => {
+    setCurrentFund(fund);
+  }, [fund]);
+
+  useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      const res = await fetch("/api/fund");
+      const data = await res.json().catch(() => ({}));
+      if (!alive || !res.ok || !data.fund) return;
+      setCurrentFund(data.fund);
+    };
+    const timeout = window.setTimeout(() => {
+      void load();
+    }, 0);
+    return () => {
+      alive = false;
+      window.clearTimeout(timeout);
+    };
+  }, []);
 
   async function logout() {
     await logoutAndRedirect("member", router);
@@ -135,9 +157,9 @@ export function HomeHub({
                 <span className="block text-base font-semibold">{feature.title}</span>
                 <span className="mt-1 block text-sm text-[var(--text-muted)]">
                   {feature.key === "fund"
-                    ? fund.amount == null
+                    ? currentFund.amount == null
                       ? feature.description
-                      : `当前 ${formatFundAmount(fund.amount)} · 点开查看公示`
+                      : `当前 ${formatFundAmount(currentFund.amount)} · 点开查看公示`
                     : feature.description}
                 </span>
               </span>

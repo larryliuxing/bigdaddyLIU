@@ -47,6 +47,7 @@ export function GuildFundPanel({
         data.fund?.amount == null ? amountInput : String(data.fund.amount),
       );
       setMessage("已公示给全体成员");
+      router.refresh();
     } catch {
       setError("网络错误，公示失败");
     } finally {
