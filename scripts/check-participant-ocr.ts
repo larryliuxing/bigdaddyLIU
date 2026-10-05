@@ -117,6 +117,33 @@ assert.equal(isParticipantNameInk(102, 106, 110), true);
 assert.equal(isParticipantNameInk(90, 94, 98), true);
 // Saturated guild badge should not count as name ink.
 assert.equal(isParticipantNameInk(160, 40, 200), false);
+assert.equal(cleanOcrNameToken("job"), "job");
+assert.equal(cleanOcrNameToken("JOB"), "JOB");
+assert.equal(cleanOcrNameToken("bob1"), "bob1");
+assert.equal(parseParticipantRowName("job"), "job");
+assert.ok(namesFromOcrResult("job\n天刀", ["job", "天刀"]).includes("job"));
+assert.ok(namesFromOcrResult("job\n天刀", ["job", "天刀"]).includes("天刀"));
+
+const aliasRoster = [
+  { id: 31, name: "job-bob1-carry" },
+  { id: 32, name: "天刀" },
+];
+assert.equal(findBestMemberForOcrName("job", aliasRoster)?.id, 31);
+assert.equal(findBestMemberForOcrName("bob1", aliasRoster)?.id, 31);
+assert.equal(findBestMemberForOcrName("carry", aliasRoster)?.id, 31);
+assert.equal(findBestMemberForOcrName("JOB", aliasRoster)?.id, 31);
+assert.equal(findBestMemberForOcrName("天刀", aliasRoster)?.id, 32);
+
+const aliasPaired = pairOcrNamesToMembers(
+  ["job", "天刀", "carry"],
+  aliasRoster,
+);
+assert.equal(aliasPaired.hits.find((h) => h.ocrName === "job")?.member?.id, 31);
+assert.equal(aliasPaired.hits.find((h) => h.ocrName === "carry")?.member?.id, 31);
+assert.equal(aliasPaired.hits.find((h) => h.ocrName === "天刀")?.member?.id, 32);
+assert.equal(aliasPaired.matched.length, 2);
+assert.deepEqual(aliasPaired.unrecognized, []);
+
 assert.equal(participantNameInkCut(98) < 110, true);
 assert.equal(participantNameInkCut(98) < 82, true);
 

@@ -25,6 +25,7 @@ PORT = int(os.environ.get("GUILD_OCR_PORT", "8765"))
 MAX_IMAGE_BYTES = 6_000_000
 MAX_IMAGES = 4
 PADDLE_TIMEOUT_SEC = 6.0
+LEFTOVER_PADDLE_TIMEOUT_SEC = 2.5
 RECOGNIZE_DEADLINE_SEC = 8.0
 
 DATA_URL_RE = re.compile(
@@ -159,7 +160,10 @@ def collect_from_ocr(result: Any) -> list[tuple[float, str, float]]:
     return rows
 
 
-def run_one(img: Image.Image) -> tuple[list[tuple[float, str, float]], bool]:
+def run_one(
+    img: Image.Image,
+    timeout_sec: float = PADDLE_TIMEOUT_SEC,
+) -> tuple[list[tuple[float, str, float]], bool]:
     import numpy as np
 
     def _call() -> list[tuple[float, str, float]]:
@@ -182,7 +186,7 @@ def run_one(img: Image.Image) -> tuple[list[tuple[float, str, float]], bool]:
 
     future = _paddle_pool.submit(_call)
     try:
-        result = future.result(timeout=PADDLE_TIMEOUT_SEC)
+        result = future.result(timeout=timeout_sec)
     except FuturesTimeout:
         print("[guild-ocr] paddle timed out", flush=True)
 
@@ -207,7 +211,32 @@ def run_one(img: Image.Image) -> tuple[list[tuple[float, str, float]], bool]:
 def _looks_like_name(text: str) -> bool:
     compact = re.sub(r"\s+", "", text)
     cjk = re.sub(r"[^\u4e00-\u9fff]", "", compact)
-    return len(cjk) >= 2
+    if len(cjk) >= 2:
+        return True
+    latin = re.sub(r"[^A-Za-z0-9]", "", compact)
+    return bool(re.fullmatch(r"[A-Za-z][A-Za-z0-9]{1,15}", latin))
+
+
+def crop_name_ink(img: Image.Image) -> Image.Image:
+    """Trim empty dark padding so leftover Paddle stays on the glyphs."""
+    import numpy as np
+
+    gray = np.array(img.convert("L"))
+    ink = gray >= 70
+    if float(ink.mean()) < 0.004:
+        return img
+    ys, xs = np.where(ink)
+    pad = 6
+    box = (
+        max(0, int(xs.min()) - pad),
+        max(0, int(ys.min()) - pad),
+        min(img.width, int(xs.max()) + 1 + pad),
+        min(img.height, int(ys.max()) + 1 + pad),
+    )
+    cropped = img.crop(box)
+    if cropped.width < 8 or cropped.height < 8:
+        return img
+    return cropped
 
 
 def _stack_bands(bands: list[Image.Image]) -> Image.Image:
@@ -237,27 +266,27 @@ def downscale_for_paddle(img: Image.Image) -> Image.Image:
 
 
 def leftover_paddle_attempts(img: Image.Image) -> list[Image.Image]:
-    """Ordinary leftover rows are tiny and dark. Invert first; never upscale."""
+    """Ordinary leftover rows are tiny and dark. Invert once; never upscale."""
     import numpy as np
 
-    fitted = downscale_for_paddle(img)
+    fitted = downscale_for_paddle(crop_name_ink(img))
     gray = fitted.convert("L")
     mean = float(np.array(gray).mean())
     if mean >= 120:
         return [fitted]
     inverted = ImageOps.invert(gray)
     sharp = ImageEnhance.Contrast(inverted).enhance(2.2)
-    return [sharp.convert("RGB"), fitted]
+    return [sharp.convert("RGB")]
 
 
 def run_paddle_for_text(img: Image.Image) -> list[tuple[float, str, float]]:
     rows: list[tuple[float, str, float]] = []
     for attempt in leftover_paddle_attempts(img):
-        extra, timed_out = run_one(attempt)
+        extra, timed_out = run_one(attempt, timeout_sec=LEFTOVER_PADDLE_TIMEOUT_SEC)
         rows.extend(extra)
         if timed_out:
             break
-        if any(_looks_like_name(text) for _y, text, _score in extra):
+        if extra:
             break
     return rows
 
@@ -326,7 +355,8 @@ def recognize_images(images: list[str]) -> dict[str, Any]:
                 continue
             leftover.append(band)
         if leftover and time.time() < deadline:
-            rows.extend(run_paddle_for_text(_stack_bands(leftover)))
+            cropped = [crop_name_ink(band) for band in leftover]
+            rows.extend(run_paddle_for_text(_stack_bands(cropped)))
     paddle_lines = [
         line for line in merge_rows(rows) if not _paddle_redundant(line, ornate)
     ]

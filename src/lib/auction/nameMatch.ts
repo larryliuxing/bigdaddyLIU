@@ -22,11 +22,16 @@ export function compactName(s: string) {
     .replace(/[、·•.,，。:：;；'"“”‘’|｜]/g, "");
 }
 
-/** Roster names are often `花体六字-昵称`. Matching uses the prefix. */
+export function isLatinNameToken(s: string) {
+  return /^[A-Za-z][A-Za-z0-9]{1,15}$/.test(s);
+}
+
+/** Roster names are often `花体六字-昵称` or `job-bob1-carry`. */
 export function splitRosterName(name: string): {
   prefix: string;
   nickname: string;
   compact: string;
+  parts: string[];
 } {
   const compact = compactName(name);
   const parts = compact.split(NAME_SEP).filter(Boolean);
@@ -34,17 +39,22 @@ export function splitRosterName(name: string): {
     prefix: parts[0] || compact,
     nickname: parts.slice(1).join(""),
     compact: parts.join(""),
+    parts: parts.length ? parts : [compact],
   };
 }
 
 export function cleanOcrNameToken(raw: string): string | null {
-  const cleaned = compactName(raw)
-    .replace(NAME_SEP_ALL, "")
-    .replace(/[0-9A-Za-z]/g, "");
-  if (cleaned.length < 2 || cleaned.length > 16) return null;
-  if (!/^[\u4e00-\u9fff]+$/.test(cleaned)) return null;
-  if (SKIP_EXACT.test(cleaned)) return null;
-  return cleaned;
+  const stripped = compactName(raw).replace(NAME_SEP_ALL, "");
+  if (/^[\u4e00-\u9fff]{2,16}$/.test(stripped)) {
+    if (SKIP_EXACT.test(stripped)) return null;
+    return stripped;
+  }
+  if (isLatinNameToken(stripped)) return stripped;
+  const cjk = stripped.replace(/[^\u4e00-\u9fff]/g, "");
+  if (/^[\u4e00-\u9fff]{2,16}$/.test(cjk) && !SKIP_EXACT.test(cjk)) return cjk;
+  const latin = stripped.replace(/[^A-Za-z0-9]/g, "");
+  if (isLatinNameToken(latin)) return latin;
+  return null;
 }
 
 export function charOverlapRatio(a: string, b: string) {
@@ -69,10 +79,17 @@ export function isNearName(token: string, name: string) {
 
 export function scoreNameMatch(ocrName: string, memberName: string): number {
   const token = compactName(ocrName).replace(NAME_SEP_ALL, "");
-  const { prefix, nickname, compact } = splitRosterName(memberName);
+  const { prefix, nickname, compact, parts } = splitRosterName(memberName);
   if (!token || !compact) return 0;
   if (token === compact) return 100;
   if (token.toLowerCase() === compact.toLowerCase()) return 99;
+  const tokenFold = token.toLowerCase();
+  for (const part of parts) {
+    if (!part) continue;
+    if (isLatinNameToken(token) && part.length < 3) continue;
+    if (part === token) return part === prefix ? 94 : 91;
+    if (part.toLowerCase() === tokenFold) return part.toLowerCase() === prefix.toLowerCase() ? 93 : 90;
+  }
   // Game screenshots only show the ornate 6-glyph prefix.
   if (token === prefix && prefix.length >= 2) return 94;
   if (token === nickname && nickname.length >= 2) return 88;
@@ -83,10 +100,10 @@ export function scoreNameMatch(ocrName: string, memberName: string): number {
   ) {
     return 82 + (Math.min(token.length, prefix.length) / Math.max(token.length, prefix.length)) * 10;
   }
-  if (token.length >= 2 && compact.includes(token)) {
+  if (token.length >= 2 && compact.toLowerCase().includes(tokenFold)) {
     return 80 + (token.length / compact.length) * 10;
   }
-  if (compact.length >= 2 && token.includes(compact)) {
+  if (compact.length >= 2 && tokenFold.includes(compact.toLowerCase())) {
     return 78 + (compact.length / token.length) * 10;
   }
   if (prefix.length >= 4 && isNearName(token, prefix)) {
@@ -102,7 +119,7 @@ export function findBestMemberForOcrName<T extends Named>(
   ocrName: string,
   members: T[],
 ): T | null {
-  const token = cleanOcrNameToken(ocrName) ?? compactName(ocrName);
+  const token = cleanOcrNameToken(ocrName) ?? compactName(ocrName).replace(NAME_SEP_ALL, "");
   if (token.length < 2) return null;
   let best: T | null = null;
   let bestScore = 0;

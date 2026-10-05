@@ -170,12 +170,12 @@ function cleanNameToken(raw: string) {
   return raw
     .replace(/\s+/g, "")
     .replace(/[|｜\[\]【】()（）<>《》·•.,，、。:：;；'"“”‘’\-_/\\=+~`!@#$%^&*]/g, "")
-    .replace(/[0-9A-Za-z]/g, "")
     .replace(GRADE_WORDS, "");
 }
 
 function isPlausibleName(name: string) {
   if (name.length < 2 || name.length > 16) return false;
+  if (/^[A-Za-z][A-Za-z0-9]{1,15}$/.test(name)) return true;
   if (!/^[\u4e00-\u9fff]+$/.test(name)) return false;
   if (GRADE_WORDS.test(name)) return false;
   // Reject obvious OCR junk fragments that are all the same char etc.
@@ -203,6 +203,8 @@ export function parseParticipantRowName(line: string): string | null {
   for (const run of runs) {
     if (isPlausibleName(run)) return run;
   }
+  const latin = raw.match(/[A-Za-z][A-Za-z0-9]{1,15}/);
+  if (latin && isPlausibleName(latin[0])) return latin[0];
   return null;
 }
 
@@ -227,6 +229,8 @@ export function namesFromOcrResult(text: string, lines: string[] = []): string[]
     push(cleaned);
     const runs = cleaned.match(/[\u4e00-\u9fff]{2,16}/g) || [];
     for (const run of runs) push(run);
+    const latin = cleaned.match(/[A-Za-z][A-Za-z0-9]{1,15}/g) || [];
+    for (const run of latin) push(run);
   }
 
   return names;
