@@ -67,6 +67,10 @@ export function isNearName(token: string, name: string) {
   return ratio >= 0.6;
 }
 
+function isOrnateSix(text: string) {
+  return text.length === 6 && /^[\u4e00-\u9fff]{6}$/.test(text);
+}
+
 export function scoreNameMatch(ocrName: string, memberName: string): number {
   const token = compactName(ocrName).replace(NAME_SEP_ALL, "");
   const { prefix, nickname, compact } = splitRosterName(memberName);
@@ -76,6 +80,9 @@ export function scoreNameMatch(ocrName: string, memberName: string): number {
   // Game screenshots only show the ornate 6-glyph prefix.
   if (token === prefix && prefix.length >= 2) return 94;
   if (token === nickname && nickname.length >= 2) return 88;
+  // Six-glyph names share radicals. Bag-of-chars overlap would pair
+  // 贚鑨爖鑨龓爖 with 鑨龓鑨龓贚爖-灰豆. Require an exact prefix.
+  if (isOrnateSix(token) && isOrnateSix(prefix)) return 0;
   if (
     prefix.length >= 4 &&
     token.length >= 4 &&
@@ -106,13 +113,18 @@ export function findBestMemberForOcrName<T extends Named>(
   if (token.length < 2) return null;
   let best: T | null = null;
   let bestScore = 0;
+  let tied = false;
   for (const member of members) {
     const score = scoreNameMatch(token, member.name);
     if (score > bestScore) {
       bestScore = score;
       best = member;
+      tied = false;
+    } else if (score > 0 && score === bestScore) {
+      tied = true;
     }
   }
+  if (tied) return null;
   return bestScore > 0 ? best : null;
 }
 
@@ -131,10 +143,39 @@ export function pairOcrNamesToMembers<T extends Named>(
     if (!unique.includes(token)) unique.push(token);
   }
 
+  type Cand = { ocrIndex: number; member: T; score: number };
+  const cands: Cand[] = [];
+  for (let i = 0; i < unique.length; i++) {
+    for (const member of members) {
+      const score = scoreNameMatch(unique[i], member.name);
+      if (score > 0) cands.push({ ocrIndex: i, member, score });
+    }
+  }
+  cands.sort((a, b) => b.score - a.score || a.ocrIndex - b.ocrIndex);
+
   const hits: OcrNameHit<T>[] = unique.map((ocrName) => ({
     ocrName,
-    member: findBestMemberForOcrName(ocrName, members),
+    member: null,
   }));
+  const usedMembers = new Set<number>();
+  const usedOcr = new Set<number>();
+  for (const cand of cands) {
+    if (usedOcr.has(cand.ocrIndex) || usedMembers.has(cand.member.id)) continue;
+    const rivals = cands.filter(
+      (other) =>
+        other.ocrIndex === cand.ocrIndex &&
+        other.score === cand.score &&
+        other.member.id !== cand.member.id &&
+        !usedMembers.has(other.member.id),
+    );
+    if (rivals.length > 0) {
+      usedOcr.add(cand.ocrIndex);
+      continue;
+    }
+    usedOcr.add(cand.ocrIndex);
+    usedMembers.add(cand.member.id);
+    hits[cand.ocrIndex].member = cand.member;
+  }
 
   const matchedIds = new Set<number>();
   const matched: T[] = [];
