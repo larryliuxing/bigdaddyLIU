@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import type {
   AuctionItem,
@@ -37,6 +37,32 @@ function statusTone(status: AuctionSessionSummary["status"]) {
   if (status === "live") return "bg-emerald-500/15 text-emerald-300";
   if (status === "ended") return "bg-slate-500/20 text-slate-300";
   return "bg-amber-500/15 text-amber-200";
+}
+
+function LotPriceChip({
+  children,
+  clickable,
+  onClick,
+}: {
+  children: ReactNode;
+  clickable: boolean;
+  onClick?: () => void;
+}) {
+  const className =
+    "inline-flex items-center rounded-lg border border-[var(--border-soft)] bg-[#1c2230] px-2.5 py-1 text-xs font-medium";
+  if (!clickable) {
+    return <span className={className}>{children}</span>;
+  }
+  return (
+    <button
+      type="button"
+      className={`${className} transition hover:border-[rgba(123,108,255,0.45)] hover:bg-[#252d40]`}
+      onClick={onClick}
+      title="点击修改拍品"
+    >
+      {children}
+    </button>
+  );
 }
 
 export function AuctionManagePanel({
@@ -782,33 +808,42 @@ export function AuctionManagePanel({
                               />
                               {item.name}
                             </p>
-                            {canEdit ? (
-                              <button
-                                type="button"
-                                className="mt-0.5 rounded-lg text-left text-xs text-[var(--text-muted)] underline-offset-2 hover:text-white hover:underline"
-                                onClick={() => beginEditItem(item)}
-                                title="点击修改名称和价格"
-                              >
-                                {isPinkAuction(item.quality)
-                                  ? `特殊粉色限价 ¥${item.bidMin ?? item.startPrice}～¥${item.bidMax ?? "-"} · `
-                                  : isOrdinaryPinkAuction(item.quality)
-                                    ? `普通粉色 · 起拍 ¥${item.startPrice} · 加价 ¥${item.bidIncrement} · 仅参与者 · `
-                                    : `起拍 ¥${item.startPrice} · 加价 ¥${item.bidIncrement} · `}
-                                {auctionItemStatusLabel(item.status)}
-                                {item.soldPrice != null
-                                  ? ` · 成交 ¥${item.soldPrice}`
+                            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                              {isPinkAuction(item.quality) ? (
+                                <>
+                                  <LotPriceChip
+                                    clickable={canEdit}
+                                    onClick={() => beginEditItem(item)}
+                                  >
+                                    低限 ¥{item.bidMin ?? item.startPrice}
+                                  </LotPriceChip>
+                                  <LotPriceChip
+                                    clickable={canEdit}
+                                    onClick={() => beginEditItem(item)}
+                                  >
+                                    高限 ¥{item.bidMax ?? "-"}
+                                  </LotPriceChip>
+                                </>
+                              ) : (
+                                <>
+                                  <LotPriceChip
+                                    clickable={canEdit}
+                                    onClick={() => beginEditItem(item)}
+                                  >
+                                    起拍 ¥{item.startPrice}
+                                  </LotPriceChip>
+                                  <LotPriceChip
+                                    clickable={canEdit}
+                                    onClick={() => beginEditItem(item)}
+                                  >
+                                    加价 ¥{item.bidIncrement}
+                                  </LotPriceChip>
+                                </>
+                              )}
+                              <span className="text-xs text-[var(--text-muted)]">
+                                {isOrdinaryPinkAuction(item.quality)
+                                  ? "仅参与者 · "
                                   : ""}
-                                <span className="ml-1 text-[var(--accent-gold)]">
-                                  编辑
-                                </span>
-                              </button>
-                            ) : (
-                              <p className="mt-0.5 text-xs text-[var(--text-muted)]">
-                                {isPinkAuction(item.quality)
-                                  ? `特殊粉色限价 ¥${item.bidMin ?? item.startPrice}～¥${item.bidMax ?? "-"} · `
-                                  : isOrdinaryPinkAuction(item.quality)
-                                    ? `普通粉色 · 起拍 ¥${item.startPrice} · 加价 ¥${item.bidIncrement} · 仅参与者 · `
-                                    : `起拍 ¥${item.startPrice} · 加价 ¥${item.bidIncrement} · `}
                                 {auctionItemStatusLabel(item.status)}
                                 {item.soldPrice != null
                                   ? ` · 成交 ¥${item.soldPrice}`
@@ -816,8 +851,8 @@ export function AuctionManagePanel({
                                 {item.remainingSeconds != null
                                   ? ` · 本件剩余 ${formatCountdown(item.remainingSeconds)}`
                                   : ""}
-                              </p>
-                            )}
+                              </span>
+                            </div>
                             <ItemPriceStatsLine
                               stats={item.priceStats}
                               className="mt-1"
@@ -825,13 +860,22 @@ export function AuctionManagePanel({
                           </div>
                         </div>
                         {canEdit && (
-                          <button
-                            type="button"
-                            className="btn-ghost text-sm text-[var(--accent-crimson)]"
-                            onClick={() => removeItem(item.id)}
-                          >
-                            删除
-                          </button>
+                          <div className="flex shrink-0 items-center gap-2">
+                            <button
+                              type="button"
+                              className="btn-ghost text-sm"
+                              onClick={() => beginEditItem(item)}
+                            >
+                              编辑
+                            </button>
+                            <button
+                              type="button"
+                              className="btn-ghost text-sm text-[var(--accent-crimson)]"
+                              onClick={() => removeItem(item.id)}
+                            >
+                              删除
+                            </button>
+                          </div>
                         )}
                       </div>
                       {editing && (
