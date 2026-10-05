@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
+import { readJsonBodyCapped } from "@/lib/auction/itemImage";
 
 export const runtime = "nodejs";
 
@@ -7,7 +8,8 @@ const OCR_BASE = (process.env.GUILD_OCR_URL || "http://127.0.0.1:8765").replace(
   /\/$/,
   "",
 );
-const MAX_IMAGE_CHARS = 8_000_000;
+const MAX_IMAGE_CHARS = 500_000;
+const MAX_OCR_POST_BYTES = 3_000_000;
 
 export async function POST(request: Request) {
   const user = await getSession();
@@ -15,7 +17,14 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "请先登录" }, { status: 401 });
   }
 
-  const body = await request.json().catch(() => null);
+  const parsed = await readJsonBodyCapped(request, MAX_OCR_POST_BYTES);
+  if (parsed.tooLarge) {
+    return NextResponse.json(
+      { error: "截图太大，已阻止以免卡住服务器。请把框缩小后再识别" },
+      { status: 413 },
+    );
+  }
+  const body = (parsed.body ?? null) as Record<string, unknown> | null;
   const extra = Array.isArray(body?.images)
     ? body.images.filter((v: unknown) => typeof v === "string")
     : [];

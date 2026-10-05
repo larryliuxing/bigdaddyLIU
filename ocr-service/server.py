@@ -39,6 +39,7 @@ _models_error = ""
 _load_lock = threading.Lock()
 _paddle_lock = threading.Lock()
 _paddle_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="paddle")
+PADDLE_MAX_EDGE = 640
 
 
 def get_ocr() -> Any:
@@ -85,36 +86,6 @@ def decode_image(raw: str) -> Image.Image:
         raise ValueError("image too large")
     img = Image.open(io.BytesIO(blob))
     return img.convert("RGB")
-
-
-def prepare_variants(img: Image.Image) -> list[Image.Image]:
-    variants: list[Image.Image] = [img]
-    width, height = img.size
-    longest = max(width, height)
-    if longest < 900:
-        scale = 900 / longest
-        variants.append(
-            img.resize(
-                (max(1, int(width * scale)), max(1, int(height * scale))),
-                Image.Resampling.LANCZOS,
-            )
-        )
-    gray = img.convert("L")
-    pixels = list(gray.getdata())
-    mean = sum(pixels) / max(1, len(pixels))
-    if mean < 120:
-        inverted = ImageOps.invert(gray)
-        sharp = ImageEnhance.Contrast(inverted).enhance(2.2)
-        variants.append(sharp.convert("RGB"))
-        if longest < 1200:
-            scale = 1200 / max(longest, 1)
-            variants.append(
-                sharp.resize(
-                    (max(1, int(width * scale)), max(1, int(height * scale))),
-                    Image.Resampling.LANCZOS,
-                ).convert("RGB")
-            )
-    return variants[:3]
 
 
 def _box_top(box: Any) -> float:
@@ -188,7 +159,7 @@ def collect_from_ocr(result: Any) -> list[tuple[float, str, float]]:
     return rows
 
 
-def run_one(img: Image.Image) -> list[tuple[float, str, float]]:
+def run_one(img: Image.Image) -> tuple[list[tuple[float, str, float]], bool]:
     import numpy as np
 
     def _call() -> list[tuple[float, str, float]]:
@@ -207,17 +178,30 @@ def run_one(img: Image.Image) -> list[tuple[float, str, float]]:
 
     if not _paddle_lock.acquire(timeout=0.4):
         print("[guild-ocr] skip paddle, still busy", flush=True)
-        return []
+        return [], True
+
+    future = _paddle_pool.submit(_call)
     try:
-        return _paddle_pool.submit(_call).result(timeout=PADDLE_TIMEOUT_SEC)
+        result = future.result(timeout=PADDLE_TIMEOUT_SEC)
     except FuturesTimeout:
         print("[guild-ocr] paddle timed out", flush=True)
-        return []
+
+        def _reap() -> None:
+            try:
+                future.result(timeout=120)
+            except Exception as exc:
+                print(f"[guild-ocr] paddle reap: {exc}", flush=True)
+            _paddle_lock.release()
+
+        threading.Thread(target=_reap, daemon=True, name="paddle-reap").start()
+        return [], True
     except Exception as exc:
         print(f"[guild-ocr] paddle failed: {exc}", flush=True)
-        return []
-    finally:
         _paddle_lock.release()
+        return [], False
+
+    _paddle_lock.release()
+    return result, False
 
 
 def _looks_like_name(text: str) -> bool:
@@ -240,13 +224,39 @@ def _stack_bands(bands: list[Image.Image]) -> Image.Image:
     return out
 
 
+def downscale_for_paddle(img: Image.Image) -> Image.Image:
+    width, height = img.size
+    longest = max(width, height)
+    if longest <= PADDLE_MAX_EDGE:
+        return img
+    scale = PADDLE_MAX_EDGE / longest
+    return img.resize(
+        (max(1, int(width * scale)), max(1, int(height * scale))),
+        Image.Resampling.BILINEAR,
+    )
+
+
+def leftover_paddle_attempts(img: Image.Image) -> list[Image.Image]:
+    """Ordinary leftover rows are tiny and dark. Invert first; never upscale."""
+    import numpy as np
+
+    fitted = downscale_for_paddle(img)
+    gray = fitted.convert("L")
+    mean = float(np.array(gray).mean())
+    if mean >= 120:
+        return [fitted]
+    inverted = ImageOps.invert(gray)
+    sharp = ImageEnhance.Contrast(inverted).enhance(2.2)
+    return [sharp.convert("RGB"), fitted]
+
+
 def run_paddle_for_text(img: Image.Image) -> list[tuple[float, str, float]]:
-    rows = run_one(img)
-    if any(_looks_like_name(text) for _y, text, _score in rows):
-        return rows
-    for variant in prepare_variants(img)[1:]:
-        extra = run_one(variant)
+    rows: list[tuple[float, str, float]] = []
+    for attempt in leftover_paddle_attempts(img):
+        extra, timed_out = run_one(attempt)
         rows.extend(extra)
+        if timed_out:
+            break
         if any(_looks_like_name(text) for _y, text, _score in extra):
             break
     return rows
@@ -370,7 +380,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, {"ok": False, "error": "not found"})
             return
         length = int(self.headers.get("Content-Length") or 0)
-        if length > 16_000_000:
+        if length > 3_000_000:
             self._send(413, {"ok": False, "error": "payload too large"})
             return
         try:

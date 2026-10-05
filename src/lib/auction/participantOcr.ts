@@ -244,11 +244,11 @@ function scoreNames(names: string[]) {
   return names.length * 10 + avgLen * 3;
 }
 
-const OCR_DATA_URL_LIMIT = 2_800_000;
+const OCR_DATA_URL_LIMIT = 450_000;
 
 function canvasToOcrDataUrl(canvas: HTMLCanvasElement): string {
-  const png = canvas.toDataURL("image/png");
-  if (png.length < OCR_DATA_URL_LIMIT) return png;
+  const jpeg = canvas.toDataURL("image/jpeg", 0.82);
+  if (jpeg.length <= OCR_DATA_URL_LIMIT) return jpeg;
   let width = canvas.width;
   let height = canvas.height;
   while (width > 80 && height > 80) {
@@ -262,12 +262,10 @@ function canvasToOcrDataUrl(canvas: HTMLCanvasElement): string {
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "high";
     ctx.drawImage(canvas, 0, 0, width, height);
-    const jpeg = tmp.toDataURL("image/jpeg", 0.86);
-    if (jpeg.length < OCR_DATA_URL_LIMIT) return jpeg;
-    const next = tmp.toDataURL("image/png");
-    if (next.length < OCR_DATA_URL_LIMIT) return next;
+    const next = tmp.toDataURL("image/jpeg", 0.7);
+    if (next.length <= OCR_DATA_URL_LIMIT) return next;
   }
-  return canvas.toDataURL("image/jpeg", 0.7);
+  return canvas.toDataURL("image/jpeg", 0.55);
 }
 
 type Attempt = {
