@@ -17,6 +17,7 @@ import {
   formatCountdown,
   fromBeijingDateAndTime,
   isSessionEditable,
+  QUALITY_OPTIONS,
   qualityMeta,
   sessionLifecycleLabel,
   auctionItemStatusLabel,
@@ -64,6 +65,13 @@ export function AuctionManagePanel({
   );
   const [taxPercent, setTaxPercent] = useState(5);
   const [viewer, setViewer] = useState<AuctionItemViewerPayload | null>(null);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editQuality, setEditQuality] = useState<AuctionItem["quality"]>("green");
+  const [editStartPrice, setEditStartPrice] = useState(5);
+  const [editBidIncrement, setEditBidIncrement] = useState(5);
+  const [editBidMin, setEditBidMin] = useState(10);
+  const [editBidMax, setEditBidMax] = useState(100);
 
   const syncEditFields = useCallback((nextRoom: AuctionRoomState | null) => {
     const session = nextRoom?.session;
@@ -276,7 +284,53 @@ export function AuctionManagePanel({
       return;
     }
     setRoom(data.room);
+    setEditingId((cur) => (cur === id ? null : cur));
     await loadList();
+  }
+
+  function beginEditItem(item: AuctionItem) {
+    setEditingId(item.id);
+    setEditName(item.name);
+    setEditQuality(item.quality);
+    setEditStartPrice(item.startPrice);
+    setEditBidIncrement(item.bidIncrement);
+    setEditBidMin(item.bidMin ?? item.startPrice);
+    setEditBidMax(item.bidMax ?? 100);
+    setError("");
+    setMessage("");
+  }
+
+  async function saveEditItem(id: number) {
+    if (selectedId == null) return;
+    setBusy(true);
+    setError("");
+    try {
+      const res = await fetch("/api/auction/items", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id,
+          name: editName,
+          quality: editQuality,
+          startPrice: isPinkAuction(editQuality) ? editBidMin : editStartPrice,
+          bidIncrement: isPinkAuction(editQuality) ? 1 : editBidIncrement,
+          bidMin: isPinkAuction(editQuality) ? editBidMin : null,
+          bidMax: isPinkAuction(editQuality) ? editBidMax : null,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "修改失败");
+        return;
+      }
+      setRoom(data.room);
+      setEditingId(null);
+      setMessage("拍品已更新");
+    } catch {
+      setError("网络错误");
+    } finally {
+      setBusy(false);
+    }
   }
 
   function applyDividendPayload(data: {
@@ -694,61 +748,83 @@ export function AuctionManagePanel({
                 )}
                 {items.map((item) => {
                   const q = qualityMeta(item.quality);
+                  const canEdit =
+                    editable &&
+                    (item.status === "pending" || item.status === "cancelled");
+                  const editing = editingId === item.id;
                   return (
-                    <li
-                      key={item.id}
-                      className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
-                    >
-                      <div className="flex items-center gap-3">
-                        <AuctionItemThumb
-                          itemId={item.id}
-                          imageData={item.imageData}
-                          hasImage={item.hasImage}
-                          name={item.name}
-                          quality={item.quality}
-                          className="h-12 w-12"
-                          onOpen={(payload) =>
-                            setViewer({
-                              ...payload,
-                              detail: `${isPinkAuction(item.quality) ? "特殊粉色限价" : "起拍"} ¥${item.bidMin ?? item.startPrice} · ${auctionItemStatusLabel(item.status)}${
-                                item.soldPrice != null
-                                  ? ` · 成交 ¥${item.soldPrice}`
-                                  : ""
-                              }`,
-                            })
-                          }
-                        />
-                        <div>
-                          <p className="font-medium">
-                            <span
-                              className="mr-2 inline-block h-2.5 w-2.5 rounded-full"
-                              style={{ background: q.color }}
-                            />
-                            {item.name}
-                          </p>
-                          <p className="mt-0.5 text-xs text-[var(--text-muted)]">
-                            {isPinkAuction(item.quality)
-                              ? `特殊粉色限价 ¥${item.bidMin ?? item.startPrice}～¥${item.bidMax ?? "-"} · `
-                              : isOrdinaryPinkAuction(item.quality)
-                                ? `普通粉色 · 起拍 ¥${item.startPrice} · 加价 ¥${item.bidIncrement} · 仅参与者 · `
-                                : `起拍 ¥${item.startPrice} · 加价 ¥${item.bidIncrement} · `}
-                            {auctionItemStatusLabel(item.status)}
-                            {item.soldPrice != null
-                              ? ` · 成交 ¥${item.soldPrice}`
-                              : ""}
-                            {item.remainingSeconds != null
-                              ? ` · 本件剩余 ${formatCountdown(item.remainingSeconds)}`
-                              : ""}
-                          </p>
-                          <ItemPriceStatsLine
-                            stats={item.priceStats}
-                            className="mt-1"
+                    <li key={item.id} className="flex flex-col gap-3 px-4 py-3">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="flex items-center gap-3">
+                          <AuctionItemThumb
+                            itemId={item.id}
+                            imageData={item.imageData}
+                            hasImage={item.hasImage}
+                            name={item.name}
+                            quality={item.quality}
+                            className="h-12 w-12"
+                            onOpen={(payload) =>
+                              setViewer({
+                                ...payload,
+                                detail: `${isPinkAuction(item.quality) ? "特殊粉色限价" : "起拍"} ¥${item.bidMin ?? item.startPrice} · ${auctionItemStatusLabel(item.status)}${
+                                  item.soldPrice != null
+                                    ? ` · 成交 ¥${item.soldPrice}`
+                                    : ""
+                                }`,
+                              })
+                            }
                           />
+                          <div>
+                            <p className="font-medium">
+                              <span
+                                className="mr-2 inline-block h-2.5 w-2.5 rounded-full"
+                                style={{ background: q.color }}
+                              />
+                              {item.name}
+                            </p>
+                            {canEdit ? (
+                              <button
+                                type="button"
+                                className="mt-0.5 rounded-lg text-left text-xs text-[var(--text-muted)] underline-offset-2 hover:text-white hover:underline"
+                                onClick={() => beginEditItem(item)}
+                                title="点击修改名称和价格"
+                              >
+                                {isPinkAuction(item.quality)
+                                  ? `特殊粉色限价 ¥${item.bidMin ?? item.startPrice}～¥${item.bidMax ?? "-"} · `
+                                  : isOrdinaryPinkAuction(item.quality)
+                                    ? `普通粉色 · 起拍 ¥${item.startPrice} · 加价 ¥${item.bidIncrement} · 仅参与者 · `
+                                    : `起拍 ¥${item.startPrice} · 加价 ¥${item.bidIncrement} · `}
+                                {auctionItemStatusLabel(item.status)}
+                                {item.soldPrice != null
+                                  ? ` · 成交 ¥${item.soldPrice}`
+                                  : ""}
+                                <span className="ml-1 text-[var(--accent-gold)]">
+                                  编辑
+                                </span>
+                              </button>
+                            ) : (
+                              <p className="mt-0.5 text-xs text-[var(--text-muted)]">
+                                {isPinkAuction(item.quality)
+                                  ? `特殊粉色限价 ¥${item.bidMin ?? item.startPrice}～¥${item.bidMax ?? "-"} · `
+                                  : isOrdinaryPinkAuction(item.quality)
+                                    ? `普通粉色 · 起拍 ¥${item.startPrice} · 加价 ¥${item.bidIncrement} · 仅参与者 · `
+                                    : `起拍 ¥${item.startPrice} · 加价 ¥${item.bidIncrement} · `}
+                                {auctionItemStatusLabel(item.status)}
+                                {item.soldPrice != null
+                                  ? ` · 成交 ¥${item.soldPrice}`
+                                  : ""}
+                                {item.remainingSeconds != null
+                                  ? ` · 本件剩余 ${formatCountdown(item.remainingSeconds)}`
+                                  : ""}
+                              </p>
+                            )}
+                            <ItemPriceStatsLine
+                              stats={item.priceStats}
+                              className="mt-1"
+                            />
+                          </div>
                         </div>
-                      </div>
-                      {editable &&
-                        (item.status === "pending" ||
-                          item.status === "cancelled") && (
+                        {canEdit && (
                           <button
                             type="button"
                             className="btn-ghost text-sm text-[var(--accent-crimson)]"
@@ -757,6 +833,124 @@ export function AuctionManagePanel({
                             删除
                           </button>
                         )}
+                      </div>
+                      {editing && (
+                        <div className="grid gap-3 rounded-xl border border-[var(--border-soft)] bg-[#0f1320] p-3 sm:grid-cols-2">
+                          <label className="block space-y-1 sm:col-span-2">
+                            <span className="text-xs text-[var(--text-muted)]">
+                              拍品名称
+                            </span>
+                            <input
+                              className="field !py-2"
+                              value={editName}
+                              onChange={(e) => setEditName(e.target.value)}
+                            />
+                          </label>
+                          <div className="flex flex-wrap gap-2 sm:col-span-2">
+                            {QUALITY_OPTIONS.map((opt) => {
+                              const active = editQuality === opt.value;
+                              return (
+                                <button
+                                  key={opt.value}
+                                  type="button"
+                                  className={`flex items-center gap-1.5 rounded-lg border px-2 py-1 text-xs ${
+                                    active
+                                      ? "border-white/35 bg-[#2a3350]"
+                                      : "border-[var(--border-soft)] text-[var(--text-muted)]"
+                                  }`}
+                                  onClick={() => setEditQuality(opt.value)}
+                                >
+                                  <span
+                                    className="h-2.5 w-2.5 rounded-full"
+                                    style={{ background: opt.color }}
+                                  />
+                                  {opt.label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                          {isPinkAuction(editQuality) ? (
+                            <>
+                              <label className="block space-y-1">
+                                <span className="text-xs text-[var(--text-muted)]">
+                                  低限价 ¥
+                                </span>
+                                <input
+                                  className="field !py-2"
+                                  type="number"
+                                  min={1}
+                                  value={editBidMin}
+                                  onChange={(e) =>
+                                    setEditBidMin(Number(e.target.value))
+                                  }
+                                />
+                              </label>
+                              <label className="block space-y-1">
+                                <span className="text-xs text-[var(--text-muted)]">
+                                  高限价 ¥
+                                </span>
+                                <input
+                                  className="field !py-2"
+                                  type="number"
+                                  min={1}
+                                  value={editBidMax}
+                                  onChange={(e) =>
+                                    setEditBidMax(Number(e.target.value))
+                                  }
+                                />
+                              </label>
+                            </>
+                          ) : (
+                            <>
+                              <label className="block space-y-1">
+                                <span className="text-xs text-[var(--text-muted)]">
+                                  起拍价 ¥
+                                </span>
+                                <input
+                                  className="field !py-2"
+                                  type="number"
+                                  min={1}
+                                  value={editStartPrice}
+                                  onChange={(e) =>
+                                    setEditStartPrice(Number(e.target.value))
+                                  }
+                                />
+                              </label>
+                              <label className="block space-y-1">
+                                <span className="text-xs text-[var(--text-muted)]">
+                                  加价幅度 ¥
+                                </span>
+                                <input
+                                  className="field !py-2"
+                                  type="number"
+                                  min={1}
+                                  value={editBidIncrement}
+                                  onChange={(e) =>
+                                    setEditBidIncrement(Number(e.target.value))
+                                  }
+                                />
+                              </label>
+                            </>
+                          )}
+                          <div className="flex gap-2 sm:col-span-2">
+                            <button
+                              type="button"
+                              className="rounded-xl bg-[#e23d4a] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                              disabled={busy}
+                              onClick={() => void saveEditItem(item.id)}
+                            >
+                              {busy ? "保存中…" : "保存修改"}
+                            </button>
+                            <button
+                              type="button"
+                              className="btn-ghost text-sm"
+                              onClick={() => setEditingId(null)}
+                            >
+                              取消
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </li>
                   );
                 })}

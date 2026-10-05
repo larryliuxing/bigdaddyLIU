@@ -91,6 +91,20 @@ async function main() {
     const miss = db.searchItemCatalog("没有这件装", 20);
     assert.equal(miss.length, 0);
 
+    const renamed = db.updateAuctionItem({
+      itemId: soldItem.id,
+      name: "魔道书 (回音魔力催化)",
+      quality: "purple",
+      startPrice: 12,
+      bidIncrement: 4,
+    });
+    assert.ok(renamed);
+    assert.equal(renamed?.startPrice, 12);
+    assert.equal(renamed?.bidIncrement, 4);
+    const afterEdit = db.searchItemCatalog("魔道书", 20)[0];
+    assert.equal(afterEdit.lastStartPrice, 12);
+    assert.equal(afterEdit.lastBidIncrement, 4);
+
     console.log(`item catalog checks passed (${createMs}ms add)`);
   } finally {
     process.chdir(originalCwd);

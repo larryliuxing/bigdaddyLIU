@@ -1874,6 +1874,58 @@ export function createAuctionItem(input: {
   return getItemById(itemId)!;
 }
 
+export function updateAuctionItem(input: {
+  itemId: number;
+  name: string;
+  quality: ItemQuality;
+  startPrice: number;
+  bidIncrement: number;
+  bidMin?: number | null;
+  bidMax?: number | null;
+}): AuctionItem | null {
+  const item = getItemById(input.itemId);
+  if (!item) return null;
+  if (item.status !== "pending" && item.status !== "cancelled") return null;
+  const session = getSessionById(item.sessionId);
+  if (!session || session.status === "live" || session.status === "ended") {
+    return null;
+  }
+
+  const pink = isPinkAuction(input.quality);
+  const bidMin = pink ? (input.bidMin ?? input.startPrice) : null;
+  const bidMax = pink ? (input.bidMax ?? null) : null;
+  const startPrice = pink ? (bidMin ?? input.startPrice) : input.startPrice;
+
+  ensureDb()
+    .prepare(
+      `UPDATE auction_items
+       SET name = ?, quality = ?, start_price = ?, bid_increment = ?,
+           current_price = ?, bid_min = ?, bid_max = ?
+       WHERE id = ?`,
+    )
+    .run(
+      input.name.trim(),
+      input.quality,
+      startPrice,
+      input.bidIncrement,
+      startPrice,
+      bidMin,
+      bidMax,
+      input.itemId,
+    );
+
+  upsertItemCatalog({
+    name: input.name,
+    quality: input.quality,
+    startPrice,
+    bidIncrement: input.bidIncrement,
+    bidMin,
+    bidMax,
+  });
+
+  return getItemById(input.itemId);
+}
+
 export function deleteAuctionItem(itemId: number): boolean {
   const item = getItemById(itemId);
   if (!item || item.status === "active" || item.status === "sold" || item.status === "voting" || item.status === "rolling") return false;
