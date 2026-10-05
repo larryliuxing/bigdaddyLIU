@@ -1475,30 +1475,16 @@ function toPriceStats(
 export function getItemPriceStats(name: string): ItemPriceStats | null {
   const key = normalizeItemNameKey(name);
   if (!key) return null;
-  const database = ensureDb();
-
-  // Prefer dedicated history table; also include any sold items not yet backfilled.
-  const row = database
+  const row = ensureDb()
     .prepare(
       `SELECT COUNT(*) as count,
               MAX(sold_price) as high,
               MIN(sold_price) as low,
               AVG(sold_price) as avg
-       FROM (
-         SELECT sold_price FROM auction_item_sale_history WHERE item_name_key = ?
-         UNION ALL
-         SELECT i.sold_price
-         FROM auction_items i
-         WHERE i.status = 'sold'
-           AND i.sold_price IS NOT NULL
-           AND i.sold_price > 0
-           AND lower(replace(i.name, ' ', '')) = ?
-           AND NOT EXISTS (
-             SELECT 1 FROM auction_item_sale_history h WHERE h.item_id = i.id
-           )
-       )`,
+       FROM auction_item_sale_history
+       WHERE item_name_key = ?`,
     )
-    .get(key, key) as {
+    .get(key) as {
     count: number;
     high: number | null;
     low: number | null;

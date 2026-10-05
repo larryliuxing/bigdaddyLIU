@@ -41,6 +41,7 @@ export function AddAuctionItemForm({
   const [priceStats, setPriceStats] = useState<ItemPriceStats | null>(null);
   const [priceStatsLoading, setPriceStatsLoading] = useState(false);
   const pasteRef = useRef<HTMLDivElement>(null);
+  const priceStatsAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     setRoster(members);
@@ -139,6 +140,8 @@ export function AddAuctionItemForm({
     e.preventDefault();
     setError("");
     setLoading(true);
+    priceStatsAbortRef.current?.abort();
+    setPriceStatsLoading(false);
     try {
       const uploadImage = imageData
         ? await compressAuctionItemImage(imageData)
@@ -198,10 +201,14 @@ export function AddAuctionItemForm({
     }
     let alive = true;
     setPriceStatsLoading(true);
+    const ac = new AbortController();
+    priceStatsAbortRef.current = ac;
     const timer = window.setTimeout(async () => {
+      const kill = window.setTimeout(() => ac.abort(), 2500);
       try {
         const res = await fetch(
           `/api/auction/price-stats?name=${encodeURIComponent(trimmed)}`,
+          { signal: ac.signal },
         );
         const data = await res.json();
         if (!alive) return;
@@ -213,12 +220,14 @@ export function AddAuctionItemForm({
       } catch {
         if (alive) setPriceStats(null);
       } finally {
+        window.clearTimeout(kill);
         if (alive) setPriceStatsLoading(false);
       }
     }, 280);
     return () => {
       alive = false;
       window.clearTimeout(timer);
+      ac.abort();
     };
   }, [name]);
 
