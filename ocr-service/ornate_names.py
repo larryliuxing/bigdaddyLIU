@@ -11,6 +11,10 @@ from PIL import Image, ImageOps
 TEMPLATE_DIR = Path(__file__).resolve().parent / "font_templates"
 SAMPLE_DIR = Path(__file__).resolve().parent / "samples"
 MIN_SCORE = 0.62
+# High enough that ordinary CJK (≈0.33–0.38) still falls through to Paddle.
+ORNATE_FONT_SCORE = 0.48
+
+_TEMPLATE_CACHE: dict[str, np.ndarray] | None = None
 
 # User-confirmed names (6 glyphs each).
 # Do not use the lookalikes U+9458 / U+5D84 / U+5D83.
@@ -91,8 +95,9 @@ def _left_text_x(ink: np.ndarray) -> int:
         return 0
     if len(runs) >= 2:
         first_w = runs[0][1] - runs[0][0]
-        rest_w = runs[-1][1] - runs[1][0]
-        if first_w <= 22 and first_w < rest_w * 0.28:
+        typical = (runs[-1][1] - runs[0][0]) / 6
+        # Skip a thin leftover radical/speck, not a full 6-glyph cell (≈ typical).
+        if first_w <= 12 and first_w < typical * 0.55:
             return max(0, runs[1][0] - 1)
     return max(0, runs[0][0])
 
@@ -239,32 +244,38 @@ def templates_from_pairs(pairs: Iterable[tuple[str, Image.Image]]) -> dict[str, 
 
 
 def save_templates(pairs: Iterable[tuple[str, Image.Image]]) -> None:
+    global _TEMPLATE_CACHE
     TEMPLATE_DIR.mkdir(parents=True, exist_ok=True)
     for old in TEMPLATE_DIR.glob("*.npy"):
         old.unlink()
     for label, bank in templates_from_pairs(pairs).items():
         np.save(TEMPLATE_DIR / f"{label}.npy", bank)
+    _TEMPLATE_CACHE = None
 
 
 def load_templates() -> dict[str, np.ndarray]:
+    global _TEMPLATE_CACHE
+    if _TEMPLATE_CACHE is not None:
+        return _TEMPLATE_CACHE
     if not TEMPLATE_DIR.exists():
         return {}
     out = {}
     for path in TEMPLATE_DIR.glob("*.npy"):
         out[path.stem] = np.load(path)
+    _TEMPLATE_CACHE = out
     return out
 
 
 def _score_vec(vec: np.ndarray, templates: dict[str, np.ndarray]) -> tuple[str, float]:
     best_label = ""
     best = -1.0
+    query = vec.ravel()
     for label, tmpl in templates.items():
         bank = tmpl if tmpl.ndim == 2 else tmpl.reshape(tmpl.shape[0], -1)
-        for item in bank:
-            score = float(np.dot(vec, item.ravel()))
-            if score > best:
-                best = score
-                best_label = label
+        score = float(np.max(bank @ query))
+        if score > best:
+            best = score
+            best_label = label
     return best_label, best
 
 
@@ -301,28 +312,66 @@ def _split_candidates(row: Image.Image) -> list[list[Image.Image]]:
     col = text.sum(axis=0)
     span = _ink_span(col, min_val=2.0) or _ink_span(col, min_val=1.0) or (0, width)
     out: list[list[Image.Image]] = []
-    for count in (6, 5):
-        if (span[1] - span[0]) < count * 8:
+    count = 6
+    if (span[1] - span[0]) < count * 8:
+        return out
+    for off in range(-3, 4):
+        start = max(0, span[0] + off)
+        end = min(width, span[1] + off)
+        if end - start < count * 8:
             continue
-        for off in range(-3, 4):
-            start = max(0, span[0] + off)
-            end = min(width, span[1] + off)
-            if end - start < count * 8:
-                continue
-            bands = _refine_bands(col, _equal_bands(start, end, count))
-            glyphs = []
-            for a, b in bands:
-                crop = row.crop(
-                    (
-                        left + max(0, a - 3),
-                        0,
-                        left + min(width, b + 3),
-                        row.height,
-                    )
+        bands = _refine_bands(col, _equal_bands(start, end, count))
+        glyphs = []
+        for a, b in bands:
+            crop = row.crop(
+                (
+                    left + max(0, a - 3),
+                    0,
+                    left + min(width, b + 3),
+                    row.height,
                 )
-                glyphs.append(crop)
-            out.append(glyphs)
+            )
+            glyphs.append(crop)
+        out.append(glyphs)
     return out
+
+
+def _prepare_ornate(img: Image.Image) -> Image.Image:
+    gray = img.convert("L")
+    if np.array(gray).mean() > 140:
+        return ImageOps.invert(gray).convert("RGB")
+    return img
+
+
+def best_ornate_match(
+    row: Image.Image,
+    templates: dict[str, np.ndarray] | None = None,
+) -> tuple[str, float]:
+    if templates is None:
+        templates = load_templates()
+    if not templates:
+        return "", 0.0
+    best_name = ""
+    best_key = (-1.0, -1.0)
+    candidates = [split_glyphs(row, expected=6)]
+    candidates.extend(_split_candidates(row))
+    for glyphs in candidates:
+        if len(glyphs) != 6:
+            continue
+        name, score, parts = match_glyphs(glyphs, templates)
+        key = (score, min(parts) if parts else -1.0)
+        if key > best_key:
+            best_key = key
+            best_name = name
+    return best_name, float(best_key[0])
+
+
+def looks_like_ornate_font(
+    row: Image.Image,
+    templates: dict[str, np.ndarray] | None = None,
+) -> bool:
+    _name, score = best_ornate_match(row, templates)
+    return score >= ORNATE_FONT_SCORE
 
 
 def recognize_ornate_image(
@@ -333,27 +382,13 @@ def recognize_ornate_image(
         templates = load_templates()
     if not templates:
         return []
-    gray = img.convert("L")
-    if np.array(gray).mean() > 140:
-        img = ImageOps.invert(gray).convert("RGB")
+    img = _prepare_ornate(img)
     rows = split_rows(img)
     if not rows:
         rows = [img]
     found: list[tuple[str, float]] = []
     for row in rows:
-        best_name = ""
-        best_key = (-1.0, -1.0)
-        candidates = [split_glyphs(row, expected=6)]
-        candidates.extend(_split_candidates(row))
-        for glyphs in candidates:
-            if len(glyphs) < 2:
-                continue
-            name, score, parts = match_glyphs(glyphs, templates)
-            key = (min(parts) if parts else -1.0, score)
-            if key > best_key:
-                best_key = key
-                best_name = name
-        best_score = best_key[1]
-        if best_name and best_score >= MIN_SCORE:
-            found.append((best_name, best_score))
+        name, score = best_ornate_match(row, templates)
+        if name and score >= MIN_SCORE:
+            found.append((name, score))
     return found

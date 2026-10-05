@@ -7,7 +7,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from ornate_names import NAME_1, NAME_7, SAMPLE_DIR
+from ornate_names import NAME_1, NAME_2, NAME_7, SAMPLE_DIR
 from server import recognize_images
 
 LIST3 = SAMPLE_DIR / "name-list-mixed.png"
@@ -53,6 +53,24 @@ def main() -> None:
         if want not in lines:
             raise SystemExit(f"paste crop missing {want!r} in {lines}")
     print("OK paste crop")
+
+    stuck = SAMPLE_DIR / "name-list-stuck.png"
+    if not stuck.is_file():
+        raise SystemExit(f"missing {stuck}")
+    import time
+
+    started = time.time()
+    result = recognize_images([_payload(stuck)])
+    elapsed = time.time() - started
+    lines = result.get("lines") or []
+    print("stuck list", lines, f"{elapsed:.3f}s")
+    recomb = "\u9468\u9f93\u9468\u9f93\u8d1a\u7216"
+    for want in (NAME_2, recomb):
+        if want not in lines:
+            raise SystemExit(f"stuck list missing {want!r} in {lines}")
+    if elapsed > 2.5:
+        raise SystemExit(f"stuck list too slow: {elapsed:.3f}s (paddle hang?)")
+    print("OK stuck list")
 
 
 def _payload_from_image(img: Image.Image) -> str:

@@ -39,6 +39,7 @@ export async function POST(request: Request) {
         task: String(body?.task || "general"),
         images,
       }),
+      signal: AbortSignal.timeout(10000),
     });
     const data = (await res.json().catch(() => ({}))) as {
       text?: string;
@@ -58,12 +59,16 @@ export async function POST(request: Request) {
       text: String(data.text || lines.join("\n")).trim(),
       lines,
     });
-  } catch {
+  } catch (err) {
+    const timedOut =
+      err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError");
     return NextResponse.json(
       {
         text: "",
         lines: [],
-        error: "连不上识别服务（8765）。请看 pm2 logs guild-ocr，等模型加载完再试",
+        error: timedOut
+          ? "识别超时。请把框再缩小一点后重试，或改从左侧名单点选"
+          : "连不上识别服务（8765）。请看 pm2 logs guild-ocr，等模型加载完再试",
       },
       { status: 503 },
     );

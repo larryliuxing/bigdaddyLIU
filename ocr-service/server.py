@@ -10,6 +10,8 @@ import re
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeout
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -22,6 +24,8 @@ HOST = os.environ.get("GUILD_OCR_HOST", "127.0.0.1")
 PORT = int(os.environ.get("GUILD_OCR_PORT", "8765"))
 MAX_IMAGE_BYTES = 6_000_000
 MAX_IMAGES = 4
+PADDLE_TIMEOUT_SEC = 6.0
+RECOGNIZE_DEADLINE_SEC = 8.0
 
 DATA_URL_RE = re.compile(
     r"^data:image/(png|jpeg|jpg|webp);base64,(.+)$",
@@ -33,6 +37,8 @@ _ocr_api = ""
 _models_ready = False
 _models_error = ""
 _load_lock = threading.Lock()
+_paddle_lock = threading.Lock()
+_paddle_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="paddle")
 
 
 def get_ocr() -> Any:
@@ -185,18 +191,33 @@ def collect_from_ocr(result: Any) -> list[tuple[float, str, float]]:
 def run_one(img: Image.Image) -> list[tuple[float, str, float]]:
     import numpy as np
 
-    ocr = get_ocr()
-    arr = np.array(img)
-    if _ocr_api == "predict" and hasattr(ocr, "predict"):
-        return collect_from_predict(ocr.predict(arr))
-    if hasattr(ocr, "ocr"):
-        try:
-            return collect_from_ocr(ocr.ocr(arr, cls=True))
-        except TypeError:
-            return collect_from_ocr(ocr.ocr(arr))
-    if hasattr(ocr, "predict"):
-        return collect_from_predict(ocr.predict(arr))
-    raise RuntimeError("unsupported PaddleOCR API")
+    def _call() -> list[tuple[float, str, float]]:
+        ocr = get_ocr()
+        arr = np.array(img)
+        if _ocr_api == "predict" and hasattr(ocr, "predict"):
+            return collect_from_predict(ocr.predict(arr))
+        if hasattr(ocr, "ocr"):
+            try:
+                return collect_from_ocr(ocr.ocr(arr, cls=True))
+            except TypeError:
+                return collect_from_ocr(ocr.ocr(arr))
+        if hasattr(ocr, "predict"):
+            return collect_from_predict(ocr.predict(arr))
+        raise RuntimeError("unsupported PaddleOCR API")
+
+    if not _paddle_lock.acquire(timeout=0.4):
+        print("[guild-ocr] skip paddle, still busy", flush=True)
+        return []
+    try:
+        return _paddle_pool.submit(_call).result(timeout=PADDLE_TIMEOUT_SEC)
+    except FuturesTimeout:
+        print("[guild-ocr] paddle timed out", flush=True)
+        return []
+    except Exception as exc:
+        print(f"[guild-ocr] paddle failed: {exc}", flush=True)
+        return []
+    finally:
+        _paddle_lock.release()
 
 
 def _looks_like_name(text: str) -> bool:
@@ -266,28 +287,35 @@ def _paddle_redundant(text: str, ornate: list[str]) -> bool:
 
 
 def recognize_images(images: list[str]) -> dict[str, Any]:
-    from ornate_names import recognize_ornate_image, split_rows
+    from ornate_names import (
+        MIN_SCORE,
+        ORNATE_FONT_SCORE,
+        best_ornate_match,
+        load_templates,
+        recognize_ornate_image,
+        split_rows,
+    )
 
+    templates = load_templates()
     ornate: list[str] = []
     rows: list[tuple[float, str, float]] = []
+    deadline = time.time() + RECOGNIZE_DEADLINE_SEC
     for raw in images[:MAX_IMAGES]:
         img = decode_image(raw)
         bands = split_rows(img) or [img]
         leftover: list[Image.Image] = []
-        if len(bands) == 1:
-            found = recognize_ornate_image(img)
+        for band in bands:
+            found = recognize_ornate_image(band, templates)
             if found:
                 ornate.extend(name for name, _score in found)
                 continue
-            leftover.append(img)
-        else:
-            for band in bands:
-                found = recognize_ornate_image(band)
-                if found:
-                    ornate.extend(name for name, _score in found)
-                else:
-                    leftover.append(band)
-        if leftover:
+            _name, score = best_ornate_match(band, templates)
+            if score >= ORNATE_FONT_SCORE:
+                if _name and score >= MIN_SCORE:
+                    ornate.append(_name)
+                continue
+            leftover.append(band)
+        if leftover and time.time() < deadline:
             rows.extend(run_paddle_for_text(_stack_bands(leftover)))
     paddle_lines = [
         line for line in merge_rows(rows) if not _paddle_redundant(line, ornate)

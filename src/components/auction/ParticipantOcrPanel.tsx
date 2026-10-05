@@ -196,9 +196,11 @@ export function ParticipantOcrPanel({
     } catch (err) {
       const message = err instanceof Error ? err.message : "";
       setStatus(
-        message.includes("未启动") || message.includes("失败")
-          ? `${message}。请确认本机识别服务已启动，或改从左侧名单点选。`
-          : "识别失败，请重新拉框或改从左侧名单点选",
+        message.includes("超时")
+          ? `${message}`
+          : message.includes("未启动") || message.includes("失败") || message.includes("连不上")
+            ? `${message}。请确认本机识别服务已启动，或改从左侧名单点选。`
+            : "识别失败，请重新拉框或改从左侧名单点选",
       );
     } finally {
       setRecognizing(false);
