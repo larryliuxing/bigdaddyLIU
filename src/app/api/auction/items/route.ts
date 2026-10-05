@@ -17,10 +17,7 @@ import {
   updateAuctionItem,
 } from "@/lib/db";
 import type { ItemQuality } from "@/lib/types";
-import {
-  readJsonBodyCapped,
-  sanitizeAuctionItemImage,
-} from "@/lib/auction/itemImage";
+import { readJsonBodyCapped } from "@/lib/auction/itemImage";
 import { isPinkAuction, isParticipantOnlyAuction } from "@/lib/auction/pink";
 import { buildRoomState } from "@/lib/auction/room";
 
@@ -86,7 +83,6 @@ export async function POST(request: Request) {
     body?.bidMin != null && body?.bidMin !== "" ? Number(body.bidMin) : null;
   const bidMax =
     body?.bidMax != null && body?.bidMax !== "" ? Number(body.bidMax) : null;
-  const imageData = sanitizeAuctionItemImage(body?.imageData);
   const dividendMemberIds = Array.isArray(body?.dividendMemberIds)
     ? body.dividendMemberIds.map(Number).filter(Boolean)
     : [];
@@ -157,7 +153,7 @@ export async function POST(request: Request) {
       quality,
       startPrice,
       bidIncrement,
-      imageData,
+      imageData: null,
       dividendMemberIds,
       bidMin: isPinkAuction(quality) ? bidMin : null,
       bidMax: isPinkAuction(quality) ? bidMax : null,

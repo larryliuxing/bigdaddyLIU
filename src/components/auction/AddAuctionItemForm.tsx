@@ -15,6 +15,25 @@ interface AddAuctionItemFormProps {
   onCreated: () => void;
 }
 
+async function attachAuctionItemScreenshot(
+  itemId: number,
+  imageData: string,
+): Promise<boolean> {
+  try {
+    const compressed = await compressAuctionItemImage(imageData);
+    if (!compressed) return false;
+    const res = await fetch(`/api/auction/item-image?id=${itemId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ imageData: compressed }),
+      signal: AbortSignal.timeout(15000),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 export function AddAuctionItemForm({
   members,
   sessionId,
@@ -143,10 +162,8 @@ export function AddAuctionItemForm({
     setCatalogOpen(false);
     priceStatsAbortRef.current?.abort();
     setPriceStatsLoading(false);
+    const pendingImage = imageData;
     try {
-      const uploadImage = imageData
-        ? await compressAuctionItemImage(imageData)
-        : null;
       const res = await fetch("/api/auction/items", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -158,7 +175,6 @@ export function AddAuctionItemForm({
           bidIncrement: isPinkAuction(quality) ? 1 : bidIncrement,
           bidMin: isPinkAuction(quality) ? bidMin : null,
           bidMax: isPinkAuction(quality) ? bidMax : null,
-          imageData: uploadImage,
           dividendMemberIds: selectedIds,
         }),
         signal: AbortSignal.timeout(12000),
@@ -168,6 +184,7 @@ export function AddAuctionItemForm({
         setError(data.error || "添加失败");
         return;
       }
+      const itemId = Number(data?.item?.id);
       setName("");
       setQuality("green");
       setStartPrice(5);
@@ -182,6 +199,13 @@ export function AddAuctionItemForm({
       setPriceStatsLoading(false);
       setCatalogItems([]);
       onCreated();
+      if (pendingImage && itemId > 0) {
+        void attachAuctionItemScreenshot(itemId, pendingImage).then(
+          (attached) => {
+            if (attached) onCreated();
+          },
+        );
+      }
     } catch (err) {
       const timedOut =
         err instanceof Error &&

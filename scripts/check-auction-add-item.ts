@@ -130,6 +130,60 @@ async function main() {
     );
     const payload14 = JSON.stringify({ item: with14 });
     assert.equal(payload14.includes("data:image"), false);
+
+    const screenshotPng = `data:image/png;base64,${"E".repeat(900_000)}`;
+    const createBody = JSON.stringify({
+      sessionId: session.id,
+      name: "稀有制作卷轴",
+      quality: "purple",
+      startPrice: 10,
+      bidIncrement: 1,
+      dividendMemberIds: fourteen.map((m) => m.id).slice(0, 8),
+    });
+    assert.equal(createBody.includes("data:image"), false);
+    assert.ok(
+      createBody.length < 2_000,
+      `create POST should stay tiny, got ${createBody.length} chars`,
+    );
+    const tooBigForPost = `data:image/png;base64,${"F".repeat(2_100_000)}`;
+    const hugePost = new Request("http://guild.test/api/auction/items", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "稀有制作卷轴",
+        imageData: tooBigForPost,
+        dividendMemberIds: [member.id],
+      }),
+    });
+    const hugeParsed = await readJsonBodyCapped(hugePost);
+    assert.equal(hugeParsed.tooLarge, true);
+
+    const startedBare = Date.now();
+    const scroll = db.createAuctionItem({
+      sessionId: session.id,
+      name: "稀有制作卷轴",
+      quality: "purple",
+      startPrice: 10,
+      bidIncrement: 1,
+      dividendMemberIds: fourteen.map((m) => m.id).slice(0, 8),
+    });
+    const elapsedBare = Date.now() - startedBare;
+    assert.equal(scroll.hasImage, false);
+    assert.equal(scroll.imageData, null);
+    assert.equal(scroll.dividendMemberIds.length, 8);
+    assert.ok(
+      elapsedBare < 400,
+      `create without screenshot blocked for ${elapsedBare}ms`,
+    );
+
+    const attached = db.setAuctionItemImage(scroll.id, jpegKeep);
+    assert.ok(attached);
+    assert.equal(attached.hasImage, true);
+    assert.equal(attached.imageData, null);
+    assert.equal(db.getItemImageData(scroll.id), jpegKeep);
+    assert.equal(db.setAuctionItemImage(scroll.id, screenshotPng), null);
+    assert.equal(db.getItemImageData(scroll.id), jpegKeep);
+    assert.equal(db.setAuctionItemImage(999999, jpegKeep), null);
   } finally {
     process.chdir(originalCwd);
     fs.rmSync(tempDir, { recursive: true, force: true });

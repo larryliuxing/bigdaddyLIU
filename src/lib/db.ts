@@ -1807,6 +1807,23 @@ export function getItemImageData(itemId: number): string | null {
   return row?.image_data ?? null;
 }
 
+/** Attach a screenshot after the lot exists so create is never blocked by the blob. */
+export function setAuctionItemImage(
+  itemId: number,
+  imageData: string | null,
+): AuctionItem | null {
+  const existing = getItemById(itemId, { includeImages: false });
+  if (!existing) return null;
+  const sanitized = sanitizeAuctionItemImage(imageData);
+  if (!sanitized) return null;
+  ensureDb()
+    .prepare(
+      `UPDATE auction_items SET image_data = ?, has_image = 1 WHERE id = ?`,
+    )
+    .run(sanitized, itemId);
+  return getItemById(itemId, { includeImages: false })!;
+}
+
 export function createAuctionItem(input: {
   sessionId: number;
   name: string;

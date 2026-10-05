@@ -1,6 +1,14 @@
 import { NextResponse } from "next/server";
-import { getAdminSession, getMemberSession } from "@/lib/auth";
-import { getItemImageData } from "@/lib/db";
+import {
+  getAdminSession,
+  getMemberSession,
+  requireAdminSession,
+} from "@/lib/auth";
+import { getItemImageData, setAuctionItemImage } from "@/lib/db";
+import {
+  readJsonBodyCapped,
+  sanitizeAuctionItemImage,
+} from "@/lib/auction/itemImage";
 
 export const runtime = "nodejs";
 
@@ -57,4 +65,39 @@ export async function GET(request: Request) {
       "Cache-Control": "private, max-age=3600",
     },
   });
+}
+
+export async function PUT(request: Request) {
+  const admin = await requireAdminSession();
+  if (!admin) {
+    return NextResponse.json({ error: "需要管理员登录" }, { status: 401 });
+  }
+
+  const parsed = await readJsonBodyCapped(request);
+  if (parsed.tooLarge) {
+    return NextResponse.json(
+      { error: "拍品图片太大，拍品已添加，可稍后重新粘贴图片" },
+      { status: 413 },
+    );
+  }
+  const body = (parsed.body ?? null) as Record<string, unknown> | null;
+  const id = Number(body?.id ?? new URL(request.url).searchParams.get("id"));
+  if (!(id > 0)) {
+    return NextResponse.json({ error: "缺少拍品 ID" }, { status: 400 });
+  }
+
+  const imageData = sanitizeAuctionItemImage(body?.imageData);
+  if (!imageData) {
+    return NextResponse.json(
+      { error: "拍品图片无效或过大" },
+      { status: 400 },
+    );
+  }
+
+  const item = setAuctionItemImage(id, imageData);
+  if (!item) {
+    return NextResponse.json({ error: "拍品不存在" }, { status: 404 });
+  }
+
+  return NextResponse.json({ ok: true, item });
 }
