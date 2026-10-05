@@ -42,6 +42,9 @@ export function AddAuctionItemForm({
   const [priceStatsLoading, setPriceStatsLoading] = useState(false);
   const pasteRef = useRef<HTMLDivElement>(null);
   const priceStatsAbortRef = useRef<AbortController | null>(null);
+  const itemOcrAbortRef = useRef<AbortController | null>(null);
+  const nameRef = useRef(name);
+  nameRef.current = name;
 
   useEffect(() => {
     setRoster(members);
@@ -114,20 +117,40 @@ export function AddAuctionItemForm({
         const compressed = await compressAuctionItemImage(dataUrl);
         setImageData(compressed);
         setNamePreview(null);
-        setOcrStatus("正在识别顶部装备名称…");
+        itemOcrAbortRef.current?.abort();
+        const ac = new AbortController();
+        itemOcrAbortRef.current = ac;
+        const skipRecognize = nameRef.current.trim().length >= 2;
+        setOcrStatus(
+          skipRecognize
+            ? "名称已填写，跳过装备名识别"
+            : "正在识别顶部装备名称…",
+        );
         try {
-          const result = await recognizeItemName(file);
+          const result = await recognizeItemName(file, {
+            signal: ac.signal,
+            skipRecognize,
+          });
+          if (ac.signal.aborted) return;
           setNamePreview(result.previewDataUrl);
-          if (result.name) {
-            setName(result.name);
-            setOcrStatus(`已识别名称：${result.name}`);
-          } else {
-            setOcrStatus("未识别到顶部名称，请手动填写");
+          if (!skipRecognize) {
+            if (result.name) {
+              setName(result.name);
+              setOcrStatus(`已识别名称：${result.name}`);
+            } else {
+              setOcrStatus("未识别到顶部名称，请手动填写");
+            }
           }
           if (result.quality) {
             setQuality(result.quality);
           }
-        } catch {
+        } catch (err) {
+          if (
+            ac.signal.aborted ||
+            (err instanceof Error && err.name === "AbortError")
+          ) {
+            return;
+          }
           setOcrStatus("识别失败，可手动填写名称");
         }
       };
@@ -140,6 +163,7 @@ export function AddAuctionItemForm({
     e.preventDefault();
     setError("");
     setLoading(true);
+    itemOcrAbortRef.current?.abort();
     priceStatsAbortRef.current?.abort();
     setPriceStatsLoading(false);
     try {

@@ -346,6 +346,27 @@ def recognize_images(images: list[str]) -> dict[str, Any]:
     }
 
 
+def recognize_item_name_images(images: list[str]) -> dict[str, Any]:
+    """Auction tooltip titles are already cropped. Skip ornate roster matching."""
+    rows: list[tuple[float, str, float]] = []
+    deadline = time.time() + RECOGNIZE_DEADLINE_SEC
+    for raw in images[:1]:
+        if time.time() >= deadline:
+            break
+        img = decode_image(raw)
+        extra, timed_out = run_one(downscale_for_paddle(img))
+        rows.extend(extra)
+        if timed_out:
+            break
+    lines = merge_rows(rows)
+    return {
+        "ok": True,
+        "text": "\n".join(lines),
+        "lines": lines,
+        "engine": "paddleocr",
+    }
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args: Any) -> None:
         print(f"[guild-ocr] {self.address_string()} {fmt % args}", flush=True)
@@ -405,9 +426,13 @@ class Handler(BaseHTTPRequestHandler):
             return
         started = time.time()
         try:
-            result = recognize_images(images)
+            task = str(body.get("task") or "general")
+            if task == "auction_item_name":
+                result = recognize_item_name_images(images)
+            else:
+                result = recognize_images(images)
             result["ms"] = int((time.time() - started) * 1000)
-            result["task"] = str(body.get("task") or "general")
+            result["task"] = task
             self._send(200, result)
         except Exception as exc:
             self._send(500, {"ok": False, "error": f"ocr failed: {exc}"})
