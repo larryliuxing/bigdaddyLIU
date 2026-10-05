@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import base64
+import time
 from pathlib import Path
 
 from PIL import Image
 
-from ornate_names import NAME_1, NAME_2, NAME_3, NAME_4, NAME_5, NAME_7, SAMPLE_DIR
+from ornate_names import NAME_1, NAME_2, NAME_3, NAME_4, NAME_5, NAME_6, NAME_7, SAMPLE_DIR, recognize_ornate_image
 from server import get_ocr, recognize_images, run_one
 
 LIST3 = SAMPLE_DIR / "name-list-mixed.png"
@@ -61,7 +62,6 @@ def main() -> None:
     stuck = SAMPLE_DIR / "name-list-stuck.png"
     if not stuck.is_file():
         raise SystemExit(f"missing {stuck}")
-    import time
 
     started = time.time()
     result = recognize_images([_payload(stuck)])
@@ -79,8 +79,6 @@ def main() -> None:
     name4_list = SAMPLE_DIR / "name-list-name4.png"
     if not name4_list.is_file():
         raise SystemExit(f"missing {name4_list}")
-    import time
-
     started = time.time()
     result = recognize_images([_payload(name4_list)])
     elapsed = time.time() - started
@@ -97,6 +95,30 @@ def main() -> None:
     if elapsed > 2.0:
         raise SystemExit(f"name4 list too slow: {elapsed:.3f}s")
     print("OK name4 mixed list")
+
+    name6_job = SAMPLE_DIR / "name-list-name6-job.png"
+    if not name6_job.is_file():
+        raise SystemExit(f"missing {name6_job}")
+    started = time.time()
+    result = recognize_images([_payload(name6_job)])
+    elapsed = time.time() - started
+    lines = result.get("lines") or []
+    print("name6+job", lines, f"{elapsed:.3f}s")
+    if NAME_6 not in lines:
+        raise SystemExit(f"216px crop missing {NAME_6!r} in {lines}")
+    if "job" not in lines:
+        raise SystemExit(f"216px crop missing latin job in {lines}")
+    if elapsed > 1.5:
+        raise SystemExit(f"216px crop too slow: {elapsed:.3f}s")
+    print("OK name6+job 216px crop")
+
+    small = Image.open(name6_job).convert("RGB").resize((180, 180), Image.Resampling.LANCZOS)
+    found = recognize_ornate_image(small)
+    got = [name for name, _score in found]
+    print("name6 180px", got)
+    if NAME_6 not in got:
+        raise SystemExit(f"180px crop missing {NAME_6!r} in {got}")
+    print("OK name6 180px snap")
 
 
 def _payload_from_image(img: Image.Image) -> str:

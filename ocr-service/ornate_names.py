@@ -27,6 +27,16 @@ NAME_6 = "\u9468\u7216\u5dc4\u5dc3\u7932\u8c45"
 NAME_7 = "\u9468\u9f93\u5fbf\u8d1a\u8d1a\u9468"
 NAME_8 = "\u5131\u5131\u5131\u6f0b\u6f0b\u6f0b"
 NAME_LUOLONG = NAME_1
+KNOWN_NAMES = (
+    NAME_1,
+    NAME_2,
+    NAME_3,
+    NAME_4,
+    NAME_5,
+    NAME_6,
+    NAME_7,
+    NAME_8,
+)
 
 # Human-read labels for sample crops (left-to-right).
 SEED_LABELS = {
@@ -38,6 +48,7 @@ SEED_LABELS = {
     "name-4c.png": list(NAME_4),
     "name-5.png": list(NAME_5),
     "name-6.png": list(NAME_6),
+    "name-6b.png": list(NAME_6),
     "name-7.png": list(NAME_7),
     "name-7b.png": list(NAME_7),
     "name-8.png": list(NAME_8),
@@ -280,6 +291,23 @@ def _score_vec(vec: np.ndarray, templates: dict[str, np.ndarray]) -> tuple[str, 
     return best_label, best
 
 
+def snap_known_name(name: str) -> str:
+    """Small list crops often swap 鑨/贚 on the first glyph. Known names
+    differ by at least two positions, so a unique 1-glyph miss is safe."""
+    if not name or name in KNOWN_NAMES:
+        return name
+    if len(name) != 6:
+        return name
+    hits = [
+        known
+        for known in KNOWN_NAMES
+        if len(known) == 6 and sum(a != b for a, b in zip(name, known)) == 1
+    ]
+    if len(hits) == 1:
+        return hits[0]
+    return name
+
+
 def match_glyphs(
     glyphs: list[Image.Image],
     templates: dict[str, np.ndarray],
@@ -363,7 +391,7 @@ def best_ornate_match(
         # Skip the ±3px offset search — that is what made 鑨贚贚豅爖巃
         # (and leftover rows next to it) feel expensive on mixed lists.
         if score >= MIN_SCORE or score < ORNATE_FONT_SCORE - 0.04:
-            return best_name, float(score)
+            return snap_known_name(best_name), float(score)
     for glyphs in _split_candidates(row):
         if len(glyphs) != 6:
             continue
@@ -372,7 +400,7 @@ def best_ornate_match(
         if key > best_key:
             best_key = key
             best_name = name
-    return best_name, float(max(0.0, best_key[0]))
+    return snap_known_name(best_name), float(max(0.0, best_key[0]))
 
 
 def looks_like_ornate_font(

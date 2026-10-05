@@ -331,9 +331,8 @@ export async function recognizeParticipantNamesInRect(
 ): Promise<ParticipantOcrResult> {
   const img = await loadImage(source);
   const attempts = await runCrops(img, [rect], 1);
-  if (!attempts[0]?.names.length && img.height * rect.h < 280) {
-    attempts.push(...(await runCrops(img, [rect], 1.4)));
-  }
+  // Do not upscale small boxes. 1.4× LANCZOS blurs 鑨/贚 radicals and
+  // turns 鑨爖巄巃礲豅 into a different six-glyph string.
   return mergeAttempts(attempts);
 }
 
