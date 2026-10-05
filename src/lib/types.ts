@@ -132,6 +132,18 @@ export interface ItemPriceStats {
   avg: number;
 }
 
+/** Previously used auction item, for search-and-reuse when adding lots. */
+export interface ItemCatalogEntry {
+  name: string;
+  quality: ItemQuality;
+  lastStartPrice: number;
+  lastBidIncrement: number;
+  lastBidMin: number | null;
+  lastBidMax: number | null;
+  lastSoldPrice: number | null;
+  useCount: number;
+}
+
 export interface AuctionBid {
   id: number;
   sessionId: number;

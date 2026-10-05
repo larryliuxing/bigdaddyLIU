@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import base64
+import time
 from pathlib import Path
 
 from PIL import Image
 
-from ornate_names import NAME_1, NAME_2, NAME_7, SAMPLE_DIR
-from server import recognize_images
+from ornate_names import NAME_1, NAME_2, NAME_3, NAME_4, NAME_5, NAME_6, NAME_7, SAMPLE_DIR, recognize_ornate_image
+from server import get_ocr, recognize_images, run_one
 
 LIST3 = SAMPLE_DIR / "name-list-mixed.png"
 
@@ -18,6 +19,10 @@ def _payload(path: Path) -> str:
 
 
 def main() -> None:
+    # Cold Paddle load exceeds leftover timeout and drops 沧笙踏歌.
+    get_ocr()
+    run_one(Image.new("RGB", (96, 32), (20, 24, 28)))
+
     if not LIST3.is_file():
         raise SystemExit(f"missing {LIST3}")
     result = recognize_images([_payload(LIST3)])
@@ -57,7 +62,6 @@ def main() -> None:
     stuck = SAMPLE_DIR / "name-list-stuck.png"
     if not stuck.is_file():
         raise SystemExit(f"missing {stuck}")
-    import time
 
     started = time.time()
     result = recognize_images([_payload(stuck)])
@@ -71,6 +75,50 @@ def main() -> None:
     if elapsed > 2.5:
         raise SystemExit(f"stuck list too slow: {elapsed:.3f}s (paddle hang?)")
     print("OK stuck list")
+
+    name4_list = SAMPLE_DIR / "name-list-name4.png"
+    if not name4_list.is_file():
+        raise SystemExit(f"missing {name4_list}")
+    started = time.time()
+    result = recognize_images([_payload(name4_list)])
+    elapsed = time.time() - started
+    lines = result.get("lines") or []
+    print("name4 list", lines, f"{elapsed:.3f}s")
+    ordinary = (
+        "\u6ca7\u7b19\u8e0f\u6b4c",
+        "\u59d0\u59d0\u597d\u5e05\u7684\u5200",
+        "\u843d\u65e5\u4f34\u5b64\u884c",
+    )
+    for want in (NAME_3, NAME_5, NAME_4, *ordinary):
+        if want not in lines:
+            raise SystemExit(f"name4 list missing {want!r} in {lines}")
+    if elapsed > 2.0:
+        raise SystemExit(f"name4 list too slow: {elapsed:.3f}s")
+    print("OK name4 mixed list")
+
+    name6_job = SAMPLE_DIR / "name-list-name6-job.png"
+    if not name6_job.is_file():
+        raise SystemExit(f"missing {name6_job}")
+    started = time.time()
+    result = recognize_images([_payload(name6_job)])
+    elapsed = time.time() - started
+    lines = result.get("lines") or []
+    print("name6+job", lines, f"{elapsed:.3f}s")
+    if NAME_6 not in lines:
+        raise SystemExit(f"216px crop missing {NAME_6!r} in {lines}")
+    if "job" not in lines:
+        raise SystemExit(f"216px crop missing latin job in {lines}")
+    if elapsed > 1.5:
+        raise SystemExit(f"216px crop too slow: {elapsed:.3f}s")
+    print("OK name6+job 216px crop")
+
+    small = Image.open(name6_job).convert("RGB").resize((180, 180), Image.Resampling.LANCZOS)
+    found = recognize_ornate_image(small)
+    got = [name for name, _score in found]
+    print("name6 180px", got)
+    if NAME_6 not in got:
+        raise SystemExit(f"180px crop missing {NAME_6!r} in {got}")
+    print("OK name6 180px snap")
 
 
 def _payload_from_image(img: Image.Image) -> str:

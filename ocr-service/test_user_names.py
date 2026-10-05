@@ -21,6 +21,7 @@ from ornate_names import (
     load_templates,
     match_glyphs,
     recognize_ornate_image,
+    snap_known_name,
     split_glyphs,
     split_rows,
     templates_from_pairs,
@@ -81,8 +82,10 @@ def main() -> None:
         "name-3.png": "\u9468\u9468\u7216\u9f93\u9468\u9468",
         "name-4.png": "\u9468\u8d1a\u8d1a\u8c45\u7216\u5dc3",
         "name-4b.png": "\u9468\u8d1a\u8d1a\u8c45\u7216\u5dc3",
+        "name-4c.png": "\u9468\u8d1a\u8d1a\u8c45\u7216\u5dc3",
         "name-5.png": "\u9468\u9468\u9f93\u9468\u9468\u9468",
         "name-6.png": "\u9468\u7216\u5dc4\u5dc3\u7932\u8c45",
+        "name-6b.png": "\u9468\u7216\u5dc4\u5dc3\u7932\u8c45",
         "name-7.png": "\u9468\u9f93\u5fbf\u8d1a\u8d1a\u9468",
         "name-7b.png": "\u9468\u9f93\u5fbf\u8d1a\u8d1a\u9468",
         "name-8.png": "\u5131\u5131\u5131\u6f0b\u6f0b\u6f0b",
@@ -122,6 +125,15 @@ def main() -> None:
         if got != want:
             raise SystemExit(f"leave-one-out {holdout}: {got} {_hex(got)} != {want} {_hex(want)}")
         print("OK holdout", holdout)
+
+    swapped = "\u8d1a" + NAME_6[1:]
+    if snap_known_name(swapped) != NAME_6:
+        raise SystemExit(f"snap {swapped} -> {snap_known_name(swapped)} != {NAME_6}")
+    if snap_known_name(NAME_3) != NAME_3:
+        raise SystemExit("snap must keep an exact known name")
+    if snap_known_name(NAME_5) != NAME_5:
+        raise SystemExit("snap must not collapse NAME_5 into NAME_3")
+    print("OK snap 鑨/贚 on NAME_6")
 
 
 if __name__ == "__main__":

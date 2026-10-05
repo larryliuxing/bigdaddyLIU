@@ -5,8 +5,15 @@
  * Failure mode to avoid: left icon bleed → junk glyphs ("到巨荐生" for "巨斧").
  */
 
+import { pickAuctionItemName } from "@/lib/auction/itemName";
 import { recognizeWithPaddle } from "@/lib/ocr/client";
 import type { ItemQuality } from "@/lib/types";
+
+export {
+  cleanItemName,
+  extractNameCandidates,
+  pickAuctionItemName,
+} from "@/lib/auction/itemName";
 
 export type ItemNameOcrResult = {
   name: string;
@@ -498,183 +505,83 @@ function scrubLeftInkBlob(canvas: HTMLCanvasElement) {
   }
 }
 
-const CJK = /[\u4e00-\u9fff]/;
+const NAME_CROP_MAX_EDGE = 720;
 
-/** All plausible item-name substrings from OCR raw text. */
-export function extractNameCandidates(raw: string): string[] {
-  const noSpace = raw.replace(/\s+/g, "");
-  const stripped = noSpace
-    .replace(/[|｜\[\]【】()（）<>《》·•.,，。:：;；'"“”‘’\-_/\\=+]+/g, "")
-    .replace(/^[Xx×]+|[Xx×]+$/g, "");
-
-  const out = new Set<string>();
-  const runs = stripped.match(/[\u4e00-\u9fff]{2,8}/g) || [];
-  for (const run of runs) {
-    out.add(run);
-    // Sliding windows: short gear names are often 2–4 chars
-    for (let len = 2; len <= Math.min(6, run.length); len++) {
-      for (let i = 0; i + len <= run.length; i++) {
-        out.add(run.slice(i, i + len));
-      }
+function toNameOcrJpeg(canvas: HTMLCanvasElement, quality = 0.88): string {
+  const edge = Math.max(canvas.width, canvas.height);
+  let src = canvas;
+  if (edge > NAME_CROP_MAX_EDGE) {
+    const scale = NAME_CROP_MAX_EDGE / edge;
+    const fitted = document.createElement("canvas");
+    fitted.width = Math.max(8, Math.round(canvas.width * scale));
+    fitted.height = Math.max(8, Math.round(canvas.height * scale));
+    const ctx = fitted.getContext("2d");
+    if (ctx) {
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+      ctx.drawImage(canvas, 0, 0, fitted.width, fitted.height);
+      src = fitted;
     }
   }
-  return [...out];
+  return src.toDataURL("image/jpeg", quality);
 }
 
-/** Prefer the most name-like Chinese run (not the longest noisy string). */
-export function cleanItemName(raw: string) {
-  const candidates = extractNameCandidates(raw);
-  if (!candidates.length) return "";
-  let best = "";
-  let bestScore = -Infinity;
-  for (const c of candidates) {
-    const s = scoreCleanedName(c);
-    if (s > bestScore) {
-      bestScore = s;
-      best = c;
-    }
-  }
-  return bestScore > 0 ? best : "";
-}
-
-/**
- * Gear names in this game are usually 2–4 CJK chars.
- * Longer OCR junk like "到巨荐生" must lose to "巨斧".
- */
-function scoreCleanedName(name: string) {
-  if (name.length < 2 || name.length > 8) return 0;
-  if (![...name].every((ch) => CJK.test(ch))) return 0;
-
-  let score = 20;
-  // Sweet spot: 2–4 characters
-  if (name.length === 2) score += 48;
-  else if (name.length === 3) score += 42;
-  else if (name.length === 4) score += 28;
-  else if (name.length === 5) score += 12;
-  else score -= (name.length - 5) * 10;
-
-  // Mild penalty for uncommon OCR-confused tails (heuristic)
-  // Prefer names that don't start with particles often hallucinated from icons
-  if (/^[到的地得一不了]/.test(name) && name.length >= 3) score -= 18;
-  if (/[生出在了]$/.test(name) && name.length >= 3) score -= 12;
-
-  return score;
-}
-
-function scoreNameCandidate(raw: string, votes: Map<string, number>) {
-  const cleaned = cleanItemName(raw);
-  if (cleaned.length < 2) return 0;
-  const voteBonus = (votes.get(cleaned) ?? 0) * 14;
-  const latin = ((raw || "").match(/[A-Za-z0-9]/g) || []).length;
-  return scoreCleanedName(cleaned) + voteBonus - latin * 6;
-}
-
-async function recognizeNameVariants(dataUrl: string) {
-  const result = await recognizeWithPaddle([dataUrl], "auction_item_name");
+async function recognizeNameVariants(
+  dataUrl: string,
+  signal?: AbortSignal,
+) {
+  if (signal?.aborted) return [];
+  const result = await recognizeWithPaddle(
+    [dataUrl],
+    "auction_item_name",
+    signal,
+  );
   return [result.text, ...result.lines].filter(Boolean);
 }
 
-function pickBestName(candidates: string[]) {
-  const votes = new Map<string, number>();
-  for (const raw of candidates) {
-    for (const c of extractNameCandidates(raw)) {
-      if (scoreCleanedName(c) > 0) {
-        votes.set(c, (votes.get(c) ?? 0) + 1);
-      }
-    }
-    const cleaned = cleanItemName(raw);
-    if (cleaned) votes.set(cleaned, (votes.get(cleaned) ?? 0) + 1);
-  }
-
-  let best = "";
-  let bestScore = 0;
-  const pool = new Set<string>();
-  for (const raw of candidates) {
-    for (const c of extractNameCandidates(raw)) pool.add(c);
-    const cleaned = cleanItemName(raw);
-    if (cleaned) pool.add(cleaned);
-  }
-
-  for (const name of pool) {
-    const score = scoreCleanedName(name) + (votes.get(name) ?? 0) * 14;
-    if (
-      score > bestScore ||
-      (score === bestScore && name.length < best.length)
-    ) {
-      bestScore = score;
-      best = name;
-    }
-  }
-
-  // Fallback: score raw strings if pool empty
-  if (!best) {
-    for (const raw of candidates) {
-      const score = scoreNameCandidate(raw, votes);
-      const cleaned = cleanItemName(raw);
-      if (score > bestScore) {
-        bestScore = score;
-        best = cleaned;
-      }
-    }
-  }
-  return best;
-}
+export type RecognizeItemNameOptions = {
+  signal?: AbortSignal;
+  /** Quality/crop only — do not call Paddle when the name is already filled. */
+  skipRecognize?: boolean;
+};
 
 /**
  * Recognize only the top quality-colored item name from a tooltip screenshot.
+ * One small JPEG title crop (not the whole tooltip, not 3–5 Paddle passes).
  */
 export async function recognizeItemName(
   source: File | Blob | string,
+  options?: RecognizeItemNameOptions,
 ): Promise<ItemNameOcrResult> {
   const img = await loadImage(source);
   const bounds = findNameBounds(img);
-  const scale = bounds.weak ? 3.2 : 4.2;
+  const scale = bounds.weak ? 2.2 : 2;
   const crop = buildNameCrop(img, bounds, scale);
+  const previewDataUrl = toNameOcrJpeg(crop);
 
-  // Extra left trim on the crop itself (icon often still peeks in)
-  const trimmed = trimCropLeft(crop, 0.18);
-  const enhancedHard = enhanceNameCrop(trimmed, "hard");
-  const enhancedPurple = enhanceNameCrop(trimmed, "purple");
-  const previewDataUrl = enhancedPurple.toDataURL("image/png");
+  if (options?.skipRecognize) {
+    return {
+      name: "",
+      quality: bounds.quality,
+      rawText: "",
+      previewDataUrl,
+    };
+  }
 
   const rawChunks: string[] = [];
   rawChunks.push(
-    ...(await recognizeNameVariants(previewDataUrl)),
-    ...(await recognizeNameVariants(enhancedHard.toDataURL("image/png"))),
+    ...(await recognizeNameVariants(previewDataUrl, options?.signal)),
   );
 
-  // Original crop purple pass as backup (in case trim cut into first glyph)
-  rawChunks.push(
-    ...(await recognizeNameVariants(
-      enhanceNameCrop(crop, "purple").toDataURL("image/png"),
-    )),
-  );
-
-  // Soft pass if still weak
-  if (pickBestName(rawChunks).length < 2) {
-    const soft = enhanceNameCrop(crop, "soft");
-    rawChunks.push(...(await recognizeNameVariants(soft.toDataURL("image/png"))));
-  }
-
-  // Slightly wider header retry (still past icon)
-  if (pickBestName(rawChunks).length < 2) {
-    const fallback = buildNameCrop(
-      img,
-      {
-        sx: img.width * 0.26,
-        sy: img.height * 0.012,
-        sw: img.width * 0.55,
-        sh: img.height * 0.13,
-      },
-      3.6,
-    );
-    const enhancedFallback = enhanceNameCrop(fallback, "purple");
+  let name = pickAuctionItemName(rawChunks);
+  if (name.length < 2 && !options?.signal?.aborted) {
+    const enhanced = enhanceNameCrop(trimCropLeft(crop, 0.08), "purple");
     rawChunks.push(
-      ...(await recognizeNameVariants(enhancedFallback.toDataURL("image/png"))),
+      ...(await recognizeNameVariants(toNameOcrJpeg(enhanced, 0.9), options?.signal)),
     );
+    name = pickAuctionItemName(rawChunks);
   }
 
-  const name = pickBestName(rawChunks);
   return {
     name,
     quality: bounds.quality,

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import type {
   AuctionItem,
@@ -17,6 +17,7 @@ import {
   formatCountdown,
   fromBeijingDateAndTime,
   isSessionEditable,
+  QUALITY_OPTIONS,
   qualityMeta,
   sessionLifecycleLabel,
   auctionItemStatusLabel,
@@ -31,11 +32,39 @@ import {
 } from "./AuctionItemImage";
 import { ItemPriceStatsLine } from "./ItemPriceStatsLine";
 import { mergeAuctionRoom } from "@/lib/auction/mergeRoom";
+import { ParticipantOcrPanel } from "./ParticipantOcrPanel";
+import { LockIcon } from "@/components/Icons";
 
 function statusTone(status: AuctionSessionSummary["status"]) {
   if (status === "live") return "bg-emerald-500/15 text-emerald-300";
   if (status === "ended") return "bg-slate-500/20 text-slate-300";
   return "bg-amber-500/15 text-amber-200";
+}
+
+function LotPriceChip({
+  children,
+  clickable,
+  onClick,
+}: {
+  children: ReactNode;
+  clickable: boolean;
+  onClick?: () => void;
+}) {
+  const className =
+    "inline-flex items-center rounded-lg border border-[var(--border-soft)] bg-[#1c2230] px-2.5 py-1 text-xs font-medium";
+  if (!clickable) {
+    return <span className={className}>{children}</span>;
+  }
+  return (
+    <button
+      type="button"
+      className={`${className} transition hover:border-[rgba(123,108,255,0.45)] hover:bg-[#252d40]`}
+      onClick={onClick}
+      title="点击修改拍品"
+    >
+      {children}
+    </button>
+  );
 }
 
 export function AuctionManagePanel({
@@ -64,6 +93,19 @@ export function AuctionManagePanel({
   );
   const [taxPercent, setTaxPercent] = useState(5);
   const [viewer, setViewer] = useState<AuctionItemViewerPayload | null>(null);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editQuality, setEditQuality] = useState<AuctionItem["quality"]>("green");
+  const [editStartPrice, setEditStartPrice] = useState(5);
+  const [editBidIncrement, setEditBidIncrement] = useState(5);
+  const [editBidMin, setEditBidMin] = useState(10);
+  const [editBidMax, setEditBidMax] = useState(100);
+  const [editMemberIds, setEditMemberIds] = useState<number[]>([]);
+  const [editMemberQuery, setEditMemberQuery] = useState("");
+  const [editMemberTab, setEditMemberTab] = useState<"members" | "ocr">(
+    "members",
+  );
+  const [editOcrNonce, setEditOcrNonce] = useState(0);
 
   const syncEditFields = useCallback((nextRoom: AuctionRoomState | null) => {
     const session = nextRoom?.session;
@@ -276,7 +318,64 @@ export function AuctionManagePanel({
       return;
     }
     setRoom(data.room);
+    setEditingId((cur) => (cur === id ? null : cur));
     await loadList();
+  }
+
+  function beginEditItem(item: AuctionItem) {
+    setEditingId(item.id);
+    setEditName(item.name);
+    setEditQuality(item.quality);
+    setEditStartPrice(item.startPrice);
+    setEditBidIncrement(item.bidIncrement);
+    setEditBidMin(item.bidMin ?? item.startPrice);
+    setEditBidMax(item.bidMax ?? 100);
+    setEditMemberIds(item.dividendMemberIds ?? []);
+    setEditMemberQuery("");
+    setEditMemberTab("members");
+    setEditOcrNonce((n) => n + 1);
+    setError("");
+    setMessage("");
+  }
+
+  function toggleEditMember(id: number) {
+    setEditMemberIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    );
+  }
+
+  async function saveEditItem(id: number) {
+    if (selectedId == null) return;
+    setBusy(true);
+    setError("");
+    try {
+      const res = await fetch("/api/auction/items", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id,
+          name: editName,
+          quality: editQuality,
+          startPrice: isPinkAuction(editQuality) ? editBidMin : editStartPrice,
+          bidIncrement: isPinkAuction(editQuality) ? 1 : editBidIncrement,
+          bidMin: isPinkAuction(editQuality) ? editBidMin : null,
+          bidMax: isPinkAuction(editQuality) ? editBidMax : null,
+          dividendMemberIds: editMemberIds,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "修改失败");
+        return;
+      }
+      setRoom(data.room);
+      setEditingId(null);
+      setMessage("拍品已更新");
+    } catch {
+      setError("网络错误");
+    } finally {
+      setBusy(false);
+    }
   }
 
   function applyDividendPayload(data: {
@@ -358,6 +457,14 @@ export function AuctionManagePanel({
   const session = room?.session;
   const items: AuctionItem[] = room?.items ?? [];
   const editable = session ? isSessionEditable(session.status) : false;
+  const editRoster = initialMembers.filter((m) => m.status !== "exited");
+  const editMemberQ = editMemberQuery.trim();
+  const editVisibleRoster = editMemberQ
+    ? editRoster.filter((m) => m.name.includes(editMemberQ))
+    : editRoster;
+  const editSelectedMembers = editRoster.filter((m) =>
+    editMemberIds.includes(m.id),
+  );
 
   return (
     <div className="app-shell">
@@ -694,69 +801,346 @@ export function AuctionManagePanel({
                 )}
                 {items.map((item) => {
                   const q = qualityMeta(item.quality);
+                  const canEdit =
+                    editable &&
+                    (item.status === "pending" || item.status === "cancelled");
+                  const editing = editingId === item.id;
                   return (
-                    <li
-                      key={item.id}
-                      className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
-                    >
-                      <div className="flex items-center gap-3">
-                        <AuctionItemThumb
-                          itemId={item.id}
-                          imageData={item.imageData}
-                          hasImage={item.hasImage}
-                          name={item.name}
-                          quality={item.quality}
-                          className="h-12 w-12"
-                          onOpen={(payload) =>
-                            setViewer({
-                              ...payload,
-                              detail: `${isPinkAuction(item.quality) ? "特殊粉色限价" : "起拍"} ¥${item.bidMin ?? item.startPrice} · ${auctionItemStatusLabel(item.status)}${
-                                item.soldPrice != null
-                                  ? ` · 成交 ¥${item.soldPrice}`
-                                  : ""
-                              }`,
-                            })
-                          }
-                        />
-                        <div>
-                          <p className="font-medium">
-                            <span
-                              className="mr-2 inline-block h-2.5 w-2.5 rounded-full"
-                              style={{ background: q.color }}
-                            />
-                            {item.name}
-                          </p>
-                          <p className="mt-0.5 text-xs text-[var(--text-muted)]">
-                            {isPinkAuction(item.quality)
-                              ? `特殊粉色限价 ¥${item.bidMin ?? item.startPrice}～¥${item.bidMax ?? "-"} · `
-                              : isOrdinaryPinkAuction(item.quality)
-                                ? `普通粉色 · 起拍 ¥${item.startPrice} · 加价 ¥${item.bidIncrement} · 仅参与者 · `
-                                : `起拍 ¥${item.startPrice} · 加价 ¥${item.bidIncrement} · `}
-                            {auctionItemStatusLabel(item.status)}
-                            {item.soldPrice != null
-                              ? ` · 成交 ¥${item.soldPrice}`
-                              : ""}
-                            {item.remainingSeconds != null
-                              ? ` · 本件剩余 ${formatCountdown(item.remainingSeconds)}`
-                              : ""}
-                          </p>
-                          <ItemPriceStatsLine
-                            stats={item.priceStats}
-                            className="mt-1"
+                    <li key={item.id} className="flex flex-col gap-3 px-4 py-3">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="flex items-center gap-3">
+                          <AuctionItemThumb
+                            itemId={item.id}
+                            imageData={item.imageData}
+                            hasImage={item.hasImage}
+                            name={item.name}
+                            quality={item.quality}
+                            className="h-12 w-12"
+                            onOpen={(payload) =>
+                              setViewer({
+                                ...payload,
+                                detail: `${isPinkAuction(item.quality) ? "特殊粉色限价" : "起拍"} ¥${item.bidMin ?? item.startPrice} · ${auctionItemStatusLabel(item.status)}${
+                                  item.soldPrice != null
+                                    ? ` · 成交 ¥${item.soldPrice}`
+                                    : ""
+                                }`,
+                              })
+                            }
                           />
+                          <div>
+                            <p className="font-medium">
+                              <span
+                                className="mr-2 inline-block h-2.5 w-2.5 rounded-full"
+                                style={{ background: q.color }}
+                              />
+                              {item.name}
+                            </p>
+                            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                              {isPinkAuction(item.quality) ? (
+                                <>
+                                  <LotPriceChip
+                                    clickable={canEdit}
+                                    onClick={() => beginEditItem(item)}
+                                  >
+                                    低限 ¥{item.bidMin ?? item.startPrice}
+                                  </LotPriceChip>
+                                  <LotPriceChip
+                                    clickable={canEdit}
+                                    onClick={() => beginEditItem(item)}
+                                  >
+                                    高限 ¥{item.bidMax ?? "-"}
+                                  </LotPriceChip>
+                                </>
+                              ) : (
+                                <>
+                                  <LotPriceChip
+                                    clickable={canEdit}
+                                    onClick={() => beginEditItem(item)}
+                                  >
+                                    起拍 ¥{item.startPrice}
+                                  </LotPriceChip>
+                                  <LotPriceChip
+                                    clickable={canEdit}
+                                    onClick={() => beginEditItem(item)}
+                                  >
+                                    加价 ¥{item.bidIncrement}
+                                  </LotPriceChip>
+                                </>
+                              )}
+                              <span className="text-xs text-[var(--text-muted)]">
+                                {isOrdinaryPinkAuction(item.quality)
+                                  ? "仅参与者 · "
+                                  : ""}
+                                {auctionItemStatusLabel(item.status)}
+                                {item.soldPrice != null
+                                  ? ` · 成交 ¥${item.soldPrice}`
+                                  : ""}
+                                {item.remainingSeconds != null
+                                  ? ` · 本件剩余 ${formatCountdown(item.remainingSeconds)}`
+                                  : ""}
+                              </span>
+                              {(item.dividendMemberIds?.length ?? 0) > 0 && (
+                                <LotPriceChip
+                                  clickable={canEdit}
+                                  onClick={() => beginEditItem(item)}
+                                >
+                                  {isPinkAuction(item.quality) ||
+                                  isOrdinaryPinkAuction(item.quality)
+                                    ? `参与者 ${item.dividendMemberIds.length} 人`
+                                    : `分红 ${item.dividendMemberIds.length} 人`}
+                                </LotPriceChip>
+                              )}
+                            </div>
+                            <ItemPriceStatsLine
+                              stats={item.priceStats}
+                              className="mt-1"
+                            />
+                          </div>
                         </div>
-                      </div>
-                      {editable &&
-                        (item.status === "pending" ||
-                          item.status === "cancelled") && (
-                          <button
-                            type="button"
-                            className="btn-ghost text-sm text-[var(--accent-crimson)]"
-                            onClick={() => removeItem(item.id)}
-                          >
-                            删除
-                          </button>
+                        {canEdit && (
+                          <div className="flex shrink-0 items-center gap-2">
+                            <button
+                              type="button"
+                              className="btn-ghost text-sm"
+                              onClick={() => beginEditItem(item)}
+                            >
+                              编辑
+                            </button>
+                            <button
+                              type="button"
+                              className="btn-ghost text-sm text-[var(--accent-crimson)]"
+                              onClick={() => removeItem(item.id)}
+                            >
+                              删除
+                            </button>
+                          </div>
                         )}
+                      </div>
+                      {editing && (
+                        <div className="grid gap-3 rounded-xl border border-[var(--border-soft)] bg-[#0f1320] p-3 sm:grid-cols-2">
+                          <label className="block space-y-1 sm:col-span-2">
+                            <span className="text-xs text-[var(--text-muted)]">
+                              拍品名称
+                            </span>
+                            <input
+                              className="field !py-2"
+                              value={editName}
+                              onChange={(e) => setEditName(e.target.value)}
+                            />
+                          </label>
+                          <div className="flex flex-wrap gap-2 sm:col-span-2">
+                            {QUALITY_OPTIONS.map((opt) => {
+                              const active = editQuality === opt.value;
+                              return (
+                                <button
+                                  key={opt.value}
+                                  type="button"
+                                  className={`flex items-center gap-1.5 rounded-lg border px-2 py-1 text-xs ${
+                                    active
+                                      ? "border-white/35 bg-[#2a3350]"
+                                      : "border-[var(--border-soft)] text-[var(--text-muted)]"
+                                  }`}
+                                  onClick={() => setEditQuality(opt.value)}
+                                >
+                                  <span
+                                    className="h-2.5 w-2.5 rounded-full"
+                                    style={{ background: opt.color }}
+                                  />
+                                  {opt.label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                          {isPinkAuction(editQuality) ? (
+                            <>
+                              <label className="block space-y-1">
+                                <span className="text-xs text-[var(--text-muted)]">
+                                  低限价 ¥
+                                </span>
+                                <input
+                                  className="field !py-2"
+                                  type="number"
+                                  min={1}
+                                  value={editBidMin}
+                                  onChange={(e) =>
+                                    setEditBidMin(Number(e.target.value))
+                                  }
+                                />
+                              </label>
+                              <label className="block space-y-1">
+                                <span className="text-xs text-[var(--text-muted)]">
+                                  高限价 ¥
+                                </span>
+                                <input
+                                  className="field !py-2"
+                                  type="number"
+                                  min={1}
+                                  value={editBidMax}
+                                  onChange={(e) =>
+                                    setEditBidMax(Number(e.target.value))
+                                  }
+                                />
+                              </label>
+                            </>
+                          ) : (
+                            <>
+                              <label className="block space-y-1">
+                                <span className="text-xs text-[var(--text-muted)]">
+                                  起拍价 ¥
+                                </span>
+                                <input
+                                  className="field !py-2"
+                                  type="number"
+                                  min={1}
+                                  value={editStartPrice}
+                                  onChange={(e) =>
+                                    setEditStartPrice(Number(e.target.value))
+                                  }
+                                />
+                              </label>
+                              <label className="block space-y-1">
+                                <span className="text-xs text-[var(--text-muted)]">
+                                  加价幅度 ¥
+                                </span>
+                                <input
+                                  className="field !py-2"
+                                  type="number"
+                                  min={1}
+                                  value={editBidIncrement}
+                                  onChange={(e) =>
+                                    setEditBidIncrement(Number(e.target.value))
+                                  }
+                                />
+                              </label>
+                            </>
+                          )}
+                          <div className="grid gap-3 sm:col-span-2 lg:grid-cols-[1.4fr_1fr]">
+                            <div className="rounded-xl border border-[var(--border-soft)] bg-[#121826] p-3">
+                              <div className="mb-2 flex flex-wrap items-center gap-2">
+                                <button
+                                  type="button"
+                                  className={`rounded-lg px-3 py-1.5 text-xs ${editMemberTab === "members" ? "bg-[#2a3350] text-white" : "text-[var(--text-muted)]"}`}
+                                  onClick={() => setEditMemberTab("members")}
+                                >
+                                  {isPinkAuction(editQuality) ||
+                                  isOrdinaryPinkAuction(editQuality)
+                                    ? `参与者名单 (${editRoster.length})`
+                                    : `分红成员 (${editRoster.length})`}
+                                </button>
+                                <button
+                                  type="button"
+                                  className={`rounded-lg px-3 py-1.5 text-xs ${editMemberTab === "ocr" ? "bg-[#2a3350] text-white" : "text-[var(--text-muted)]"}`}
+                                  onClick={() => setEditMemberTab("ocr")}
+                                >
+                                  粘贴图片识别
+                                </button>
+                              </div>
+                              {editMemberTab === "members" ? (
+                                <div className="space-y-2">
+                                  <input
+                                    className="field !py-2 text-sm"
+                                    value={editMemberQuery}
+                                    onChange={(e) =>
+                                      setEditMemberQuery(e.target.value)
+                                    }
+                                    placeholder="搜索名字"
+                                  />
+                                  <div className="flex max-h-40 flex-wrap gap-2 overflow-y-auto">
+                                    {editVisibleRoster.length === 0 ? (
+                                      <p className="text-sm text-[var(--text-muted)]">
+                                        没有叫这个名字的成员
+                                      </p>
+                                    ) : (
+                                      editVisibleRoster.map((member) => {
+                                        const active = editMemberIds.includes(
+                                          member.id,
+                                        );
+                                        return (
+                                          <button
+                                            key={member.id}
+                                            type="button"
+                                            className={`member-chip !py-2 ${active ? "!border-[rgba(123,108,255,0.55)] !bg-[#2a3350]" : ""}`}
+                                            onClick={() =>
+                                              toggleEditMember(member.id)
+                                            }
+                                          >
+                                            <LockIcon />
+                                            <span className="text-sm">
+                                              {member.name}
+                                            </span>
+                                          </button>
+                                        );
+                                      })
+                                    )}
+                                  </div>
+                                </div>
+                              ) : (
+                                <ParticipantOcrPanel
+                                  roster={editRoster}
+                                  selectedIds={editMemberIds}
+                                  onAddMember={(id) =>
+                                    setEditMemberIds((prev) =>
+                                      prev.includes(id) ? prev : [...prev, id],
+                                    )
+                                  }
+                                  onAddMembers={(ids) =>
+                                    setEditMemberIds((prev) => {
+                                      const next = new Set(prev);
+                                      ids.forEach((id) => next.add(id));
+                                      return [...next];
+                                    })
+                                  }
+                                  resetNonce={editOcrNonce}
+                                />
+                              )}
+                            </div>
+                            <div className="rounded-xl border border-[var(--border-soft)] bg-[#121826] p-3">
+                              <p className="mb-2 text-xs text-[var(--text-muted)]">
+                                {isPinkAuction(editQuality) ||
+                                isOrdinaryPinkAuction(editQuality)
+                                  ? `已选参与者 (${editSelectedMembers.length})`
+                                  : `已选分红 (${editSelectedMembers.length})`}
+                              </p>
+                              {editSelectedMembers.length === 0 ? (
+                                <p className="text-sm text-[var(--text-muted)]">
+                                  请点选或识别分红成员
+                                </p>
+                              ) : (
+                                <div className="flex max-h-40 flex-wrap gap-2 overflow-y-auto">
+                                  {editSelectedMembers.map((m) => (
+                                    <button
+                                      key={m.id}
+                                      type="button"
+                                      className="rounded-lg bg-[#24304a] px-2.5 py-1 text-xs"
+                                      onClick={() => toggleEditMember(m.id)}
+                                      title="点击移除"
+                                    >
+                                      {m.name} ×
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex gap-2 sm:col-span-2">
+                            <button
+                              type="button"
+                              className="rounded-xl bg-[#e23d4a] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                              disabled={busy}
+                              onClick={() => void saveEditItem(item.id)}
+                            >
+                              {busy ? "保存中…" : "保存修改"}
+                            </button>
+                            <button
+                              type="button"
+                              className="btn-ghost text-sm"
+                              onClick={() => setEditingId(null)}
+                            >
+                              取消
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </li>
                   );
                 })}

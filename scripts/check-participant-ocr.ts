@@ -97,6 +97,27 @@ assert.equal(hyphenPaired.hits[1].member?.id, 22);
 assert.equal(hyphenPaired.hits[2].member?.id, 24);
 assert.deepEqual(hyphenPaired.unrecognized, []);
 
+const name4 = "\u9468\u8d1a\u8d1a\u8c45\u7216\u5dc3";
+const name2 = "\u9468\u8c45\u8d1a\u9468\u8d1a\u5dc4";
+assert.equal(scoreNameMatch(name4, `${name4}-\u7070\u8c46`) > 90, true);
+assert.equal(scoreNameMatch(name4, `${name2}-\u60ca\u7075`), 0);
+assert.equal(findBestMemberForOcrName(name4, [{ id: 41, name: `${name2}-\u60ca\u7075` }]), null);
+assert.equal(
+  findBestMemberForOcrName(name4, [{ id: 42, name: `${name4}-\u59d0\u59d0` }])?.id,
+  42,
+);
+const sameOrnatePrefix = [
+  { id: 43, name: `${name4}-\u7070\u8c46` },
+  { id: 44, name: `${name4}-\u8001\u5b50` },
+];
+assert.equal(findBestMemberForOcrName(name4, sameOrnatePrefix), null);
+
+const nameMix = "\u9468\u9f93\u9468\u9f93\u8d1a\u7216";
+const nameOther = "\u8d1a\u9468\u7216\u9468\u9f93\u7216";
+const grayBean = `${nameMix}-\u7070\u8c46`;
+assert.equal(scoreNameMatch(nameOther, grayBean), 0);
+assert.equal(findBestMemberForOcrName(nameOther, [{ id: 31, name: grayBean }]), null);
+
 const pasteLines = [
   name1,
   name7,
@@ -117,6 +138,33 @@ assert.equal(isParticipantNameInk(102, 106, 110), true);
 assert.equal(isParticipantNameInk(90, 94, 98), true);
 // Saturated guild badge should not count as name ink.
 assert.equal(isParticipantNameInk(160, 40, 200), false);
+assert.equal(cleanOcrNameToken("job"), "job");
+assert.equal(cleanOcrNameToken("JOB"), "JOB");
+assert.equal(cleanOcrNameToken("bob1"), "bob1");
+assert.equal(parseParticipantRowName("job"), "job");
+assert.ok(namesFromOcrResult("job\n天刀", ["job", "天刀"]).includes("job"));
+assert.ok(namesFromOcrResult("job\n天刀", ["job", "天刀"]).includes("天刀"));
+
+const aliasRoster = [
+  { id: 31, name: "job-bob1-carry" },
+  { id: 32, name: "天刀" },
+];
+assert.equal(findBestMemberForOcrName("job", aliasRoster)?.id, 31);
+assert.equal(findBestMemberForOcrName("bob1", aliasRoster)?.id, 31);
+assert.equal(findBestMemberForOcrName("carry", aliasRoster)?.id, 31);
+assert.equal(findBestMemberForOcrName("JOB", aliasRoster)?.id, 31);
+assert.equal(findBestMemberForOcrName("天刀", aliasRoster)?.id, 32);
+
+const aliasPaired = pairOcrNamesToMembers(
+  ["job", "天刀", "carry"],
+  aliasRoster,
+);
+assert.equal(aliasPaired.hits.find((h) => h.ocrName === "job")?.member?.id, 31);
+assert.equal(aliasPaired.hits.find((h) => h.ocrName === "carry")?.member?.id, 31);
+assert.equal(aliasPaired.hits.find((h) => h.ocrName === "天刀")?.member?.id, 32);
+assert.equal(aliasPaired.matched.length, 2);
+assert.deepEqual(aliasPaired.unrecognized, []);
+
 assert.equal(participantNameInkCut(98) < 110, true);
 assert.equal(participantNameInkCut(98) < 82, true);
 

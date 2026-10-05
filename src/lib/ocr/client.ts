@@ -22,23 +22,52 @@ export async function toOcrDataUrl(image: string | File | Blob) {
   return blobToDataUrl(image);
 }
 
+function combineAbortSignals(
+  timeout: AbortSignal,
+  extra?: AbortSignal,
+): AbortSignal {
+  if (!extra) return timeout;
+  if (typeof AbortSignal.any === "function") {
+    return AbortSignal.any([timeout, extra]);
+  }
+  const ac = new AbortController();
+  const onAbort = () => ac.abort();
+  if (timeout.aborted || extra.aborted) {
+    ac.abort();
+    return ac.signal;
+  }
+  timeout.addEventListener("abort", onAbort, { once: true });
+  extra.addEventListener("abort", onAbort, { once: true });
+  return ac.signal;
+}
+
 export async function recognizeWithPaddle(
   images: Array<string | null | undefined>,
   task = "general",
+  signal?: AbortSignal,
 ): Promise<PaddleOcrResult> {
   const cleaned = images.filter(
     (v): v is string => Boolean(v && v.startsWith("data:image/")),
   );
   if (!cleaned.length) return { text: "", lines: [] };
+  if (signal?.aborted) {
+    throw new DOMException("Aborted", "AbortError");
+  }
+  const timeout = AbortSignal.timeout(12000);
   let res: Response;
   try {
     res = await fetch("/api/ocr/recognize", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ task, images: cleaned.slice(0, 4) }),
-      signal: AbortSignal.timeout(12000),
+      signal: combineAbortSignals(timeout, signal),
     });
   } catch (err) {
+    if (signal?.aborted) {
+      throw err instanceof DOMException
+        ? err
+        : new DOMException("Aborted", "AbortError");
+    }
     if (
       err instanceof Error &&
       (err.name === "TimeoutError" || err.name === "AbortError")

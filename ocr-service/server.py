@@ -25,6 +25,7 @@ PORT = int(os.environ.get("GUILD_OCR_PORT", "8765"))
 MAX_IMAGE_BYTES = 6_000_000
 MAX_IMAGES = 4
 PADDLE_TIMEOUT_SEC = 6.0
+LEFTOVER_PADDLE_TIMEOUT_SEC = 2.5
 RECOGNIZE_DEADLINE_SEC = 8.0
 
 DATA_URL_RE = re.compile(
@@ -39,6 +40,7 @@ _models_error = ""
 _load_lock = threading.Lock()
 _paddle_lock = threading.Lock()
 _paddle_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="paddle")
+PADDLE_MAX_EDGE = 640
 
 
 def get_ocr() -> Any:
@@ -85,36 +87,6 @@ def decode_image(raw: str) -> Image.Image:
         raise ValueError("image too large")
     img = Image.open(io.BytesIO(blob))
     return img.convert("RGB")
-
-
-def prepare_variants(img: Image.Image) -> list[Image.Image]:
-    variants: list[Image.Image] = [img]
-    width, height = img.size
-    longest = max(width, height)
-    if longest < 900:
-        scale = 900 / longest
-        variants.append(
-            img.resize(
-                (max(1, int(width * scale)), max(1, int(height * scale))),
-                Image.Resampling.LANCZOS,
-            )
-        )
-    gray = img.convert("L")
-    pixels = list(gray.getdata())
-    mean = sum(pixels) / max(1, len(pixels))
-    if mean < 120:
-        inverted = ImageOps.invert(gray)
-        sharp = ImageEnhance.Contrast(inverted).enhance(2.2)
-        variants.append(sharp.convert("RGB"))
-        if longest < 1200:
-            scale = 1200 / max(longest, 1)
-            variants.append(
-                sharp.resize(
-                    (max(1, int(width * scale)), max(1, int(height * scale))),
-                    Image.Resampling.LANCZOS,
-                ).convert("RGB")
-            )
-    return variants[:3]
 
 
 def _box_top(box: Any) -> float:
@@ -188,7 +160,10 @@ def collect_from_ocr(result: Any) -> list[tuple[float, str, float]]:
     return rows
 
 
-def run_one(img: Image.Image) -> list[tuple[float, str, float]]:
+def run_one(
+    img: Image.Image,
+    timeout_sec: float = PADDLE_TIMEOUT_SEC,
+) -> tuple[list[tuple[float, str, float]], bool]:
     import numpy as np
 
     def _call() -> list[tuple[float, str, float]]:
@@ -207,23 +182,61 @@ def run_one(img: Image.Image) -> list[tuple[float, str, float]]:
 
     if not _paddle_lock.acquire(timeout=0.4):
         print("[guild-ocr] skip paddle, still busy", flush=True)
-        return []
+        return [], True
+
+    future = _paddle_pool.submit(_call)
     try:
-        return _paddle_pool.submit(_call).result(timeout=PADDLE_TIMEOUT_SEC)
+        result = future.result(timeout=timeout_sec)
     except FuturesTimeout:
         print("[guild-ocr] paddle timed out", flush=True)
-        return []
+
+        def _reap() -> None:
+            try:
+                future.result(timeout=120)
+            except Exception as exc:
+                print(f"[guild-ocr] paddle reap: {exc}", flush=True)
+            _paddle_lock.release()
+
+        threading.Thread(target=_reap, daemon=True, name="paddle-reap").start()
+        return [], True
     except Exception as exc:
         print(f"[guild-ocr] paddle failed: {exc}", flush=True)
-        return []
-    finally:
         _paddle_lock.release()
+        return [], False
+
+    _paddle_lock.release()
+    return result, False
 
 
 def _looks_like_name(text: str) -> bool:
     compact = re.sub(r"\s+", "", text)
     cjk = re.sub(r"[^\u4e00-\u9fff]", "", compact)
-    return len(cjk) >= 2
+    if len(cjk) >= 2:
+        return True
+    latin = re.sub(r"[^A-Za-z0-9]", "", compact)
+    return bool(re.fullmatch(r"[A-Za-z][A-Za-z0-9]{1,15}", latin))
+
+
+def crop_name_ink(img: Image.Image) -> Image.Image:
+    """Trim empty dark padding so leftover Paddle stays on the glyphs."""
+    import numpy as np
+
+    gray = np.array(img.convert("L"))
+    ink = gray >= 70
+    if float(ink.mean()) < 0.004:
+        return img
+    ys, xs = np.where(ink)
+    pad = 6
+    box = (
+        max(0, int(xs.min()) - pad),
+        max(0, int(ys.min()) - pad),
+        min(img.width, int(xs.max()) + 1 + pad),
+        min(img.height, int(ys.max()) + 1 + pad),
+    )
+    cropped = img.crop(box)
+    if cropped.width < 8 or cropped.height < 8:
+        return img
+    return cropped
 
 
 def _stack_bands(bands: list[Image.Image]) -> Image.Image:
@@ -240,14 +253,40 @@ def _stack_bands(bands: list[Image.Image]) -> Image.Image:
     return out
 
 
+def downscale_for_paddle(img: Image.Image) -> Image.Image:
+    width, height = img.size
+    longest = max(width, height)
+    if longest <= PADDLE_MAX_EDGE:
+        return img
+    scale = PADDLE_MAX_EDGE / longest
+    return img.resize(
+        (max(1, int(width * scale)), max(1, int(height * scale))),
+        Image.Resampling.BILINEAR,
+    )
+
+
+def leftover_paddle_attempts(img: Image.Image) -> list[Image.Image]:
+    """Ordinary leftover rows are tiny and dark. Invert once; never upscale."""
+    import numpy as np
+
+    fitted = downscale_for_paddle(crop_name_ink(img))
+    gray = fitted.convert("L")
+    mean = float(np.array(gray).mean())
+    if mean >= 120:
+        return [fitted]
+    inverted = ImageOps.invert(gray)
+    sharp = ImageEnhance.Contrast(inverted).enhance(2.2)
+    return [sharp.convert("RGB")]
+
+
 def run_paddle_for_text(img: Image.Image) -> list[tuple[float, str, float]]:
-    rows = run_one(img)
-    if any(_looks_like_name(text) for _y, text, _score in rows):
-        return rows
-    for variant in prepare_variants(img)[1:]:
-        extra = run_one(variant)
+    rows: list[tuple[float, str, float]] = []
+    for attempt in leftover_paddle_attempts(img):
+        extra, timed_out = run_one(attempt, timeout_sec=LEFTOVER_PADDLE_TIMEOUT_SEC)
         rows.extend(extra)
-        if any(_looks_like_name(text) for _y, text, _score in extra):
+        if timed_out:
+            break
+        if extra:
             break
     return rows
 
@@ -292,7 +331,6 @@ def recognize_images(images: list[str]) -> dict[str, Any]:
         ORNATE_FONT_SCORE,
         best_ornate_match,
         load_templates,
-        recognize_ornate_image,
         split_rows,
     )
 
@@ -305,18 +343,18 @@ def recognize_images(images: list[str]) -> dict[str, Any]:
         bands = split_rows(img) or [img]
         leftover: list[Image.Image] = []
         for band in bands:
-            found = recognize_ornate_image(band, templates)
-            if found:
-                ornate.extend(name for name, _score in found)
+            # One template pass per row. recognize_ornate_image would
+            # split + match, then leftover rows used to match again.
+            name, score = best_ornate_match(band, templates)
+            if name and score >= MIN_SCORE:
+                ornate.append(name)
                 continue
-            _name, score = best_ornate_match(band, templates)
             if score >= ORNATE_FONT_SCORE:
-                if _name and score >= MIN_SCORE:
-                    ornate.append(_name)
                 continue
             leftover.append(band)
         if leftover and time.time() < deadline:
-            rows.extend(run_paddle_for_text(_stack_bands(leftover)))
+            cropped = [crop_name_ink(band) for band in leftover]
+            rows.extend(run_paddle_for_text(_stack_bands(cropped)))
     paddle_lines = [
         line for line in merge_rows(rows) if not _paddle_redundant(line, ornate)
     ]
@@ -333,6 +371,27 @@ def recognize_images(images: list[str]) -> dict[str, Any]:
         "text": "\n".join(lines),
         "lines": lines,
         "engine": "paddleocr+ornate" if ornate else "paddleocr",
+    }
+
+
+def recognize_item_name_images(images: list[str]) -> dict[str, Any]:
+    """Auction tooltip titles are already cropped. Skip ornate roster matching."""
+    rows: list[tuple[float, str, float]] = []
+    deadline = time.time() + RECOGNIZE_DEADLINE_SEC
+    for raw in images[:1]:
+        if time.time() >= deadline:
+            break
+        img = decode_image(raw)
+        extra, timed_out = run_one(downscale_for_paddle(img))
+        rows.extend(extra)
+        if timed_out:
+            break
+    lines = merge_rows(rows)
+    return {
+        "ok": True,
+        "text": "\n".join(lines),
+        "lines": lines,
+        "engine": "paddleocr",
     }
 
 
@@ -370,7 +429,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, {"ok": False, "error": "not found"})
             return
         length = int(self.headers.get("Content-Length") or 0)
-        if length > 16_000_000:
+        if length > 3_000_000:
             self._send(413, {"ok": False, "error": "payload too large"})
             return
         try:
@@ -395,9 +454,13 @@ class Handler(BaseHTTPRequestHandler):
             return
         started = time.time()
         try:
-            result = recognize_images(images)
+            task = str(body.get("task") or "general")
+            if task == "auction_item_name":
+                result = recognize_item_name_images(images)
+            else:
+                result = recognize_images(images)
             result["ms"] = int((time.time() - started) * 1000)
-            result["task"] = str(body.get("task") or "general")
+            result["task"] = task
             self._send(200, result)
         except Exception as exc:
             self._send(500, {"ok": False, "error": f"ocr failed: {exc}"})

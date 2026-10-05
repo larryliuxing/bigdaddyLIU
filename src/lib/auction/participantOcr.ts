@@ -170,12 +170,12 @@ function cleanNameToken(raw: string) {
   return raw
     .replace(/\s+/g, "")
     .replace(/[|｜\[\]【】()（）<>《》·•.,，、。:：;；'"“”‘’\-_/\\=+~`!@#$%^&*]/g, "")
-    .replace(/[0-9A-Za-z]/g, "")
     .replace(GRADE_WORDS, "");
 }
 
 function isPlausibleName(name: string) {
   if (name.length < 2 || name.length > 16) return false;
+  if (/^[A-Za-z][A-Za-z0-9]{1,15}$/.test(name)) return true;
   if (!/^[\u4e00-\u9fff]+$/.test(name)) return false;
   if (GRADE_WORDS.test(name)) return false;
   // Reject obvious OCR junk fragments that are all the same char etc.
@@ -203,6 +203,8 @@ export function parseParticipantRowName(line: string): string | null {
   for (const run of runs) {
     if (isPlausibleName(run)) return run;
   }
+  const latin = raw.match(/[A-Za-z][A-Za-z0-9]{1,15}/);
+  if (latin && isPlausibleName(latin[0])) return latin[0];
   return null;
 }
 
@@ -227,6 +229,8 @@ export function namesFromOcrResult(text: string, lines: string[] = []): string[]
     push(cleaned);
     const runs = cleaned.match(/[\u4e00-\u9fff]{2,16}/g) || [];
     for (const run of runs) push(run);
+    const latin = cleaned.match(/[A-Za-z][A-Za-z0-9]{1,15}/g) || [];
+    for (const run of latin) push(run);
   }
 
   return names;
@@ -244,11 +248,14 @@ function scoreNames(names: string[]) {
   return names.length * 10 + avgLen * 3;
 }
 
-const OCR_DATA_URL_LIMIT = 2_800_000;
+const OCR_DATA_URL_LIMIT = 450_000;
 
 function canvasToOcrDataUrl(canvas: HTMLCanvasElement): string {
+  // PNG keeps 贚/豅 radicals on ornate names; JPEG only if the crop is huge.
   const png = canvas.toDataURL("image/png");
-  if (png.length < OCR_DATA_URL_LIMIT) return png;
+  if (png.length <= OCR_DATA_URL_LIMIT) return png;
+  const jpeg = canvas.toDataURL("image/jpeg", 0.82);
+  if (jpeg.length <= OCR_DATA_URL_LIMIT) return jpeg;
   let width = canvas.width;
   let height = canvas.height;
   while (width > 80 && height > 80) {
@@ -262,12 +269,10 @@ function canvasToOcrDataUrl(canvas: HTMLCanvasElement): string {
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "high";
     ctx.drawImage(canvas, 0, 0, width, height);
-    const jpeg = tmp.toDataURL("image/jpeg", 0.86);
-    if (jpeg.length < OCR_DATA_URL_LIMIT) return jpeg;
-    const next = tmp.toDataURL("image/png");
-    if (next.length < OCR_DATA_URL_LIMIT) return next;
+    const next = tmp.toDataURL("image/jpeg", 0.7);
+    if (next.length <= OCR_DATA_URL_LIMIT) return next;
   }
-  return canvas.toDataURL("image/jpeg", 0.7);
+  return canvas.toDataURL("image/jpeg", 0.55);
 }
 
 type Attempt = {
@@ -326,9 +331,8 @@ export async function recognizeParticipantNamesInRect(
 ): Promise<ParticipantOcrResult> {
   const img = await loadImage(source);
   const attempts = await runCrops(img, [rect], 1);
-  if (!attempts[0]?.names.length && img.height * rect.h < 280) {
-    attempts.push(...(await runCrops(img, [rect], 1.4)));
-  }
+  // Do not upscale small boxes. 1.4× LANCZOS blurs 鑨/贚 radicals and
+  // turns 鑨爖巄巃礲豅 into a different six-glyph string.
   return mergeAttempts(attempts);
 }
 
