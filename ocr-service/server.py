@@ -8,7 +8,10 @@ import json
 import os
 import re
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeout
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -19,8 +22,10 @@ from PIL import Image, ImageEnhance, ImageOps
 
 HOST = os.environ.get("GUILD_OCR_HOST", "127.0.0.1")
 PORT = int(os.environ.get("GUILD_OCR_PORT", "8765"))
-MAX_IMAGE_BYTES = 3_500_000
+MAX_IMAGE_BYTES = 6_000_000
 MAX_IMAGES = 4
+PADDLE_TIMEOUT_SEC = 6.0
+RECOGNIZE_DEADLINE_SEC = 8.0
 
 DATA_URL_RE = re.compile(
     r"^data:image/(png|jpeg|jpg|webp);base64,(.+)$",
@@ -29,6 +34,11 @@ DATA_URL_RE = re.compile(
 
 _ocr: Any = None
 _ocr_api = ""
+_models_ready = False
+_models_error = ""
+_load_lock = threading.Lock()
+_paddle_lock = threading.Lock()
+_paddle_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="paddle")
 
 
 def get_ocr() -> Any:
@@ -181,18 +191,65 @@ def collect_from_ocr(result: Any) -> list[tuple[float, str, float]]:
 def run_one(img: Image.Image) -> list[tuple[float, str, float]]:
     import numpy as np
 
-    ocr = get_ocr()
-    arr = np.array(img)
-    if _ocr_api == "predict" and hasattr(ocr, "predict"):
-        return collect_from_predict(ocr.predict(arr))
-    if hasattr(ocr, "ocr"):
-        try:
-            return collect_from_ocr(ocr.ocr(arr, cls=True))
-        except TypeError:
-            return collect_from_ocr(ocr.ocr(arr))
-    if hasattr(ocr, "predict"):
-        return collect_from_predict(ocr.predict(arr))
-    raise RuntimeError("unsupported PaddleOCR API")
+    def _call() -> list[tuple[float, str, float]]:
+        ocr = get_ocr()
+        arr = np.array(img)
+        if _ocr_api == "predict" and hasattr(ocr, "predict"):
+            return collect_from_predict(ocr.predict(arr))
+        if hasattr(ocr, "ocr"):
+            try:
+                return collect_from_ocr(ocr.ocr(arr, cls=True))
+            except TypeError:
+                return collect_from_ocr(ocr.ocr(arr))
+        if hasattr(ocr, "predict"):
+            return collect_from_predict(ocr.predict(arr))
+        raise RuntimeError("unsupported PaddleOCR API")
+
+    if not _paddle_lock.acquire(timeout=0.4):
+        print("[guild-ocr] skip paddle, still busy", flush=True)
+        return []
+    try:
+        return _paddle_pool.submit(_call).result(timeout=PADDLE_TIMEOUT_SEC)
+    except FuturesTimeout:
+        print("[guild-ocr] paddle timed out", flush=True)
+        return []
+    except Exception as exc:
+        print(f"[guild-ocr] paddle failed: {exc}", flush=True)
+        return []
+    finally:
+        _paddle_lock.release()
+
+
+def _looks_like_name(text: str) -> bool:
+    compact = re.sub(r"\s+", "", text)
+    cjk = re.sub(r"[^\u4e00-\u9fff]", "", compact)
+    return len(cjk) >= 2
+
+
+def _stack_bands(bands: list[Image.Image]) -> Image.Image:
+    if len(bands) == 1:
+        return bands[0]
+    width = max(band.width for band in bands)
+    gap = 8
+    height = sum(band.height for band in bands) + gap * (len(bands) - 1)
+    out = Image.new("RGB", (width, height), (11, 15, 19))
+    y = 0
+    for band in bands:
+        out.paste(band, (0, y))
+        y += band.height + gap
+    return out
+
+
+def run_paddle_for_text(img: Image.Image) -> list[tuple[float, str, float]]:
+    rows = run_one(img)
+    if any(_looks_like_name(text) for _y, text, _score in rows):
+        return rows
+    for variant in prepare_variants(img)[1:]:
+        extra = run_one(variant)
+        rows.extend(extra)
+        if any(_looks_like_name(text) for _y, text, _score in extra):
+            break
+    return rows
 
 
 def merge_rows(rows: list[tuple[float, str, float]]) -> list[str]:
@@ -208,19 +265,69 @@ def merge_rows(rows: list[tuple[float, str, float]]) -> list[str]:
     return lines
 
 
-def recognize_images(images: list[str]) -> dict[str, Any]:
-    from ornate_names import recognize_ornate_image
+def _norm_line(text: str) -> str:
+    return re.sub(r"\s+", "", text)
 
+
+def _paddle_redundant(text: str, ornate: list[str]) -> bool:
+    key = _norm_line(text)
+    if not key:
+        return True
+    for name in ornate:
+        other = _norm_line(name)
+        if not other:
+            continue
+        if key == other or key in other or other in key:
+            return True
+        if len(key) >= 4 and len(other) >= 4:
+            shared = sum(1 for ch in key if ch in other)
+            if shared / max(len(key), len(other)) >= 0.5:
+                return True
+    return False
+
+
+def recognize_images(images: list[str]) -> dict[str, Any]:
+    from ornate_names import (
+        MIN_SCORE,
+        ORNATE_FONT_SCORE,
+        best_ornate_match,
+        load_templates,
+        recognize_ornate_image,
+        split_rows,
+    )
+
+    templates = load_templates()
     ornate: list[str] = []
     rows: list[tuple[float, str, float]] = []
+    deadline = time.time() + RECOGNIZE_DEADLINE_SEC
     for raw in images[:MAX_IMAGES]:
         img = decode_image(raw)
-        ornate.extend(name for name, _score in recognize_ornate_image(img))
-        if ornate:
+        bands = split_rows(img) or [img]
+        leftover: list[Image.Image] = []
+        for band in bands:
+            found = recognize_ornate_image(band, templates)
+            if found:
+                ornate.extend(name for name, _score in found)
+                continue
+            _name, score = best_ornate_match(band, templates)
+            if score >= ORNATE_FONT_SCORE:
+                if _name and score >= MIN_SCORE:
+                    ornate.append(_name)
+                continue
+            leftover.append(band)
+        if leftover and time.time() < deadline:
+            rows.extend(run_paddle_for_text(_stack_bands(leftover)))
+    paddle_lines = [
+        line for line in merge_rows(rows) if not _paddle_redundant(line, ornate)
+    ]
+    seen: set[str] = set()
+    lines: list[str] = []
+    for text in ornate + paddle_lines:
+        key = _norm_line(text)
+        if not key or key in seen:
             continue
-        for variant in prepare_variants(img):
-            rows.extend(run_one(variant))
-    lines = ornate or merge_rows(rows)
+        seen.add(key)
+        lines.append(text)
     return {
         "ok": True,
         "text": "\n".join(lines),
@@ -246,7 +353,13 @@ class Handler(BaseHTTPRequestHandler):
         if path in {"/health", "/ocr/health"}:
             self._send(
                 200,
-                {"ok": True, "service": "guild-ocr", "engine": "paddleocr"},
+                {
+                    "ok": True,
+                    "service": "guild-ocr",
+                    "engine": "paddleocr",
+                    "ready": _models_ready,
+                    "error": _models_error or None,
+                },
             )
             return
         self._send(404, {"ok": False, "error": "not found"})
@@ -274,6 +387,12 @@ class Handler(BaseHTTPRequestHandler):
         if not images:
             self._send(400, {"ok": False, "error": "missing image"})
             return
+        if _models_error:
+            self._send(503, {"ok": False, "error": f"识别模型加载失败：{_models_error}"})
+            return
+        if not _models_ready:
+            self._send(503, {"ok": False, "error": "识别模型加载中，请稍等再试"})
+            return
         started = time.time()
         try:
             result = recognize_images(images)
@@ -284,9 +403,24 @@ class Handler(BaseHTTPRequestHandler):
             self._send(500, {"ok": False, "error": f"ocr failed: {exc}"})
 
 
+def _load_models() -> None:
+    global _models_ready, _models_error
+    with _load_lock:
+        if _models_ready or _models_error:
+            return
+        print("[guild-ocr] loading PaddleOCR models…", flush=True)
+        try:
+            get_ocr()
+            run_one(Image.new("RGB", (96, 32), (20, 24, 28)))
+            _models_ready = True
+            print("[guild-ocr] models ready", flush=True)
+        except Exception as exc:
+            _models_error = str(exc)
+            print(f"[guild-ocr] model load failed: {exc}", flush=True)
+
+
 def main() -> None:
-    print("[guild-ocr] loading PaddleOCR models…", flush=True)
-    get_ocr()
+    threading.Thread(target=_load_models, name="ocr-load", daemon=True).start()
     print(f"[guild-ocr] listening on http://{HOST}:{PORT}", flush=True)
     ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
 

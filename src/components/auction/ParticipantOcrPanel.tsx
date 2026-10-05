@@ -193,8 +193,15 @@ export function ParticipantOcrPanel({
       setStatus(
         `识别到 ${paired.hits.length} 个名字，其中 ${matchedCount} 个已匹配盟成员。对的按确定，不对可重选或手动选择。`,
       );
-    } catch {
-      setStatus("识别失败，请重新拉框或改从左侧名单点选");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "";
+      setStatus(
+        message.includes("超时")
+          ? `${message}`
+          : message.includes("未启动") || message.includes("失败") || message.includes("连不上")
+            ? `${message}。请确认本机识别服务已启动，或改从左侧名单点选。`
+            : "识别失败，请重新拉框或改从左侧名单点选",
+      );
     } finally {
       setRecognizing(false);
     }
@@ -289,7 +296,7 @@ export function ParticipantOcrPanel({
         className="rounded-lg border border-dashed border-[rgba(255,255,255,0.15)] px-3 py-3 outline-none focus:border-[rgba(123,108,255,0.5)]"
       >
         <p className="text-xs leading-relaxed text-[var(--text-muted)]">
-          粘贴游戏「参与者」截图后，自己拖框圈出名称列。每个人名会对上盟成员，核对后再加入分红。
+          粘贴游戏「参与者」截图后，自己拖框圈出名称列。花体六字名按字模识别，并匹配成员名里的前缀（如六字-灰豆）。对的按确定，不对可重选。
         </p>
         <div className="mt-2 flex flex-wrap items-center gap-2">
           <label className="btn-ghost cursor-pointer text-xs">

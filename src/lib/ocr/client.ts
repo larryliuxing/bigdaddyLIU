@@ -30,16 +30,31 @@ export async function recognizeWithPaddle(
     (v): v is string => Boolean(v && v.startsWith("data:image/")),
   );
   if (!cleaned.length) return { text: "", lines: [] };
-  const res = await fetch("/api/ocr/recognize", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ task, images: cleaned.slice(0, 4) }),
-  });
-  if (!res.ok) return { text: "", lines: [] };
+  let res: Response;
+  try {
+    res = await fetch("/api/ocr/recognize", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ task, images: cleaned.slice(0, 4) }),
+      signal: AbortSignal.timeout(12000),
+    });
+  } catch (err) {
+    if (
+      err instanceof Error &&
+      (err.name === "TimeoutError" || err.name === "AbortError")
+    ) {
+      throw new Error("识别超时。请把框再缩小一点后重试，或改从左侧名单点选");
+    }
+    throw err;
+  }
   const data = (await res.json().catch(() => ({}))) as {
     text?: string;
     lines?: unknown;
+    error?: string;
   };
+  if (!res.ok) {
+    throw new Error(data.error || "识别服务失败");
+  }
   const lines = Array.isArray(data.lines)
     ? data.lines.map((line) => String(line || "").trim()).filter(Boolean)
     : [];

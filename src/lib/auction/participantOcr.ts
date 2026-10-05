@@ -175,7 +175,7 @@ function cleanNameToken(raw: string) {
 }
 
 function isPlausibleName(name: string) {
-  if (name.length < 2 || name.length > 12) return false;
+  if (name.length < 2 || name.length > 16) return false;
   if (!/^[\u4e00-\u9fff]+$/.test(name)) return false;
   if (GRADE_WORDS.test(name)) return false;
   // Reject obvious OCR junk fragments that are all the same char etc.
@@ -206,26 +206,34 @@ export function parseParticipantRowName(line: string): string | null {
   return null;
 }
 
-function extractNameCandidates(text: string): string[] {
+export function namesFromOcrResult(text: string, lines: string[] = []): string[] {
   const names: string[] = [];
   const push = (n: string | null) => {
     if (!n || !isPlausibleName(n)) return;
     if (!names.includes(n)) names.push(n);
   };
 
+  for (const line of lines) {
+    push(parseParticipantRowName(line));
+    push(cleanNameToken(line));
+  }
+
   for (const line of text.split(/\n+/)) {
     push(parseParticipantRowName(line));
   }
 
-  // Also accept cleaned whole-line tokens (name-column-only OCR)
   for (const line of text.split(/\n+/)) {
     const cleaned = cleanNameToken(line);
     push(cleaned);
-    const runs = cleaned.match(/[\u4e00-\u9fff]{2,12}/g) || [];
+    const runs = cleaned.match(/[\u4e00-\u9fff]{2,16}/g) || [];
     for (const run of runs) push(run);
   }
 
   return names;
+}
+
+function extractNameCandidates(text: string): string[] {
+  return namesFromOcrResult(text);
 }
 
 function scoreNames(names: string[]) {
@@ -236,9 +244,30 @@ function scoreNames(names: string[]) {
   return names.length * 10 + avgLen * 3;
 }
 
-async function recognizePasses(...dataUrls: string[]) {
-  const result = await recognizeWithPaddle(dataUrls, "participant_names");
-  return [result.text, ...result.lines].filter(Boolean);
+const OCR_DATA_URL_LIMIT = 2_800_000;
+
+function canvasToOcrDataUrl(canvas: HTMLCanvasElement): string {
+  const png = canvas.toDataURL("image/png");
+  if (png.length < OCR_DATA_URL_LIMIT) return png;
+  let width = canvas.width;
+  let height = canvas.height;
+  while (width > 80 && height > 80) {
+    width = Math.max(80, Math.round(width * 0.75));
+    height = Math.max(80, Math.round(height * 0.75));
+    const tmp = document.createElement("canvas");
+    tmp.width = width;
+    tmp.height = height;
+    const ctx = tmp.getContext("2d");
+    if (!ctx) break;
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(canvas, 0, 0, width, height);
+    const jpeg = tmp.toDataURL("image/jpeg", 0.86);
+    if (jpeg.length < OCR_DATA_URL_LIMIT) return jpeg;
+    const next = tmp.toDataURL("image/png");
+    if (next.length < OCR_DATA_URL_LIMIT) return next;
+  }
+  return canvas.toDataURL("image/jpeg", 0.7);
 }
 
 type Attempt = {
@@ -256,15 +285,13 @@ async function runCrops(
   const attempts: Attempt[] = [];
   for (const rect of crops) {
     const crop = cropRatio(img, rect, scale);
-    const enhanced = enhanceNameColumn(crop);
-    const dataUrl = enhanced.toDataURL("image/png");
-    const texts = await recognizePasses(crop.toDataURL("image/png"), dataUrl);
-    const mergedText = texts.join("\n");
-    const names = extractNameCandidates(mergedText);
+    const payload = canvasToOcrDataUrl(crop);
+    const result = await recognizeWithPaddle([payload], "participant_names");
+    const names = namesFromOcrResult(result.text, result.lines);
     attempts.push({
       names,
-      text: mergedText,
-      preview: dataUrl,
+      text: result.text || result.lines.join("\n"),
+      preview: payload,
       score: scoreNames(names),
     });
   }
@@ -298,10 +325,10 @@ export async function recognizeParticipantNamesInRect(
   rect: RatioRect,
 ): Promise<ParticipantOcrResult> {
   const img = await loadImage(source);
-  const attempts = [
-    ...(await runCrops(img, [rect], 3)),
-    ...(await runCrops(img, [rect], 2.4)),
-  ];
+  const attempts = await runCrops(img, [rect], 1);
+  if (!attempts[0]?.names.length && img.height * rect.h < 280) {
+    attempts.push(...(await runCrops(img, [rect], 1.4)));
+  }
   return mergeAttempts(attempts);
 }
 
@@ -314,8 +341,8 @@ export async function recognizeParticipantNames(
   const img = await loadImage(source);
 
   const attempts = [
-    ...(await runCrops(img, NAME_COLUMN_CROPS, 3)),
-    ...(await runCrops(img, TABLE_BODY_CROPS, 2.4)),
+    ...(await runCrops(img, NAME_COLUMN_CROPS, 1)),
+    ...(await runCrops(img, TABLE_BODY_CROPS, 1)),
   ];
 
   attempts.sort((a, b) => b.score - a.score);
