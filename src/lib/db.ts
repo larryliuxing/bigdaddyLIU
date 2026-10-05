@@ -72,6 +72,7 @@ export function ensureDb(): Database.Database {
 
   db = new Database(dbPath);
   db.pragma("journal_mode = WAL");
+  db.pragma("busy_timeout = 5000");
   db.exec(`
     CREATE TABLE IF NOT EXISTS members (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1830,37 +1831,40 @@ export function createAuctionItem(input: {
   const startPrice = pink ? (bidMin ?? input.startPrice) : input.startPrice;
   const imageData = sanitizeAuctionItemImage(input.imageData);
   const hasImage = Boolean(imageData && imageData.length > 32);
+  const dividendIds = [
+    ...new Set(input.dividendMemberIds.map(Number).filter((id) => id > 0)),
+  ];
 
-  const result = database
-    .prepare(
-      `INSERT INTO auction_items
-       (session_id, name, quality, start_price, bid_increment, image_data, has_image, sort_order, current_price, bid_min, bid_max)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
-      input.sessionId,
-      input.name.trim(),
-      input.quality,
-      startPrice,
-      input.bidIncrement,
-      imageData,
-      hasImage ? 1 : 0,
-      maxOrder.max_order + 1,
-      startPrice,
-      bidMin,
-      bidMax,
-    );
-
-  const itemId = Number(result.lastInsertRowid);
   const insertDiv = database.prepare(
-    `INSERT INTO auction_item_dividends (item_id, member_id) VALUES (?, ?)`,
+    `INSERT OR IGNORE INTO auction_item_dividends (item_id, member_id) VALUES (?, ?)`,
   );
-  const tx = database.transaction((ids: number[]) => {
-    for (const memberId of ids) {
-      insertDiv.run(itemId, memberId);
+  const itemId = database.transaction(() => {
+    const result = database
+      .prepare(
+        `INSERT INTO auction_items
+         (session_id, name, quality, start_price, bid_increment, image_data, has_image, sort_order, current_price, bid_min, bid_max)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.sessionId,
+        input.name.trim(),
+        input.quality,
+        startPrice,
+        input.bidIncrement,
+        imageData,
+        hasImage ? 1 : 0,
+        maxOrder.max_order + 1,
+        startPrice,
+        bidMin,
+        bidMax,
+      );
+    const id = Number(result.lastInsertRowid);
+    for (const memberId of dividendIds) {
+      if (!getMemberById(memberId)) continue;
+      insertDiv.run(id, memberId);
     }
-  });
-  tx(input.dividendMemberIds);
+    return id;
+  })();
 
   upsertItemCatalog({
     name: input.name,
@@ -1871,7 +1875,7 @@ export function createAuctionItem(input: {
     bidMax,
   });
 
-  return getItemById(itemId)!;
+  return getItemById(itemId, { includeImages: false })!;
 }
 
 export function updateAuctionItem(input: {

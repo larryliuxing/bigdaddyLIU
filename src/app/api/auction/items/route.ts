@@ -150,22 +150,26 @@ export async function POST(request: Request) {
     );
   }
 
-  const item = createAuctionItem({
-    sessionId: session.id,
-    name,
-    quality,
-    startPrice,
-    bidIncrement,
-    imageData,
-    dividendMemberIds,
-    bidMin: isPinkAuction(quality) ? bidMin : null,
-    bidMax: isPinkAuction(quality) ? bidMax : null,
-  });
-
-  return NextResponse.json(
-    { item, room: buildRoomState(session.id, { lite: true }) },
-    { status: 201 },
-  );
+  try {
+    const item = createAuctionItem({
+      sessionId: session.id,
+      name,
+      quality,
+      startPrice,
+      bidIncrement,
+      imageData,
+      dividendMemberIds,
+      bidMin: isPinkAuction(quality) ? bidMin : null,
+      bidMax: isPinkAuction(quality) ? bidMax : null,
+    });
+    return NextResponse.json({ item }, { status: 201 });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "添加失败";
+    return NextResponse.json(
+      { error: message.includes("UNIQUE") ? "分红成员重复，请刷新后重试" : "添加拍品失败" },
+      { status: 500 },
+    );
+  }
 }
 
 export async function PATCH(request: Request) {

@@ -161,6 +161,7 @@ export function AddAuctionItemForm({
           imageData: uploadImage,
           dividendMemberIds: selectedIds,
         }),
+        signal: AbortSignal.timeout(12000),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -181,8 +182,15 @@ export function AddAuctionItemForm({
       setPriceStatsLoading(false);
       setCatalogItems([]);
       onCreated();
-    } catch {
-      setError("网络错误");
+    } catch (err) {
+      const timedOut =
+        err instanceof Error &&
+        (err.name === "TimeoutError" || err.name === "AbortError");
+      setError(
+        timedOut
+          ? "添加超时。请去掉拍品图片后重试，或换一张更小的装备截图"
+          : "网络错误",
+      );
     } finally {
       setLoading(false);
     }

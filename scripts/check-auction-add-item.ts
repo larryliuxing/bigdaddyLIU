@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   MAX_AUCTION_ITEM_POST_BYTES,
+  needsAuctionItemImageCompress,
   readJsonBodyCapped,
   sanitizeAuctionItemImage,
 } from "../src/lib/auction/itemImage";
@@ -98,6 +99,37 @@ async function main() {
     }
     assert.equal((okParsed.body as { name: string }).name, "正常装");
     assert.ok(MAX_AUCTION_ITEM_POST_BYTES >= 1_000_000);
+
+    const jpegKeep = `data:image/jpeg;base64,${"C".repeat(200_000)}`;
+    assert.equal(needsAuctionItemImageCompress(jpegKeep), false);
+    const pngRecompress = `data:image/png;base64,${"D".repeat(200_000)}`;
+    assert.equal(needsAuctionItemImageCompress(pngRecompress), true);
+
+    const fourteen = Array.from({ length: 14 }, (_, i) =>
+      db.createMember(`分红${i + 1}`),
+    );
+    const dupIds = fourteen.flatMap((m) => [m.id, m.id]);
+    dupIds.push(999999);
+    const started14 = Date.now();
+    const with14 = db.createAuctionItem({
+      sessionId: session.id,
+      name: "青铜板甲",
+      quality: "purple",
+      startPrice: 10,
+      bidIncrement: 1,
+      imageData: jpegKeep,
+      dividendMemberIds: dupIds,
+    });
+    const elapsed14 = Date.now() - started14;
+    assert.equal(with14.hasImage, true);
+    assert.equal(with14.imageData, null);
+    assert.equal(with14.dividendMemberIds.length, 14);
+    assert.ok(
+      elapsed14 < 800,
+      `14-member add blocked the process for ${elapsed14}ms`,
+    );
+    const payload14 = JSON.stringify({ item: with14 });
+    assert.equal(payload14.includes("data:image"), false);
   } finally {
     process.chdir(originalCwd);
     fs.rmSync(tempDir, { recursive: true, force: true });

@@ -2,11 +2,11 @@
 
 import {
   MAX_AUCTION_ITEM_IMAGE_CHARS,
+  needsAuctionItemImageCompress,
   sanitizeAuctionItemImage,
 } from "./itemImage";
 
 const MAX_EDGE = 1280;
-const KEEP_AS_IS_CHARS = 80_000;
 
 function loadImage(dataUrl: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
@@ -27,7 +27,9 @@ export async function compressAuctionItemImage(
 ): Promise<string | null> {
   const raw = typeof dataUrl === "string" ? dataUrl.trim() : "";
   if (!raw.startsWith("data:image/")) return null;
-  if (raw.length <= KEEP_AS_IS_CHARS) return raw;
+  if (!needsAuctionItemImageCompress(raw)) {
+    return sanitizeAuctionItemImage(raw);
+  }
 
   try {
     const img = await loadImage(raw);

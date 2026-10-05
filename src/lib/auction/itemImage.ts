@@ -1,8 +1,26 @@
 /** Hard cap for stored auction-item screenshots (data-URL chars). */
 export const MAX_AUCTION_ITEM_IMAGE_CHARS = 450_000;
 
+/** Tiny images skip canvas work entirely. */
+export const KEEP_AUCTION_ITEM_IMAGE_CHARS = 80_000;
+
 /** Reject add-item JSON bodies before they freeze the Node event loop. */
 export const MAX_AUCTION_ITEM_POST_BYTES = 2_000_000;
+
+/** Paste already JPEG-compresses. Re-encoding on submit freezes the tab. */
+export function needsAuctionItemImageCompress(imageData: unknown): boolean {
+  if (typeof imageData !== "string") return false;
+  const trimmed = imageData.trim();
+  if (!trimmed.startsWith("data:image/") || trimmed.length < 32) return false;
+  if (trimmed.length <= KEEP_AUCTION_ITEM_IMAGE_CHARS) return false;
+  if (
+    trimmed.length <= MAX_AUCTION_ITEM_IMAGE_CHARS &&
+    /^data:image\/jpe?g/i.test(trimmed)
+  ) {
+    return false;
+  }
+  return true;
+}
 
 export function sanitizeAuctionItemImage(
   imageData: unknown,
