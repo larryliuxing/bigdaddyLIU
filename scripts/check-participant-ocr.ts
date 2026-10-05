@@ -97,6 +97,27 @@ assert.equal(hyphenPaired.hits[1].member?.id, 22);
 assert.equal(hyphenPaired.hits[2].member?.id, 24);
 assert.deepEqual(hyphenPaired.unrecognized, []);
 
+const name4 = "\u9468\u8d1a\u8d1a\u8c45\u7216\u5dc3";
+const name2 = "\u9468\u8c45\u8d1a\u9468\u8d1a\u5dc4";
+assert.equal(scoreNameMatch(name4, `${name4}-\u7070\u8c46`) > 90, true);
+assert.equal(scoreNameMatch(name4, `${name2}-\u60ca\u7075`), 0);
+assert.equal(findBestMemberForOcrName(name4, [{ id: 41, name: `${name2}-\u60ca\u7075` }]), null);
+assert.equal(
+  findBestMemberForOcrName(name4, [{ id: 42, name: `${name4}-\u59d0\u59d0` }])?.id,
+  42,
+);
+const sameOrnatePrefix = [
+  { id: 43, name: `${name4}-\u7070\u8c46` },
+  { id: 44, name: `${name4}-\u8001\u5b50` },
+];
+assert.equal(findBestMemberForOcrName(name4, sameOrnatePrefix), null);
+
+const nameMix = "\u9468\u9f93\u9468\u9f93\u8d1a\u7216";
+const nameOther = "\u8d1a\u9468\u7216\u9468\u9f93\u7216";
+const grayBean = `${nameMix}-\u7070\u8c46`;
+assert.equal(scoreNameMatch(nameOther, grayBean), 0);
+assert.equal(findBestMemberForOcrName(nameOther, [{ id: 31, name: grayBean }]), null);
+
 const pasteLines = [
   name1,
   name7,

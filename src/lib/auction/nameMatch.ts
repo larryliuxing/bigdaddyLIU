@@ -77,6 +77,10 @@ export function isNearName(token: string, name: string) {
   return ratio >= 0.6;
 }
 
+function isOrnateSix(text: string) {
+  return text.length === 6 && /^[\u4e00-\u9fff]{6}$/.test(text);
+}
+
 export function scoreNameMatch(ocrName: string, memberName: string): number {
   const token = compactName(ocrName).replace(NAME_SEP_ALL, "");
   const { prefix, nickname, compact, parts } = splitRosterName(memberName);
@@ -93,6 +97,9 @@ export function scoreNameMatch(ocrName: string, memberName: string): number {
   // Game screenshots only show the ornate 6-glyph prefix.
   if (token === prefix && prefix.length >= 2) return 94;
   if (token === nickname && nickname.length >= 2) return 88;
+  // Six-glyph names share gold-radical characters. Bag-of-chars overlap
+  // would pair 鑨贚贚豅爖巃 with 鑨豅贚鑨贚巄. Require an exact prefix.
+  if (isOrnateSix(token) && isOrnateSix(prefix)) return 0;
   if (
     prefix.length >= 4 &&
     token.length >= 4 &&
@@ -123,13 +130,18 @@ export function findBestMemberForOcrName<T extends Named>(
   if (token.length < 2) return null;
   let best: T | null = null;
   let bestScore = 0;
+  let tied = false;
   for (const member of members) {
     const score = scoreNameMatch(token, member.name);
     if (score > bestScore) {
       bestScore = score;
       best = member;
+      tied = false;
+    } else if (score > 0 && score === bestScore) {
+      tied = true;
     }
   }
+  if (tied) return null;
   return bestScore > 0 ? best : null;
 }
 

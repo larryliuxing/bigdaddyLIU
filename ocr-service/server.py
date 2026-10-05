@@ -331,7 +331,6 @@ def recognize_images(images: list[str]) -> dict[str, Any]:
         ORNATE_FONT_SCORE,
         best_ornate_match,
         load_templates,
-        recognize_ornate_image,
         split_rows,
     )
 
@@ -344,14 +343,13 @@ def recognize_images(images: list[str]) -> dict[str, Any]:
         bands = split_rows(img) or [img]
         leftover: list[Image.Image] = []
         for band in bands:
-            found = recognize_ornate_image(band, templates)
-            if found:
-                ornate.extend(name for name, _score in found)
+            # One template pass per row. recognize_ornate_image would
+            # split + match, then leftover rows used to match again.
+            name, score = best_ornate_match(band, templates)
+            if name and score >= MIN_SCORE:
+                ornate.append(name)
                 continue
-            _name, score = best_ornate_match(band, templates)
             if score >= ORNATE_FONT_SCORE:
-                if _name and score >= MIN_SCORE:
-                    ornate.append(_name)
                 continue
             leftover.append(band)
         if leftover and time.time() < deadline:

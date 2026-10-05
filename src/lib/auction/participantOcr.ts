@@ -251,6 +251,9 @@ function scoreNames(names: string[]) {
 const OCR_DATA_URL_LIMIT = 450_000;
 
 function canvasToOcrDataUrl(canvas: HTMLCanvasElement): string {
+  // PNG keeps 贚/豅 radicals on ornate names; JPEG only if the crop is huge.
+  const png = canvas.toDataURL("image/png");
+  if (png.length <= OCR_DATA_URL_LIMIT) return png;
   const jpeg = canvas.toDataURL("image/jpeg", 0.82);
   if (jpeg.length <= OCR_DATA_URL_LIMIT) return jpeg;
   let width = canvas.width;

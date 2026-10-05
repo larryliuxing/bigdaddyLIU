@@ -35,6 +35,7 @@ SEED_LABELS = {
     "name-3.png": list(NAME_3),
     "name-4.png": list(NAME_4),
     "name-4b.png": list(NAME_4),
+    "name-4c.png": list(NAME_4),
     "name-5.png": list(NAME_5),
     "name-6.png": list(NAME_6),
     "name-7.png": list(NAME_7),
@@ -353,9 +354,17 @@ def best_ornate_match(
         return "", 0.0
     best_name = ""
     best_key = (-1.0, -1.0)
-    candidates = [split_glyphs(row, expected=6)]
-    candidates.extend(_split_candidates(row))
-    for glyphs in candidates:
+    glyphs = split_glyphs(row, expected=6)
+    if len(glyphs) == 6:
+        name, score, parts = match_glyphs(glyphs, templates)
+        best_key = (score, min(parts) if parts else -1.0)
+        best_name = name
+        # Default 6-split is already ornate, or clearly ordinary CJK.
+        # Skip the ±3px offset search — that is what made 鑨贚贚豅爖巃
+        # (and leftover rows next to it) feel expensive on mixed lists.
+        if score >= MIN_SCORE or score < ORNATE_FONT_SCORE - 0.04:
+            return best_name, float(score)
+    for glyphs in _split_candidates(row):
         if len(glyphs) != 6:
             continue
         name, score, parts = match_glyphs(glyphs, templates)
@@ -363,7 +372,7 @@ def best_ornate_match(
         if key > best_key:
             best_key = key
             best_name = name
-    return best_name, float(best_key[0])
+    return best_name, float(max(0.0, best_key[0]))
 
 
 def looks_like_ornate_font(
