@@ -32,6 +32,8 @@ import {
 } from "./AuctionItemImage";
 import { ItemPriceStatsLine } from "./ItemPriceStatsLine";
 import { mergeAuctionRoom } from "@/lib/auction/mergeRoom";
+import { ParticipantOcrPanel } from "./ParticipantOcrPanel";
+import { LockIcon } from "@/components/Icons";
 
 function statusTone(status: AuctionSessionSummary["status"]) {
   if (status === "live") return "bg-emerald-500/15 text-emerald-300";
@@ -98,6 +100,12 @@ export function AuctionManagePanel({
   const [editBidIncrement, setEditBidIncrement] = useState(5);
   const [editBidMin, setEditBidMin] = useState(10);
   const [editBidMax, setEditBidMax] = useState(100);
+  const [editMemberIds, setEditMemberIds] = useState<number[]>([]);
+  const [editMemberQuery, setEditMemberQuery] = useState("");
+  const [editMemberTab, setEditMemberTab] = useState<"members" | "ocr">(
+    "members",
+  );
+  const [editOcrNonce, setEditOcrNonce] = useState(0);
 
   const syncEditFields = useCallback((nextRoom: AuctionRoomState | null) => {
     const session = nextRoom?.session;
@@ -322,8 +330,18 @@ export function AuctionManagePanel({
     setEditBidIncrement(item.bidIncrement);
     setEditBidMin(item.bidMin ?? item.startPrice);
     setEditBidMax(item.bidMax ?? 100);
+    setEditMemberIds(item.dividendMemberIds ?? []);
+    setEditMemberQuery("");
+    setEditMemberTab("members");
+    setEditOcrNonce((n) => n + 1);
     setError("");
     setMessage("");
+  }
+
+  function toggleEditMember(id: number) {
+    setEditMemberIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    );
   }
 
   async function saveEditItem(id: number) {
@@ -342,6 +360,7 @@ export function AuctionManagePanel({
           bidIncrement: isPinkAuction(editQuality) ? 1 : editBidIncrement,
           bidMin: isPinkAuction(editQuality) ? editBidMin : null,
           bidMax: isPinkAuction(editQuality) ? editBidMax : null,
+          dividendMemberIds: editMemberIds,
         }),
       });
       const data = await res.json();
@@ -438,6 +457,14 @@ export function AuctionManagePanel({
   const session = room?.session;
   const items: AuctionItem[] = room?.items ?? [];
   const editable = session ? isSessionEditable(session.status) : false;
+  const editRoster = initialMembers.filter((m) => m.status !== "exited");
+  const editMemberQ = editMemberQuery.trim();
+  const editVisibleRoster = editMemberQ
+    ? editRoster.filter((m) => m.name.includes(editMemberQ))
+    : editRoster;
+  const editSelectedMembers = editRoster.filter((m) =>
+    editMemberIds.includes(m.id),
+  );
 
   return (
     <div className="app-shell">
@@ -852,6 +879,17 @@ export function AuctionManagePanel({
                                   ? ` · 本件剩余 ${formatCountdown(item.remainingSeconds)}`
                                   : ""}
                               </span>
+                              {(item.dividendMemberIds?.length ?? 0) > 0 && (
+                                <LotPriceChip
+                                  clickable={canEdit}
+                                  onClick={() => beginEditItem(item)}
+                                >
+                                  {isPinkAuction(item.quality) ||
+                                  isOrdinaryPinkAuction(item.quality)
+                                    ? `参与者 ${item.dividendMemberIds.length} 人`
+                                    : `分红 ${item.dividendMemberIds.length} 人`}
+                                </LotPriceChip>
+                              )}
                             </div>
                             <ItemPriceStatsLine
                               stats={item.priceStats}
@@ -976,6 +1014,114 @@ export function AuctionManagePanel({
                               </label>
                             </>
                           )}
+                          <div className="grid gap-3 sm:col-span-2 lg:grid-cols-[1.4fr_1fr]">
+                            <div className="rounded-xl border border-[var(--border-soft)] bg-[#121826] p-3">
+                              <div className="mb-2 flex flex-wrap items-center gap-2">
+                                <button
+                                  type="button"
+                                  className={`rounded-lg px-3 py-1.5 text-xs ${editMemberTab === "members" ? "bg-[#2a3350] text-white" : "text-[var(--text-muted)]"}`}
+                                  onClick={() => setEditMemberTab("members")}
+                                >
+                                  {isPinkAuction(editQuality) ||
+                                  isOrdinaryPinkAuction(editQuality)
+                                    ? `参与者名单 (${editRoster.length})`
+                                    : `分红成员 (${editRoster.length})`}
+                                </button>
+                                <button
+                                  type="button"
+                                  className={`rounded-lg px-3 py-1.5 text-xs ${editMemberTab === "ocr" ? "bg-[#2a3350] text-white" : "text-[var(--text-muted)]"}`}
+                                  onClick={() => setEditMemberTab("ocr")}
+                                >
+                                  粘贴图片识别
+                                </button>
+                              </div>
+                              {editMemberTab === "members" ? (
+                                <div className="space-y-2">
+                                  <input
+                                    className="field !py-2 text-sm"
+                                    value={editMemberQuery}
+                                    onChange={(e) =>
+                                      setEditMemberQuery(e.target.value)
+                                    }
+                                    placeholder="搜索名字"
+                                  />
+                                  <div className="flex max-h-40 flex-wrap gap-2 overflow-y-auto">
+                                    {editVisibleRoster.length === 0 ? (
+                                      <p className="text-sm text-[var(--text-muted)]">
+                                        没有叫这个名字的成员
+                                      </p>
+                                    ) : (
+                                      editVisibleRoster.map((member) => {
+                                        const active = editMemberIds.includes(
+                                          member.id,
+                                        );
+                                        return (
+                                          <button
+                                            key={member.id}
+                                            type="button"
+                                            className={`member-chip !py-2 ${active ? "!border-[rgba(123,108,255,0.55)] !bg-[#2a3350]" : ""}`}
+                                            onClick={() =>
+                                              toggleEditMember(member.id)
+                                            }
+                                          >
+                                            <LockIcon />
+                                            <span className="text-sm">
+                                              {member.name}
+                                            </span>
+                                          </button>
+                                        );
+                                      })
+                                    )}
+                                  </div>
+                                </div>
+                              ) : (
+                                <ParticipantOcrPanel
+                                  roster={editRoster}
+                                  selectedIds={editMemberIds}
+                                  onAddMember={(id) =>
+                                    setEditMemberIds((prev) =>
+                                      prev.includes(id) ? prev : [...prev, id],
+                                    )
+                                  }
+                                  onAddMembers={(ids) =>
+                                    setEditMemberIds((prev) => {
+                                      const next = new Set(prev);
+                                      ids.forEach((id) => next.add(id));
+                                      return [...next];
+                                    })
+                                  }
+                                  resetNonce={editOcrNonce}
+                                />
+                              )}
+                            </div>
+                            <div className="rounded-xl border border-[var(--border-soft)] bg-[#121826] p-3">
+                              <p className="mb-2 text-xs text-[var(--text-muted)]">
+                                {isPinkAuction(editQuality) ||
+                                isOrdinaryPinkAuction(editQuality)
+                                  ? `已选参与者 (${editSelectedMembers.length})`
+                                  : `已选分红 (${editSelectedMembers.length})`}
+                              </p>
+                              {editSelectedMembers.length === 0 ? (
+                                <p className="text-sm text-[var(--text-muted)]">
+                                  请点选或识别分红成员
+                                </p>
+                              ) : (
+                                <div className="flex max-h-40 flex-wrap gap-2 overflow-y-auto">
+                                  {editSelectedMembers.map((m) => (
+                                    <button
+                                      key={m.id}
+                                      type="button"
+                                      className="rounded-lg bg-[#24304a] px-2.5 py-1 text-xs"
+                                      onClick={() => toggleEditMember(m.id)}
+                                      title="点击移除"
+                                    >
+                                      {m.name} ×
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </div>
                           <div className="flex gap-2 sm:col-span-2">
                             <button
                               type="button"

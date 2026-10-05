@@ -199,6 +199,9 @@ export async function PATCH(request: Request) {
     body?.bidMax != null && body?.bidMax !== ""
       ? Number(body.bidMax)
       : existing.bidMax;
+  const dividendMemberIds = Array.isArray(body?.dividendMemberIds)
+    ? body.dividendMemberIds.map(Number).filter(Boolean)
+    : existing.dividendMemberIds;
 
   if (!name) {
     return NextResponse.json({ error: "请填写拍品名称" }, { status: 400 });
@@ -216,7 +219,7 @@ export async function PATCH(request: Request) {
         { status: 400 },
       );
     }
-    if (existing.dividendMemberIds.length < 2) {
+    if (dividendMemberIds.length < 2) {
       return NextResponse.json(
         { error: "特殊粉色至少选择 2 名参与者（可出价、投票）" },
         { status: 400 },
@@ -225,6 +228,16 @@ export async function PATCH(request: Request) {
   }
   if (!(startPrice > 0) || !(bidIncrement > 0)) {
     return NextResponse.json({ error: "价格必须大于 0" }, { status: 400 });
+  }
+  if (dividendMemberIds.length === 0) {
+    return NextResponse.json(
+      {
+        error: isParticipantOnlyAuction(quality)
+          ? "请至少选择一名参与者"
+          : "请至少选择一名分红成员",
+      },
+      { status: 400 },
+    );
   }
 
   const item = updateAuctionItem({
@@ -235,6 +248,7 @@ export async function PATCH(request: Request) {
     bidIncrement,
     bidMin: isPinkAuction(quality) ? bidMin : null,
     bidMax: isPinkAuction(quality) ? bidMax : null,
+    dividendMemberIds,
   });
   if (!item) {
     return NextResponse.json(
@@ -245,7 +259,7 @@ export async function PATCH(request: Request) {
 
   return NextResponse.json({
     item,
-    room: buildRoomState(item.sessionId, { lite: true }),
+    room: buildRoomState(item.sessionId, { lite: true, includeDividends: true }),
   });
 }
 

@@ -105,6 +105,19 @@ async function main() {
     assert.equal(afterEdit.lastStartPrice, 12);
     assert.equal(afterEdit.lastBidIncrement, 4);
 
+    const extra = db.createMember("分红乙");
+    const withRoster = db.updateAuctionItem({
+      itemId: soldItem.id,
+      name: "魔道书 (回音魔力催化)",
+      quality: "purple",
+      startPrice: 12,
+      bidIncrement: 4,
+      dividendMemberIds: [member.id, extra.id],
+    });
+    assert.ok(withRoster);
+    assert.deepEqual(withRoster?.dividendMemberIds.sort(), [member.id, extra.id].sort());
+    assert.ok(withRoster?.dividendMemberNames.includes("分红乙"));
+
     console.log(`item catalog checks passed (${createMs}ms add)`);
   } finally {
     process.chdir(originalCwd);

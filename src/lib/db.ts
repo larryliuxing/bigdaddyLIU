@@ -1882,6 +1882,7 @@ export function updateAuctionItem(input: {
   bidIncrement: number;
   bidMin?: number | null;
   bidMax?: number | null;
+  dividendMemberIds?: number[];
 }): AuctionItem | null {
   const item = getItemById(input.itemId);
   if (!item) return null;
@@ -1896,7 +1897,8 @@ export function updateAuctionItem(input: {
   const bidMax = pink ? (input.bidMax ?? null) : null;
   const startPrice = pink ? (bidMin ?? input.startPrice) : input.startPrice;
 
-  ensureDb()
+  const database = ensureDb();
+  database
     .prepare(
       `UPDATE auction_items
        SET name = ?, quality = ?, start_price = ?, bid_increment = ?,
@@ -1913,6 +1915,25 @@ export function updateAuctionItem(input: {
       bidMax,
       input.itemId,
     );
+
+  if (input.dividendMemberIds) {
+    const uniqueIds = [
+      ...new Set(input.dividendMemberIds.map(Number).filter((id) => id > 0)),
+    ];
+    const insert = database.prepare(
+      `INSERT INTO auction_item_dividends (item_id, member_id) VALUES (?, ?)`,
+    );
+    const tx = database.transaction(() => {
+      database
+        .prepare(`DELETE FROM auction_item_dividends WHERE item_id = ?`)
+        .run(input.itemId);
+      for (const memberId of uniqueIds) {
+        if (!getMemberById(memberId)) continue;
+        insert.run(input.itemId, memberId);
+      }
+    });
+    tx();
+  }
 
   upsertItemCatalog({
     name: input.name,
