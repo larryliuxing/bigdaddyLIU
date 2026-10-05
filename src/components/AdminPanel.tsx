@@ -185,7 +185,7 @@ export function AdminPanel({
             <h1 className="mt-1 text-2xl font-bold">成员账户</h1>
             <p className="mt-1 text-sm text-[var(--text-muted)]">
               管理员：{adminName} · 成员账户、拍卖物品、BOSS、排行榜
-              均仅可在此后台管理。游戏内改名后可在下方改注册名。
+              均仅可在此后台管理。游戏内改名后可在下方改注册名。战盟基金金额在「战盟基金」页公示。
             </p>
           </div>
           <div className="flex gap-2">
@@ -209,6 +209,13 @@ export function AdminPanel({
               onClick={() => router.push("/admin/leaderboard")}
             >
               排行榜设置
+            </button>
+            <button
+              type="button"
+              className="btn-ghost text-sm"
+              onClick={() => router.push("/fund")}
+            >
+              战盟基金
             </button>
             <button
               type="button"

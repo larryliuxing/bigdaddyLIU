@@ -121,3 +121,19 @@ export function ChevronRightIcon() {
     </svg>
   );
 }
+
+export function FundIcon() {
+  return (
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <rect x="4" y="8" width="16" height="11" rx="2" fill="#e8c15a" />
+      <path d="M4 11h16" stroke="#b8862a" strokeWidth="1.6" />
+      <circle cx="12" cy="14.5" r="2.2" fill="#f8e7a8" />
+      <path
+        d="M8 8V7a4 4 0 0 1 8 0v1"
+        stroke="#e8c15a"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}

@@ -17,6 +17,7 @@ import type {
   ItemDividendGroup,
   ItemDividendLine,
   ItemPriceStats,
+  GuildFund,
   ItemQuality,
   Member,
   MemberRole,
@@ -47,6 +48,7 @@ import {
   isNearName,
   pairOcrNamesToMembers,
 } from "./auction/nameMatch";
+import { emptyGuildFund, parseFundAmount } from "./fund";
 import {
   DEFAULT_LEADERBOARD_THRESHOLD_PERCENT,
   normalizeLeaderboardThresholdPercent,
@@ -3155,6 +3157,55 @@ export function setLeaderboardThresholdPercent(percent: number): number {
     )
     .run(LEADERBOARD_THRESHOLD_PERCENT_KEY, String(value));
   return value;
+}
+
+const GUILD_FUND_KEY = "guild_fund";
+
+function parseStoredGuildFund(raw: string | undefined): GuildFund {
+  if (!raw) return emptyGuildFund();
+  try {
+    const data = JSON.parse(raw) as Partial<GuildFund>;
+    const amount = parseFundAmount(data.amount);
+    const updatedAt =
+      typeof data.updatedAt === "string" && data.updatedAt ? data.updatedAt : null;
+    const updatedBy =
+      typeof data.updatedBy === "string" && data.updatedBy.trim()
+        ? data.updatedBy.trim()
+        : null;
+    if (amount == null && !updatedAt) return emptyGuildFund();
+    return { amount, updatedAt, updatedBy };
+  } catch {
+    const amount = parseFundAmount(raw);
+    return amount == null
+      ? emptyGuildFund()
+      : { amount, updatedAt: null, updatedBy: null };
+  }
+}
+
+export function getGuildFund(): GuildFund {
+  const row = ensureDb()
+    .prepare(`SELECT value FROM app_meta WHERE key = ?`)
+    .get(GUILD_FUND_KEY) as { value: string } | undefined;
+  return parseStoredGuildFund(row?.value);
+}
+
+export function setGuildFund(amount: number, updatedBy: string): GuildFund {
+  const parsed = parseFundAmount(amount);
+  if (parsed == null) {
+    throw new Error("invalid fund amount");
+  }
+  const fund: GuildFund = {
+    amount: parsed,
+    updatedAt: new Date().toISOString(),
+    updatedBy: updatedBy.trim() || "管理员",
+  };
+  ensureDb()
+    .prepare(
+      `INSERT INTO app_meta (key, value) VALUES (?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+    )
+    .run(GUILD_FUND_KEY, JSON.stringify(fund));
+  return fund;
 }
 
 export function getLeaderboardBoard(thresholdRatio?: number) {

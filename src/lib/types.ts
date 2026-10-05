@@ -315,3 +315,9 @@ export interface BossRoomState {
   voteNeed: number;
   voteWindowSeconds: number;
 }
+
+export interface GuildFund {
+  amount: number | null;
+  updatedAt: string | null;
+  updatedBy: string | null;
+}
