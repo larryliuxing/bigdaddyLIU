@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ItemPriceStats, ItemQuality, Member } from "@/lib/types";
+import { compressAuctionItemImage } from "@/lib/auction/itemImageClient";
 import { recognizeItemName } from "@/lib/auction/itemOcr";
 import { LockIcon } from "@/components/Icons";
 import { ItemPriceStatsLine } from "./ItemPriceStatsLine";
@@ -109,7 +110,8 @@ export function AddAuctionItemForm({
       const reader = new FileReader();
       reader.onload = async () => {
         const dataUrl = String(reader.result || "");
-        setImageData(dataUrl);
+        const compressed = await compressAuctionItemImage(dataUrl);
+        setImageData(compressed);
         setNamePreview(null);
         setOcrStatus("正在识别顶部装备名称…");
         try {
@@ -138,6 +140,9 @@ export function AddAuctionItemForm({
     setError("");
     setLoading(true);
     try {
+      const uploadImage = imageData
+        ? await compressAuctionItemImage(imageData)
+        : null;
       const res = await fetch("/api/auction/items", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -149,7 +154,7 @@ export function AddAuctionItemForm({
           bidIncrement: isPinkAuction(quality) ? 1 : bidIncrement,
           bidMin: isPinkAuction(quality) ? bidMin : null,
           bidMax: isPinkAuction(quality) ? bidMax : null,
-          imageData,
+          imageData: uploadImage,
           dividendMemberIds: selectedIds,
         }),
       });

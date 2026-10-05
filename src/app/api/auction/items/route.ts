@@ -15,6 +15,10 @@ import {
   normalizeItemNameKey,
 } from "@/lib/db";
 import type { ItemQuality } from "@/lib/types";
+import {
+  readJsonBodyCapped,
+  sanitizeAuctionItemImage,
+} from "@/lib/auction/itemImage";
 import { isPinkAuction, isParticipantOnlyAuction } from "@/lib/auction/pink";
 import { buildRoomState } from "@/lib/auction/room";
 
@@ -62,17 +66,25 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "需要管理员登录" }, { status: 401 });
   }
 
-  const body = await request.json().catch(() => null);
+  const parsed = await readJsonBodyCapped(request);
+  if (parsed.tooLarge) {
+    return NextResponse.json(
+      { error: "拍品图片太大，已阻止以免卡住服务器。请重新粘贴后再添加" },
+      { status: 413 },
+    );
+  }
+  const body = (parsed.body ?? null) as Record<string, unknown> | null;
   const name = String(body?.name ?? "").trim();
-  const quality = QUALITIES.includes(body?.quality) ? body.quality : "green";
+  const quality = QUALITIES.includes(body?.quality as ItemQuality)
+    ? (body?.quality as ItemQuality)
+    : "green";
   const startPrice = Number(body?.startPrice ?? 5);
   const bidIncrement = Number(body?.bidIncrement ?? 5);
   const bidMin =
     body?.bidMin != null && body?.bidMin !== "" ? Number(body.bidMin) : null;
   const bidMax =
     body?.bidMax != null && body?.bidMax !== "" ? Number(body.bidMax) : null;
-  const imageData =
-    typeof body?.imageData === "string" ? body.imageData : null;
+  const imageData = sanitizeAuctionItemImage(body?.imageData);
   const dividendMemberIds = Array.isArray(body?.dividendMemberIds)
     ? body.dividendMemberIds.map(Number).filter(Boolean)
     : [];

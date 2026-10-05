@@ -44,6 +44,7 @@ import {
   laterIso,
   resolveItemEndMs,
 } from "./auction/itemClock";
+import { sanitizeAuctionItemImage } from "./auction/itemImage";
 import {
   isNearName,
   pairOcrNamesToMembers,
@@ -1638,7 +1639,7 @@ export function createAuctionItem(input: {
   const bidMin = pink ? (input.bidMin ?? input.startPrice) : null;
   const bidMax = pink ? (input.bidMax ?? null) : null;
   const startPrice = pink ? (bidMin ?? input.startPrice) : input.startPrice;
-  const imageData = input.imageData ?? null;
+  const imageData = sanitizeAuctionItemImage(input.imageData);
   const hasImage = Boolean(imageData && imageData.length > 32);
 
   const result = database
