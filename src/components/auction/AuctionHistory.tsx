@@ -30,43 +30,37 @@ export function AuctionHistory({
 
   useEffect(() => {
     let alive = true;
-    const load = async () => {
+    void (async () => {
       const res = await fetch("/api/auction/dividends");
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!alive || !res.ok) return;
       const list = (data.sessions || []) as AuctionSession[];
       setSessions(list);
       if (list[0]) setSelectedId(list[0].id);
-    };
-    const timeout = window.setTimeout(() => {
-      void load();
-    }, 0);
+    })();
     return () => {
       alive = false;
-      window.clearTimeout(timeout);
     };
   }, []);
 
   useEffect(() => {
     if (!selectedId) return;
     let alive = true;
-    const load = async () => {
+    void (async () => {
       const [itemsRes, divRes] = await Promise.all([
         fetch(`/api/auction/items?sessionId=${selectedId}`),
         fetch(`/api/auction/dividends?sessionId=${selectedId}`),
       ]);
-      const itemsData = await itemsRes.json();
-      const divData = await divRes.json();
+      const itemsData = await itemsRes.json().catch(() => ({}));
+      const divData = await divRes.json().catch(() => ({}));
       if (!alive) return;
       if (itemsRes.ok) setItems(itemsData.items || []);
-      if (divRes.ok) setReport((divData.report as DividendReport | null) ?? null);
-    };
-    const timeout = window.setTimeout(() => {
-      void load();
-    }, 0);
+      if (divRes.ok) {
+        setReport((divData.report as DividendReport | null) ?? null);
+      }
+    })();
     return () => {
       alive = false;
-      window.clearTimeout(timeout);
     };
   }, [selectedId]);
 
