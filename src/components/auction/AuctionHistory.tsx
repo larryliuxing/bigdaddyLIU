@@ -8,17 +8,13 @@ import type {
   DividendReport,
   SessionUser,
 } from "@/lib/types";
-import {
-  formatBeijingSessionLabel,
-  qualityMeta,
-} from "@/lib/auction/client";
+import { formatBeijingSessionLabel } from "@/lib/auction/client";
 import { DividendReportView } from "./DividendReportView";
+import { AuctionResultsByWinner } from "./AuctionResultsByWinner";
 import {
   AuctionItemLightbox,
-  AuctionItemThumb,
   type AuctionItemViewerPayload,
 } from "./AuctionItemImage";
-import { ItemPriceStatsLine } from "./ItemPriceStatsLine";
 
 export function AuctionHistory({
   member,
@@ -112,63 +108,14 @@ export function AuctionHistory({
           )}
         </div>
 
-        <section className="mb-5 overflow-hidden rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)]">
-          <div className="border-b border-[var(--border-soft)] px-4 py-3 text-sm font-medium">
-            拍品结果（点击图片可放大查看属性）
-          </div>
-          <ul className="divide-y divide-[var(--border-soft)]">
-            {items.length === 0 && (
-              <li className="px-4 py-8 text-sm text-[var(--text-muted)]">
-                该场次暂无拍品
-              </li>
-            )}
-            {items.map((item) => (
-              <li
-                key={item.id}
-                className="flex items-center gap-3 px-4 py-3"
-              >
-                <AuctionItemThumb
-                  itemId={item.id}
-                  imageData={item.imageData}
-                  hasImage={item.hasImage}
-                  name={item.name}
-                  quality={item.quality}
-                  className="h-14 w-14 shrink-0"
-                  onOpen={(payload) =>
-                    setViewer({
-                      ...payload,
-                      detail:
-                        item.soldPrice != null
-                          ? `成交 ¥${item.soldPrice}${
-                              item.winnerName ? ` · ${item.winnerName}` : ""
-                            }`
-                          : item.status,
-                    })
-                  }
-                />
-                <div className="min-w-0">
-                  <p className="font-medium">
-                    <span
-                      className="mr-2 inline-block h-2.5 w-2.5 rounded-full"
-                      style={{ background: qualityMeta(item.quality).color }}
-                    />
-                    {item.name}
-                  </p>
-                  <p className="mt-1 text-xs text-[var(--text-muted)]">
-                    {item.status}
-                    {item.soldPrice != null
-                      ? ` · 成交 ¥${item.soldPrice} · ${item.winnerName ?? ""}`
-                      : ""}
-                  </p>
-                  <ItemPriceStatsLine
-                    stats={item.priceStats}
-                    className="mt-1"
-                  />
-                </div>
-              </li>
-            ))}
-          </ul>
-        </section>
+        <div className="mb-5">
+          <AuctionResultsByWinner
+            items={items}
+            title="拍品结果（点击图片可放大查看属性）"
+            highlightMemberId={member?.id ?? null}
+            onOpenItem={(payload) => setViewer(payload)}
+          />
+        </div>
 
         <DividendReportView
           report={report}
