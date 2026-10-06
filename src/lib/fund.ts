@@ -1,4 +1,4 @@
-import type { GuildFund, GuildFundEntry } from "./types";
+import type { GuildFund, GuildFundDeletion, GuildFundEntry } from "./types";
 
 export const MAX_GUILD_FUND_AMOUNT = 1_000_000_000_000;
 
@@ -7,27 +7,37 @@ const EMPTY_FUND: GuildFund = {
   updatedAt: null,
   updatedBy: null,
   entries: [],
+  deletions: [],
 };
 
 export function emptyGuildFund(): GuildFund {
-  return { ...EMPTY_FUND, entries: [] };
+  return { ...EMPTY_FUND, entries: [], deletions: [] };
 }
 
-export function sumFundEntries(entries: GuildFundEntry[]): GuildFund {
-  if (entries.length === 0) return emptyGuildFund();
+export function sumFundEntries(
+  entries: GuildFundEntry[],
+  deletions: GuildFundDeletion[] = [],
+): GuildFund {
   const ordered = [...entries].sort((a, b) => {
     if (a.transferredAt !== b.transferredAt) {
       return a.transferredAt < b.transferredAt ? 1 : -1;
     }
     return b.id - a.id;
   });
-  const amount = ordered.reduce((sum, entry) => sum + entry.amount, 0);
+  const removed = [...deletions].sort((a, b) => {
+    if (a.deletedAt !== b.deletedAt) {
+      return a.deletedAt < b.deletedAt ? 1 : -1;
+    }
+    return b.id - a.id;
+  });
+  if (ordered.length === 0 && removed.length === 0) return emptyGuildFund();
   const latest = ordered[0];
   return {
-    amount,
-    updatedAt: latest.transferredAt,
-    updatedBy: latest.createdBy,
+    amount: ordered.reduce((sum, entry) => sum + entry.amount, 0),
+    updatedAt: latest?.transferredAt ?? null,
+    updatedBy: latest?.createdBy ?? null,
     entries: ordered,
+    deletions: removed,
   };
 }
 
@@ -122,4 +132,35 @@ export function parseFundTransferredAt(raw: unknown): string | null {
   if (time < Date.parse("2020-01-01T00:00:00Z")) return null;
   if (time > Date.now() + 36 * 60 * 60 * 1000) return null;
   return date.toISOString();
+}
+
+/** Beijing date and time parts from an ISO timestamp. */
+export function beijingDateAndTimeFromIso(
+  iso: string,
+): { date: string; time: string } | null {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return null;
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+  const get = (type: string) =>
+    parts.find((part) => part.type === type)?.value ?? "";
+  const ymd = `${get("year")}-${get("month")}-${get("day")}`;
+  const hm = `${get("hour")}:${get("minute")}`;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd) || !/^\d{2}:\d{2}$/.test(hm)) return null;
+  return { date: ymd, time: hm };
+}
+
+/** Public deletion remark. Required, kept short enough to show in the list. */
+export function parseFundNote(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const note = raw.trim().replace(/\s+/g, " ");
+  if (note.length < 1 || note.length > 80) return null;
+  return note;
 }

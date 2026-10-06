@@ -335,10 +335,21 @@ export interface GuildFundEntry {
   createdBy: string | null;
 }
 
+export interface GuildFundDeletion {
+  id: number;
+  amount: number;
+  transferredAt: string;
+  deletedAt: string;
+  note: string;
+  deletedBy: string | null;
+}
+
 export interface GuildFund {
-  /** Sum of deposit entries. Null when nothing has been recorded. */
+  /** Sum of deposits still on the books. Null when nothing has been recorded. */
   amount: number | null;
   updatedAt: string | null;
   updatedBy: string | null;
   entries: GuildFundEntry[];
+  /** Removed deposits, kept public with the admin's note. */
+  deletions: GuildFundDeletion[];
 }

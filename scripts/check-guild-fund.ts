@@ -87,11 +87,33 @@ async function main() {
     assert.equal(saved.entries[0].amount, 200000);
     assert.equal(saved.entries[1].amount, 800000);
 
-    const removed = db.deleteGuildFundEntry(saved.entries[0].id);
+    const removed = db.deleteGuildFundEntry(saved.entries[0].id, {
+      note: "记错金额，已作废",
+      deletedBy: "admin",
+    });
     assert.ok(removed);
     assert.equal(removed.amount, 800000);
     assert.equal(removed.entries.length, 1);
-    assert.equal(db.deleteGuildFundEntry(999999), null);
+    assert.equal(removed.deletions.length, 1);
+    assert.equal(removed.deletions[0].amount, 200000);
+    assert.equal(removed.deletions[0].note, "记错金额，已作废");
+    assert.equal(db.deleteGuildFundEntry(999999, { note: "没有这条", deletedBy: "admin" }), null);
+    assert.throws(() =>
+      db.deleteGuildFundEntry(removed.entries[0].id, {
+        note: "   ",
+        deletedBy: "admin",
+      }),
+    );
+
+    const adjusted = db.updateGuildFundEntry({
+      id: removed.entries[0].id,
+      amount: 900000,
+      transferredAt: "2026-10-05T09:00:00.000Z",
+    });
+    assert.ok(adjusted);
+    assert.equal(adjusted.amount, 900000);
+    assert.equal(adjusted.entries[0].transferredAt, "2026-10-05T09:00:00.000Z");
+    assert.equal(adjusted.deletions.length, 1);
 
     assert.throws(() =>
       db.addGuildFundEntry({

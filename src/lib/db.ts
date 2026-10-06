@@ -18,6 +18,8 @@ import type {
   ItemDividendLine,
   ItemPriceStats,
   GuildFund,
+  GuildFundDeletion,
+  GuildFundEntry,
   ItemQuality,
   ItemCatalogEntry,
   Member,
@@ -53,6 +55,7 @@ import {
 import {
   parseFundAmount,
   parseFundDeposit,
+  parseFundNote,
   parseFundTransferredAt,
   sumFundEntries,
 } from "./fund";
@@ -337,9 +340,16 @@ function seedIfEmpty(database: Database.Database) {
       amount INTEGER NOT NULL,
       transferred_at TEXT NOT NULL,
       created_by TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      deleted_at TEXT,
+      delete_note TEXT,
+      deleted_by TEXT
     );
   `);
+
+  ensureColumn(database, "guild_fund_entries", "deleted_at", "TEXT");
+  ensureColumn(database, "guild_fund_entries", "delete_note", "TEXT");
+  ensureColumn(database, "guild_fund_entries", "deleted_by", "TEXT");
 
   migrateGuildFundLedgerOnce(database);
   wipeRosterAndAuctionsOnce(database);
@@ -3532,24 +3542,41 @@ function migrateGuildFundLedgerOnce(database: Database.Database) {
 export function getGuildFund(): GuildFund {
   const rows = ensureDb()
     .prepare(
-      `SELECT id, amount, transferred_at, created_by
+      `SELECT id, amount, transferred_at, created_by, deleted_at, delete_note, deleted_by
        FROM guild_fund_entries
-       ORDER BY transferred_at DESC, id DESC`,
+       ORDER BY id DESC`,
     )
     .all() as Array<{
     id: number;
     amount: number;
     transferred_at: string;
     created_by: string | null;
+    deleted_at: string | null;
+    delete_note: string | null;
+    deleted_by: string | null;
   }>;
-  return sumFundEntries(
-    rows.map((row) => ({
+  const entries: GuildFundEntry[] = [];
+  const deletions: GuildFundDeletion[] = [];
+  for (const row of rows) {
+    if (row.deleted_at) {
+      deletions.push({
+        id: row.id,
+        amount: row.amount,
+        transferredAt: row.transferred_at,
+        deletedAt: row.deleted_at,
+        note: row.delete_note?.trim() || "未填写备注",
+        deletedBy: row.deleted_by,
+      });
+      continue;
+    }
+    entries.push({
       id: row.id,
       amount: row.amount,
       transferredAt: row.transferred_at,
       createdBy: row.created_by,
-    })),
-  );
+    });
+  }
+  return sumFundEntries(entries, deletions);
 }
 
 export function addGuildFundEntry(input: {
@@ -3571,11 +3598,42 @@ export function addGuildFundEntry(input: {
   return getGuildFund();
 }
 
-export function deleteGuildFundEntry(id: number): GuildFund | null {
-  if (!(id > 0)) return null;
+export function updateGuildFundEntry(input: {
+  id: number;
+  amount: number;
+  transferredAt: string;
+}): GuildFund | null {
+  const amount = parseFundDeposit(input.amount);
+  const transferredAt = parseFundTransferredAt(input.transferredAt);
+  if (!(input.id > 0) || amount == null || !transferredAt) {
+    throw new Error("invalid fund entry");
+  }
   const result = ensureDb()
-    .prepare(`DELETE FROM guild_fund_entries WHERE id = ?`)
-    .run(id);
+    .prepare(
+      `UPDATE guild_fund_entries
+       SET amount = ?, transferred_at = ?
+       WHERE id = ? AND deleted_at IS NULL`,
+    )
+    .run(amount, transferredAt, input.id);
+  if (result.changes === 0) return null;
+  return getGuildFund();
+}
+
+export function deleteGuildFundEntry(
+  id: number,
+  input: { note: string; deletedBy: string },
+): GuildFund | null {
+  const note = parseFundNote(input.note);
+  if (!(id > 0) || !note) {
+    throw new Error("invalid fund note");
+  }
+  const result = ensureDb()
+    .prepare(
+      `UPDATE guild_fund_entries
+       SET deleted_at = ?, delete_note = ?, deleted_by = ?
+       WHERE id = ? AND deleted_at IS NULL`,
+    )
+    .run(new Date().toISOString(), note, input.deletedBy.trim() || "管理员", id);
   if (result.changes === 0) return null;
   return getGuildFund();
 }
