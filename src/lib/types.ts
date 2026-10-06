@@ -328,8 +328,17 @@ export interface BossRoomState {
   voteWindowSeconds: number;
 }
 
+export interface GuildFundEntry {
+  id: number;
+  amount: number;
+  transferredAt: string;
+  createdBy: string | null;
+}
+
 export interface GuildFund {
+  /** Sum of deposit entries. Null when nothing has been recorded. */
   amount: number | null;
   updatedAt: string | null;
   updatedBy: string | null;
+  entries: GuildFundEntry[];
 }

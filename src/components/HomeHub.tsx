@@ -41,7 +41,7 @@ const FEATURES = [
   {
     key: "fund",
     title: "战盟基金",
-    description: "管理员公示战盟资金，全体成员可见",
+    description: "余额和每次转入明细，全体成员可见",
     iconBg: "linear-gradient(145deg, #3a2a12, #24180c)",
     icon: <FundIcon />,
   },
@@ -159,7 +159,7 @@ export function HomeHub({
                   {feature.key === "fund"
                     ? currentFund.amount == null
                       ? feature.description
-                      : `当前 ${formatFundAmount(currentFund.amount)} · 点开查看公示`
+                      : `余额 ${formatFundAmount(currentFund.amount)} · 点开查看明细`
                     : feature.description}
                 </span>
               </span>
