@@ -15,6 +15,7 @@ import {
 } from "@/lib/auction/client";
 import { GavelIcon } from "@/components/Icons";
 import { DividendReportView } from "./DividendReportView";
+import { AuctionResultsByWinner } from "./AuctionResultsByWinner";
 import {
   AuctionItemLightbox,
   AuctionItemThumb,
@@ -793,59 +794,11 @@ export function AuctionRoom({
                 </p>
               </div>
               {(room?.items?.length ?? 0) > 0 && (
-                <section className="overflow-hidden rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)]">
-                  <div className="border-b border-[var(--border-soft)] px-4 py-3 text-sm font-medium">
-                    拍品结果
-                  </div>
-                  <ul className="divide-y divide-[var(--border-soft)]">
-                    {room!.items.map((item) => (
-                      <li
-                        key={item.id}
-                        className="flex items-center justify-between gap-3 px-4 py-3 text-sm"
-                      >
-                        <div className="flex min-w-0 items-center gap-3">
-                          <AuctionItemThumb
-                            itemId={item.id}
-                            imageData={item.imageData}
-                            hasImage={item.hasImage}
-                            name={item.name}
-                            quality={item.quality}
-                            className="h-12 w-12 shrink-0"
-                            onOpen={(payload) =>
-                              setViewer({
-                                ...payload,
-                                detail:
-                                  item.soldPrice != null
-                                    ? `成交 ¥${item.soldPrice}${
-                                        item.winnerName
-                                          ? ` · ${item.winnerName}`
-                                          : ""
-                                      }`
-                                    : itemStatusLabel(item.status),
-                              })
-                            }
-                          />
-                          <span className="truncate">
-                            <span
-                              className="mr-2 inline-block h-2 w-2 rounded-full"
-                              style={{
-                                background: qualityMeta(item.quality).color,
-                              }}
-                            />
-                            {item.name}
-                          </span>
-                        </div>
-                        <span className="shrink-0 text-[var(--text-muted)]">
-                          {itemStatusLabel(item.status)}
-                          {item.soldPrice != null
-                            ? ` · ¥${item.soldPrice}`
-                            : ""}
-                          {item.winnerName ? ` · ${item.winnerName}` : ""}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                </section>
+                <AuctionResultsByWinner
+                  items={room!.items}
+                  highlightMemberId={member?.id ?? null}
+                  onOpenItem={(payload) => setViewer(payload)}
+                />
               )}
               <DividendReportView
                 report={room?.dividendReport ?? null}
