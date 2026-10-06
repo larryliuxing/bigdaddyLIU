@@ -50,7 +50,12 @@ import {
   isNearName,
   pairOcrNamesToMembers,
 } from "./auction/nameMatch";
-import { emptyGuildFund, parseFundAmount } from "./fund";
+import {
+  parseFundAmount,
+  parseFundDeposit,
+  parseFundTransferredAt,
+  sumFundEntries,
+} from "./fund";
 import {
   DEFAULT_LEADERBOARD_THRESHOLD_PERCENT,
   normalizeLeaderboardThresholdPercent,
@@ -325,9 +330,18 @@ function seedIfEmpty(database: Database.Database) {
     CREATE TABLE IF NOT EXISTS app_meta (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
-    )
+    );
+
+    CREATE TABLE IF NOT EXISTS guild_fund_entries (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      amount INTEGER NOT NULL,
+      transferred_at TEXT NOT NULL,
+      created_by TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `);
 
+  migrateGuildFundLedgerOnce(database);
   wipeRosterAndAuctionsOnce(database);
   prodGoLiveCleanupOnce(database);
 
@@ -3453,52 +3467,117 @@ export function setLeaderboardThresholdPercent(percent: number): number {
 }
 
 const GUILD_FUND_KEY = "guild_fund";
+const GUILD_FUND_LEDGER_KEY = "guild_fund_ledger_v1";
 
-function parseStoredGuildFund(raw: string | undefined): GuildFund {
-  if (!raw) return emptyGuildFund();
+function readLegacyGuildFundAmount(raw: string | undefined): {
+  amount: number;
+  transferredAt: string;
+  createdBy: string | null;
+} | null {
+  if (!raw) return null;
   try {
     const data = JSON.parse(raw) as Partial<GuildFund>;
     const amount = parseFundAmount(data.amount);
-    const updatedAt =
-      typeof data.updatedAt === "string" && data.updatedAt ? data.updatedAt : null;
-    const updatedBy =
+    if (amount == null || amount < 1) return null;
+    const transferredAt = parseFundTransferredAt(data.updatedAt) ?? new Date().toISOString();
+    const createdBy =
       typeof data.updatedBy === "string" && data.updatedBy.trim()
         ? data.updatedBy.trim()
         : null;
-    if (amount == null && !updatedAt) return emptyGuildFund();
-    return { amount, updatedAt, updatedBy };
+    return { amount, transferredAt, createdBy };
   } catch {
     const amount = parseFundAmount(raw);
-    return amount == null
-      ? emptyGuildFund()
-      : { amount, updatedAt: null, updatedBy: null };
+    if (amount == null || amount < 1) return null;
+    return {
+      amount,
+      transferredAt: new Date().toISOString(),
+      createdBy: null,
+    };
   }
 }
 
-export function getGuildFund(): GuildFund {
-  const row = ensureDb()
+/** Turn the old single published total into the first deposit row. */
+function migrateGuildFundLedgerOnce(database: Database.Database) {
+  const done = database
     .prepare(`SELECT value FROM app_meta WHERE key = ?`)
-    .get(GUILD_FUND_KEY) as { value: string } | undefined;
-  return parseStoredGuildFund(row?.value);
-}
+    .get(GUILD_FUND_LEDGER_KEY) as { value: string } | undefined;
+  if (done) return;
 
-export function setGuildFund(amount: number, updatedBy: string): GuildFund {
-  const parsed = parseFundAmount(amount);
-  if (parsed == null) {
-    throw new Error("invalid fund amount");
+  const count = database
+    .prepare(`SELECT COUNT(*) as count FROM guild_fund_entries`)
+    .get() as { count: number };
+  if (count.count === 0) {
+    const row = database
+      .prepare(`SELECT value FROM app_meta WHERE key = ?`)
+      .get(GUILD_FUND_KEY) as { value: string } | undefined;
+    const legacy = readLegacyGuildFundAmount(row?.value);
+    if (legacy) {
+      database
+        .prepare(
+          `INSERT INTO guild_fund_entries (amount, transferred_at, created_by)
+           VALUES (?, ?, ?)`,
+        )
+        .run(legacy.amount, legacy.transferredAt, legacy.createdBy);
+    }
   }
-  const fund: GuildFund = {
-    amount: parsed,
-    updatedAt: new Date().toISOString(),
-    updatedBy: updatedBy.trim() || "管理员",
-  };
-  ensureDb()
+
+  database
     .prepare(
       `INSERT INTO app_meta (key, value) VALUES (?, ?)
        ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
     )
-    .run(GUILD_FUND_KEY, JSON.stringify(fund));
-  return fund;
+    .run(GUILD_FUND_LEDGER_KEY, new Date().toISOString());
+}
+
+export function getGuildFund(): GuildFund {
+  const rows = ensureDb()
+    .prepare(
+      `SELECT id, amount, transferred_at, created_by
+       FROM guild_fund_entries
+       ORDER BY transferred_at DESC, id DESC`,
+    )
+    .all() as Array<{
+    id: number;
+    amount: number;
+    transferred_at: string;
+    created_by: string | null;
+  }>;
+  return sumFundEntries(
+    rows.map((row) => ({
+      id: row.id,
+      amount: row.amount,
+      transferredAt: row.transferred_at,
+      createdBy: row.created_by,
+    })),
+  );
+}
+
+export function addGuildFundEntry(input: {
+  amount: number;
+  transferredAt: string;
+  createdBy: string;
+}): GuildFund {
+  const amount = parseFundDeposit(input.amount);
+  const transferredAt = parseFundTransferredAt(input.transferredAt);
+  if (amount == null || !transferredAt) {
+    throw new Error("invalid fund entry");
+  }
+  ensureDb()
+    .prepare(
+      `INSERT INTO guild_fund_entries (amount, transferred_at, created_by)
+       VALUES (?, ?, ?)`,
+    )
+    .run(amount, transferredAt, input.createdBy.trim() || "管理员");
+  return getGuildFund();
+}
+
+export function deleteGuildFundEntry(id: number): GuildFund | null {
+  if (!(id > 0)) return null;
+  const result = ensureDb()
+    .prepare(`DELETE FROM guild_fund_entries WHERE id = ?`)
+    .run(id);
+  if (result.changes === 0) return null;
+  return getGuildFund();
 }
 
 export function getLeaderboardBoard(thresholdRatio?: number) {
