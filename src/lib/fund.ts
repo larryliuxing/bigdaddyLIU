@@ -7,36 +7,45 @@ const EMPTY_FUND: GuildFund = {
   updatedAt: null,
   updatedBy: null,
   entries: [],
+  outflows: [],
   deletions: [],
 };
 
 export function emptyGuildFund(): GuildFund {
-  return { ...EMPTY_FUND, entries: [], deletions: [] };
+  return { ...EMPTY_FUND, entries: [], outflows: [], deletions: [] };
 }
 
 export function sumFundEntries(
   entries: GuildFundEntry[],
   deletions: GuildFundDeletion[] = [],
+  outflows: GuildFundEntry[] = [],
 ): GuildFund {
-  const ordered = [...entries].sort((a, b) => {
+  const byTime = (a: GuildFundEntry, b: GuildFundEntry) => {
     if (a.transferredAt !== b.transferredAt) {
       return a.transferredAt < b.transferredAt ? 1 : -1;
     }
     return b.id - a.id;
-  });
+  };
+  const ordered = [...entries].sort(byTime);
+  const spent = [...outflows].sort(byTime);
   const removed = [...deletions].sort((a, b) => {
     if (a.deletedAt !== b.deletedAt) {
       return a.deletedAt < b.deletedAt ? 1 : -1;
     }
     return b.id - a.id;
   });
-  if (ordered.length === 0 && removed.length === 0) return emptyGuildFund();
-  const latest = ordered[0];
+  if (ordered.length === 0 && spent.length === 0 && removed.length === 0) {
+    return emptyGuildFund();
+  }
+  const latest = [...ordered, ...spent].sort(byTime)[0];
+  const inflow = ordered.reduce((sum, entry) => sum + entry.amount, 0);
+  const outflow = spent.reduce((sum, entry) => sum + entry.amount, 0);
   return {
-    amount: ordered.reduce((sum, entry) => sum + entry.amount, 0),
+    amount: inflow - outflow,
     updatedAt: latest?.transferredAt ?? null,
     updatedBy: latest?.createdBy ?? null,
     entries: ordered,
+    outflows: spent,
     deletions: removed,
   };
 }

@@ -333,23 +333,28 @@ export interface GuildFundEntry {
   amount: number;
   transferredAt: string;
   createdBy: string | null;
+  /** Required on every outflow. Empty on deposits. */
+  purpose: string | null;
 }
 
 export interface GuildFundDeletion {
   id: number;
+  kind: "in" | "out";
   amount: number;
   transferredAt: string;
   deletedAt: string;
   note: string;
   deletedBy: string | null;
+  purpose: string | null;
 }
 
 export interface GuildFund {
-  /** Sum of deposits still on the books. Null when nothing has been recorded. */
+  /** Deposits minus outflows still on the books. Null when nothing is recorded. */
   amount: number | null;
   updatedAt: string | null;
   updatedBy: string | null;
   entries: GuildFundEntry[];
-  /** Removed deposits, kept public with the admin's note. */
+  outflows: GuildFundEntry[];
+  /** Removed rows, kept public with the admin's note. */
   deletions: GuildFundDeletion[];
 }

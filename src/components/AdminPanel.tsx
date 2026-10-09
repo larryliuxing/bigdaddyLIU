@@ -185,7 +185,7 @@ export function AdminPanel({
             <h1 className="mt-1 text-2xl font-bold">成员账户</h1>
             <p className="mt-1 text-sm text-[var(--text-muted)]">
               管理员：{adminName} · 成员账户、拍卖物品、BOSS、排行榜
-              均仅可在此后台管理。游戏内改名后可在下方改注册名。战盟基金在「战盟基金」页按转入时间记账。
+              均仅可在此后台管理。游戏内改名后可在下方改注册名。战盟基金在「战盟基金」页按转入、转出记账。
             </p>
           </div>
           <div className="flex gap-2">
