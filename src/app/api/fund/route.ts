@@ -32,17 +32,30 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "需要管理员登录" }, { status: 401 });
   }
   const body = await request.json().catch(() => null);
+  const kind = body?.kind === "out" ? "out" : "in";
   const amount = parseFundDeposit(body?.amount);
   if (amount == null) {
     return NextResponse.json(
-      { error: "请输入转入金额，例如 1234567 或 100万" },
+      {
+        error:
+          kind === "out"
+            ? "请输入转出金额，例如 1234567 或 100万"
+            : "请输入转入金额，例如 1234567 或 100万",
+      },
       { status: 400 },
     );
   }
   const transferredAt = parseFundTransferredAt(body?.transferredAt);
   if (!transferredAt) {
     return NextResponse.json(
-      { error: "请填写这次转入的时间" },
+      { error: kind === "out" ? "请填写这次转出的时间" : "请填写这次转入的时间" },
+      { status: 400 },
+    );
+  }
+  const purpose = kind === "out" ? parseFundNote(body?.purpose) : null;
+  if (kind === "out" && !purpose) {
+    return NextResponse.json(
+      { error: "转出必须填写用途，全体成员都会看到" },
       { status: 400 },
     );
   }
@@ -51,6 +64,8 @@ export async function POST(request: Request) {
       amount,
       transferredAt,
       createdBy: admin.username,
+      kind,
+      purpose,
     });
     return NextResponse.json({ ok: true, fund, canEdit: true });
   } catch {
@@ -80,13 +95,27 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ error: "请填写这次转入的时间" }, { status: 400 });
   }
   try {
-    const fund = updateGuildFundEntry({ id, amount, transferredAt });
+    const fund = updateGuildFundEntry({
+      id,
+      amount,
+      transferredAt,
+      purpose: body?.purpose,
+    });
     if (!fund) {
       return NextResponse.json({ error: "这条明细不存在或已删除" }, { status: 404 });
     }
     return NextResponse.json({ ok: true, fund, canEdit: true });
-  } catch {
-    return NextResponse.json({ error: "调整失败" }, { status: 400 });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    return NextResponse.json(
+      {
+        error:
+          message === "invalid fund purpose"
+            ? "转出必须填写用途，全体成员都会看到"
+            : "调整失败",
+      },
+      { status: 400 },
+    );
   }
 }
 

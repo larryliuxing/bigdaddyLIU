@@ -117,6 +117,42 @@ async function main() {
 
     assert.throws(() =>
       db.addGuildFundEntry({
+        amount: 1000,
+        transferredAt: "2026-10-07T02:00:00.000Z",
+        createdBy: "admin",
+        kind: "out",
+      }),
+    );
+    const spent = db.addGuildFundEntry({
+      amount: 100000,
+      transferredAt: "2026-10-07T02:00:00.000Z",
+      createdBy: "admin",
+      kind: "out",
+      purpose: "购买工会材料",
+    });
+    assert.equal(spent.amount, 800000);
+    assert.equal(spent.outflows.length, 1);
+    assert.equal(spent.outflows[0].purpose, "购买工会材料");
+    const changed = db.updateGuildFundEntry({
+      id: spent.outflows[0].id,
+      amount: 50000,
+      transferredAt: "2026-10-07T03:00:00.000Z",
+      purpose: "补仓库",
+    });
+    assert.ok(changed);
+    assert.equal(changed.amount, 850000);
+    assert.equal(changed.outflows[0].purpose, "补仓库");
+    assert.throws(() =>
+      db.updateGuildFundEntry({
+        id: spent.outflows[0].id,
+        amount: 50000,
+        transferredAt: "2026-10-07T03:00:00.000Z",
+        purpose: "  ",
+      }),
+    );
+
+    assert.throws(() =>
+      db.addGuildFundEntry({
         amount: 0,
         transferredAt: "2026-10-06T07:30:00.000Z",
         createdBy: "admin",

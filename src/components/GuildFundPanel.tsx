@@ -26,18 +26,23 @@ export function GuildFundPanel({
   const [dateInput, setDateInput] = useState(initialWhen.date);
   const [timeInput, setTimeInput] = useState(initialWhen.time);
   const [amountInput, setAmountInput] = useState("");
+  const [kind, setKind] = useState<"in" | "out">("in");
+  const [purposeInput, setPurposeInput] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [editingKind, setEditingKind] = useState<"in" | "out">("in");
   const [editDate, setEditDate] = useState("");
   const [editTime, setEditTime] = useState("");
   const [editAmount, setEditAmount] = useState("");
+  const [editPurpose, setEditPurpose] = useState("");
   const [pendingDeleteId, setPendingDeleteId] = useState<number | null>(null);
   const [noteDraft, setNoteDraft] = useState("");
   const [busyId, setBusyId] = useState<number | null>(null);
 
   const entries = fund.entries ?? [];
+  const outflows = fund.outflows ?? [];
   const deletions = fund.deletions ?? [];
 
   function applyFund(next: GuildFund) {
@@ -51,7 +56,11 @@ export function GuildFundPanel({
     setMessage("");
     const transferredAt = fundTransferredAtIso(dateInput, timeInput);
     if (!transferredAt) {
-      setError("请填写这次转入的时间");
+      setError(kind === "out" ? "请填写这次转出的时间" : "请填写这次转入的时间");
+      return;
+    }
+    if (kind === "out" && !purposeInput.trim()) {
+      setError("转出必须填写用途，全体成员都会看到");
       return;
     }
     setSaving(true);
@@ -59,7 +68,12 @@ export function GuildFundPanel({
       const res = await fetch("/api/fund", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ amount: amountInput, transferredAt }),
+        body: JSON.stringify({
+          kind,
+          amount: amountInput,
+          transferredAt,
+          purpose: kind === "out" ? purposeInput : null,
+        }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -68,7 +82,8 @@ export function GuildFundPanel({
       }
       applyFund(data.fund);
       setAmountInput("");
-      setMessage("已记入明细，余额已更新");
+      setPurposeInput("");
+      setMessage(kind === "out" ? "已记入转出，余额已更新" : "已记入转入，余额已更新");
     } catch {
       setError("网络错误，记入失败");
     } finally {
@@ -76,13 +91,15 @@ export function GuildFundPanel({
     }
   }
 
-  function beginEdit(entry: GuildFundEntry) {
+  function beginEdit(entry: GuildFundEntry, entryKind: "in" | "out") {
     const when = beijingDateAndTimeFromIso(entry.transferredAt);
     setEditingId(entry.id);
+    setEditingKind(entryKind);
     setPendingDeleteId(null);
     setEditDate(when?.date ?? "");
     setEditTime(when?.time ?? "");
     setEditAmount(String(entry.amount));
+    setEditPurpose(entry.purpose ?? "");
     setError("");
     setMessage("");
   }
@@ -90,7 +107,11 @@ export function GuildFundPanel({
   async function saveEdit(id: number) {
     const transferredAt = fundTransferredAtIso(editDate, editTime);
     if (!transferredAt) {
-      setError("请填写这次转入的时间");
+      setError(editingKind === "out" ? "请填写这次转出的时间" : "请填写这次转入的时间");
+      return;
+    }
+    if (editingKind === "out" && !editPurpose.trim()) {
+      setError("转出必须填写用途，全体成员都会看到");
       return;
     }
     setError("");
@@ -104,6 +125,7 @@ export function GuildFundPanel({
           id,
           amount: editAmount,
           transferredAt,
+          purpose: editingKind === "out" ? editPurpose : null,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -182,8 +204,8 @@ export function GuildFundPanel({
         <h1 className="mt-1 text-2xl font-bold">战盟基金</h1>
         <p className="mt-1.5 text-sm text-[var(--text-muted)]">
           {isAdmin
-            ? "每笔记下转入时间和金额。可以调整明细，删除时必须写备注，删除记录全体成员可见。"
-            : "余额、转入明细和删除记录都对全体成员公示。"}
+            ? "转入记下时间和金额。转出每一笔都必须填写用途。余额是转入减去转出，全体成员可见。"
+            : "余额、转入、转出用途和删除记录都对全体成员公示。"}
         </p>
 
         <section className="mt-8 rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)] px-5 py-8 text-center">
@@ -192,9 +214,9 @@ export function GuildFundPanel({
             {formatFundAmount(fund.amount)}
           </p>
           <p className="mt-3 text-xs text-[var(--text-muted)]">
-            {entries.length > 0
-              ? `共 ${entries.length} 笔转入`
-              : "还没有转入记录"}
+            {entries.length === 0 && outflows.length === 0
+              ? "还没有转入或转出"
+              : `转入 ${entries.length} 笔 · 转出 ${outflows.length} 笔`}
           </p>
         </section>
 
@@ -203,12 +225,27 @@ export function GuildFundPanel({
             onSubmit={recordDeposit}
             className="mt-6 space-y-3 rounded-2xl border border-[var(--border-soft)] bg-[rgba(21,25,37,0.9)] p-4"
           >
-            <h2 className="text-sm font-medium text-[var(--text-muted)]">
-              记一笔转入
-            </h2>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                className={`rounded-lg px-3 py-1.5 text-xs ${kind === "in" ? "bg-[#2a3350] text-white" : "text-[var(--text-muted)]"}`}
+                onClick={() => setKind("in")}
+              >
+                转入
+              </button>
+              <button
+                type="button"
+                className={`rounded-lg px-3 py-1.5 text-xs ${kind === "out" ? "bg-[#2a3350] text-white" : "text-[var(--text-muted)]"}`}
+                onClick={() => setKind("out")}
+              >
+                转出
+              </button>
+            </div>
             <div className="grid grid-cols-2 gap-2">
               <label className="block space-y-1">
-                <span className="text-xs text-[var(--text-muted)]">转入日期</span>
+                <span className="text-xs text-[var(--text-muted)]">
+                  {kind === "out" ? "转出日期" : "转入日期"}
+                </span>
                 <input
                   className="field"
                   type="date"
@@ -218,7 +255,9 @@ export function GuildFundPanel({
                 />
               </label>
               <label className="block space-y-1">
-                <span className="text-xs text-[var(--text-muted)]">转入时间</span>
+                <span className="text-xs text-[var(--text-muted)]">
+                  {kind === "out" ? "转出时间" : "转入时间"}
+                </span>
                 <input
                   className="field"
                   type="time"
@@ -229,7 +268,9 @@ export function GuildFundPanel({
               </label>
             </div>
             <label className="block space-y-1">
-              <span className="text-xs text-[var(--text-muted)]">转入金额</span>
+              <span className="text-xs text-[var(--text-muted)]">
+                {kind === "out" ? "转出金额" : "转入金额"}
+              </span>
               <input
                 className="field"
                 inputMode="decimal"
@@ -241,8 +282,22 @@ export function GuildFundPanel({
                 required
               />
             </label>
+            {kind === "out" ? (
+              <label className="block space-y-1">
+                <span className="text-xs text-[var(--text-muted)]">用途</span>
+                <input
+                  className="field"
+                  placeholder="这笔钱用来做什么，全体成员可见"
+                  value={purposeInput}
+                  onChange={(e) => setPurposeInput(e.target.value)}
+                  maxLength={80}
+                  autoComplete="off"
+                  required
+                />
+              </label>
+            ) : null}
             <button type="submit" className="btn-primary" disabled={saving}>
-              {saving ? "记入中…" : "记入明细"}
+              {saving ? "记入中…" : kind === "out" ? "记入转出" : "记入转入"}
             </button>
           </form>
         )}
@@ -292,6 +347,15 @@ export function GuildFundPanel({
                           onChange={(e) => setEditAmount(e.target.value)}
                           maxLength={24}
                         />
+                        {editingKind === "out" ? (
+                          <input
+                            className="field"
+                            placeholder="用途，全体成员可见"
+                            value={editPurpose}
+                            onChange={(e) => setEditPurpose(e.target.value)}
+                            maxLength={80}
+                          />
+                        ) : null}
                         <div className="flex gap-3 text-xs">
                           <button
                             type="button"
@@ -324,7 +388,142 @@ export function GuildFundPanel({
                               <button
                                 type="button"
                                 className="text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)]"
-                                onClick={() => beginEdit(entry)}
+                                onClick={() => beginEdit(entry, "in")}
+                              >
+                                调整
+                              </button>
+                              <button
+                                type="button"
+                                className="text-xs text-[var(--text-muted)] hover:text-[var(--accent-crimson)]"
+                                onClick={() => beginDelete(entry.id)}
+                              >
+                                删除
+                              </button>
+                            </>
+                          ) : null}
+                        </span>
+                      </div>
+                    )}
+                    {confirmingDelete ? (
+                      <div className="mt-2 space-y-2">
+                        <input
+                          className="field"
+                          placeholder="删除备注，全体成员可见"
+                          value={noteDraft}
+                          onChange={(e) => setNoteDraft(e.target.value)}
+                          maxLength={80}
+                          autoComplete="off"
+                        />
+                        <div className="flex gap-3 text-xs">
+                          <button
+                            type="button"
+                            className="text-[var(--accent-crimson)]"
+                            disabled={busyId === entry.id}
+                            onClick={() => void confirmDelete(entry.id)}
+                          >
+                            {busyId === entry.id ? "删除中…" : "确认删除并公示备注"}
+                          </button>
+                          <button
+                            type="button"
+                            className="text-[var(--text-muted)]"
+                            onClick={() => setPendingDeleteId(null)}
+                          >
+                            取消
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </section>
+
+        <section className="mt-6 overflow-hidden rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)]">
+          <div className="border-b border-[var(--border-soft)] px-4 py-3 text-sm font-medium">
+            转出明细
+          </div>
+          {outflows.length === 0 ? (
+            <p className="px-4 py-6 text-sm text-[var(--text-muted)]">
+              还没有转出。每一笔转出都要写用途，记入后全体成员都能看到。
+            </p>
+          ) : (
+            <ul className="divide-y divide-[var(--border-soft)]">
+              {outflows.map((entry) => {
+                const editing = editingId === entry.id;
+                const confirmingDelete = pendingDeleteId === entry.id;
+                return (
+                  <li key={entry.id} className="px-4 py-3 text-sm">
+                    {editing ? (
+                      <div className="space-y-2">
+                        <div className="grid grid-cols-2 gap-2">
+                          <input
+                            className="field"
+                            type="date"
+                            value={editDate}
+                            onChange={(e) => setEditDate(e.target.value)}
+                          />
+                          <input
+                            className="field"
+                            type="time"
+                            value={editTime}
+                            onChange={(e) => setEditTime(e.target.value)}
+                          />
+                        </div>
+                        <input
+                          className="field"
+                          inputMode="decimal"
+                          value={editAmount}
+                          onChange={(e) => setEditAmount(e.target.value)}
+                          maxLength={24}
+                        />
+                        <input
+                          className="field"
+                          placeholder="用途，全体成员可见"
+                          value={editPurpose}
+                          onChange={(e) => setEditPurpose(e.target.value)}
+                          maxLength={80}
+                        />
+                        <div className="flex gap-3 text-xs">
+                          <button
+                            type="button"
+                            className="text-[var(--accent-gold)]"
+                            disabled={busyId === entry.id}
+                            onClick={() => void saveEdit(entry.id)}
+                          >
+                            {busyId === entry.id ? "保存中…" : "保存调整"}
+                          </button>
+                          <button
+                            type="button"
+                            className="text-[var(--text-muted)]"
+                            onClick={() => setEditingId(null)}
+                          >
+                            取消
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-[var(--text-muted)]">
+                            {formatFundUpdatedAt(entry.transferredAt)}
+                          </p>
+                          <p className="mt-1">
+                            <span className="text-[var(--text-muted)]">用途：</span>
+                            {entry.purpose}
+                          </p>
+                        </div>
+                        <span className="flex shrink-0 items-center gap-3">
+                          <span className="font-semibold tabular-nums text-[var(--accent-crimson)]">
+                            -{formatFundAmount(entry.amount)}
+                          </span>
+                          {isAdmin ? (
+                            <>
+                              <button
+                                type="button"
+                                className="text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                                onClick={() => beginEdit(entry, "out")}
                               >
                                 调整
                               </button>
@@ -382,7 +581,7 @@ export function GuildFundPanel({
           </div>
           {deletions.length === 0 ? (
             <p className="px-4 py-6 text-sm text-[var(--text-muted)]">
-              还没有删除。管理员删除转入时要写备注，这里会公示给全体成员。
+              还没有删除。管理员删除转入或转出时要写备注，这里会公示给全体成员。
             </p>
           ) : (
             <ul className="divide-y divide-[var(--border-soft)]">
@@ -394,8 +593,12 @@ export function GuildFundPanel({
                         {formatFundUpdatedAt(entry.deletedAt)} 删除
                       </p>
                       <p className="mt-1 text-xs text-[var(--text-muted)]">
-                        原转入 {formatFundUpdatedAt(entry.transferredAt)}
+                        {entry.kind === "out" ? "原转出" : "原转入"}{" "}
+                        {formatFundUpdatedAt(entry.transferredAt)}
                       </p>
+                      {entry.purpose ? (
+                        <p className="mt-1 text-xs">用途：{entry.purpose}</p>
+                      ) : null}
                     </div>
                     <span className="shrink-0 font-semibold tabular-nums text-[var(--text-muted)] line-through">
                       {formatFundAmount(entry.amount)}

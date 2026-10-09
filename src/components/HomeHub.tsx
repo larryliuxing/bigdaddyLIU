@@ -41,7 +41,7 @@ const FEATURES = [
   {
     key: "fund",
     title: "战盟基金",
-    description: "余额和每次转入明细，全体成员可见",
+    description: "余额、转入和转出明细，全体成员可见",
     iconBg: "linear-gradient(145deg, #3a2a12, #24180c)",
     icon: <FundIcon />,
   },
