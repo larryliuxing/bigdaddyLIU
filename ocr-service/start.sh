@@ -15,4 +15,10 @@ if ! "$PY" -c "from PIL import Image" >/dev/null 2>&1; then
   exit 1
 fi
 
+# One BLAS thread. Name accuracy is unchanged; the web process keeps the CPU.
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+export NUMEXPR_NUM_THREADS=1
+
 exec "$PY" "$ROOT/ocr-service/server.py"

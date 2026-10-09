@@ -1,11 +1,23 @@
 #!/usr/bin/env python3
-"""Local PaddleOCR service for every guild screenshot recognition path."""
+"""Local PaddleOCR service for every guild screenshot recognition path.
+
+CPU threads are capped at 1 so a name or item scan cannot pin every core
+and freeze the Next.js process. Crops, templates, and score cutoffs are
+unchanged — thread count does not alter the recognized text.
+"""
 from __future__ import annotations
+
+import os
+
+# Must be set before numpy / paddle load their BLAS pools.
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
 
 import base64
 import io
 import json
-import os
 import re
 import sys
 import threading
@@ -39,8 +51,22 @@ _models_ready = False
 _models_error = ""
 _load_lock = threading.Lock()
 _paddle_lock = threading.Lock()
+_recognize_lock = threading.Lock()
 _paddle_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="paddle")
 PADDLE_MAX_EDGE = 640
+BUSY_ERROR = "上一次识别还在进行，请稍后再试"
+
+
+def _limit_cpu_threads() -> None:
+    """One intra-op thread. Same pixels in, same text out."""
+    try:
+        import paddle
+
+        setter = getattr(paddle, "set_num_threads", None)
+        if setter:
+            setter(1)
+    except Exception as exc:
+        print(f"[guild-ocr] could not cap paddle threads: {exc}", flush=True)
 
 
 def get_ocr() -> Any:
@@ -61,6 +87,7 @@ def get_ocr() -> Any:
             text_det_limit_type="max",
         )
         _ocr_api = "predict"
+        _limit_cpu_threads()
         return _ocr
     except TypeError:
         pass
@@ -71,6 +98,7 @@ def get_ocr() -> Any:
     except TypeError:
         _ocr = PaddleOCR(use_angle_cls=True, lang="ch")
     _ocr_api = "ocr"
+    _limit_cpu_threads()
     return _ocr
 
 
@@ -180,7 +208,9 @@ def run_one(
             return collect_from_predict(ocr.predict(arr))
         raise RuntimeError("unsupported PaddleOCR API")
 
-    if not _paddle_lock.acquire(timeout=0.4):
+    # Wait out a just-finished call so this image is still read.
+    # Never start a second inference beside one that is already running.
+    if not _paddle_lock.acquire(timeout=min(3.0, timeout_sec)):
         print("[guild-ocr] skip paddle, still busy", flush=True)
         return [], True
 
@@ -432,28 +462,36 @@ class Handler(BaseHTTPRequestHandler):
         if length > 3_000_000:
             self._send(413, {"ok": False, "error": "payload too large"})
             return
-        try:
-            body = json.loads(self.rfile.read(length) or b"{}")
-        except Exception:
-            self._send(400, {"ok": False, "error": "invalid json"})
-            return
-        images = list(body.get("images") or [])
-        if body.get("image"):
-            images.insert(0, body["image"])
-        if body.get("imageData"):
-            images.insert(0, body["imageData"])
-        images = [str(v) for v in images if v]
-        if not images:
-            self._send(400, {"ok": False, "error": "missing image"})
-            return
         if _models_error:
+            self.rfile.read(length)
             self._send(503, {"ok": False, "error": f"识别模型加载失败：{_models_error}"})
             return
         if not _models_ready:
+            self.rfile.read(length)
             self._send(503, {"ok": False, "error": "识别模型加载中，请稍等再试"})
+            return
+        # One scan at a time. Reject before decoding so a second click
+        # does not stack JSON and ornate matching on top of Paddle.
+        if not _recognize_lock.acquire(blocking=False):
+            self.rfile.read(length)
+            self._send(503, {"ok": False, "error": BUSY_ERROR})
             return
         started = time.time()
         try:
+            try:
+                body = json.loads(self.rfile.read(length) or b"{}")
+            except Exception:
+                self._send(400, {"ok": False, "error": "invalid json"})
+                return
+            images = list(body.get("images") or [])
+            if body.get("image"):
+                images.insert(0, body["image"])
+            if body.get("imageData"):
+                images.insert(0, body["imageData"])
+            images = [str(v) for v in images if v]
+            if not images:
+                self._send(400, {"ok": False, "error": "missing image"})
+                return
             task = str(body.get("task") or "general")
             if task == "auction_item_name":
                 result = recognize_item_name_images(images)
@@ -464,6 +502,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, result)
         except Exception as exc:
             self._send(500, {"ok": False, "error": f"ocr failed: {exc}"})
+        finally:
+            _recognize_lock.release()
 
 
 def _load_models() -> None:

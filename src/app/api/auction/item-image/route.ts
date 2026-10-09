@@ -4,7 +4,11 @@ import {
   getMemberSession,
   requireAdminSession,
 } from "@/lib/auth";
-import { getItemImageData, setAuctionItemImage } from "@/lib/db";
+import {
+  getItemById,
+  readAuctionItemImage,
+  writeAuctionItemImageFile,
+} from "@/lib/db";
 import {
   readJsonBodyCapped,
   sanitizeAuctionItemImage,
@@ -50,7 +54,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "缺少拍品 ID" }, { status: 400 });
   }
 
-  const stored = getItemImageData(id);
+  const stored = await readAuctionItemImage(id);
   if (!stored) {
     return new NextResponse(null, { status: 404 });
   }
@@ -93,8 +97,12 @@ export async function PUT(request: Request) {
       { status: 400 },
     );
   }
+  if (!getItemById(id, { includeImages: false })) {
+    return NextResponse.json({ error: "拍品不存在" }, { status: 404 });
+  }
 
-  const item = setAuctionItemImage(id, imageData);
+  await writeAuctionItemImageFile(id, imageData);
+  const item = getItemById(id, { includeImages: false });
   if (!item) {
     return NextResponse.json({ error: "拍品不存在" }, { status: 404 });
   }

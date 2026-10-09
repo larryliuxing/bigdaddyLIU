@@ -7,6 +7,7 @@ import type {
   LeaderboardStats,
   SessionUser,
 } from "@/lib/types";
+import { compressAuctionItemImage } from "@/lib/auction/itemImageClient";
 import { extractDetectedName } from "@/lib/leaderboard/parse";
 import {
   formatThresholdPercentLabel,
@@ -250,12 +251,22 @@ export function LeaderboardPanel({
         setClickStep("power");
         setStatus("名字已确认，但战力未识别，请先点击战斗力数字");
       }
-    } catch {
-      setStatus(
-        clickStep === "power"
-          ? "战力识别失败，请再对准数字点击一次"
-          : "名字识别失败，请再对准蓝色字点击一次",
-      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "";
+      if (
+        message.includes("稍后再试") ||
+        message.includes("超时") ||
+        message.includes("卡住") ||
+        message.includes("连不上")
+      ) {
+        setStatus(message);
+      } else {
+        setStatus(
+          clickStep === "power"
+            ? "战力识别失败，请再对准数字点击一次"
+            : "名字识别失败，请再对准蓝色字点击一次",
+        );
+      }
       if (clickStep === "power") setPowersOk(false);
       else setPreviewNameOk(false);
     } finally {
@@ -301,6 +312,9 @@ export function LeaderboardPanel({
     setError("");
     setMessage("");
     try {
+      const imageForSave = imageData
+        ? await compressAuctionItemImage(imageData)
+        : null;
       const res = await fetch("/api/leaderboard", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -309,7 +323,7 @@ export function LeaderboardPanel({
           ocrNameText,
           ocrPowerTopText,
           powerTop,
-          imageData,
+          imageData: imageForSave,
         }),
       });
       const data = await res.json();

@@ -144,13 +144,9 @@ export function AddAuctionItemForm({
       const file = item.getAsFile();
       if (!file) return;
 
-      const reader = new FileReader();
-      reader.onload = async () => {
-        const dataUrl = String(reader.result || "");
-        const compressed = await compressAuctionItemImage(dataUrl);
+      void compressAuctionItemImage(file).then((compressed) => {
         setImageData(compressed);
-      };
-      reader.readAsDataURL(file);
+      });
       return;
     }
   }
