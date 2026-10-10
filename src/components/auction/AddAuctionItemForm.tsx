@@ -63,6 +63,7 @@ export function AddAuctionItemForm({
   const pasteRef = useRef<HTMLDivElement>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
   const priceStatsAbortRef = useRef<AbortController | null>(null);
+  const catalogImageToken = useRef(0);
 
   useEffect(() => {
     setRoster(members);
@@ -133,6 +134,24 @@ export function AddAuctionItemForm({
     }
     setCatalogOpen(false);
     setHighlight(0);
+    if (!(entry.imageItemId && entry.imageItemId > 0)) return;
+    const token = ++catalogImageToken.current;
+    const imageItemId = entry.imageItemId;
+    void (async () => {
+      try {
+        const res = await fetch(`/api/auction/item-image?id=${imageItemId}`, {
+          signal: AbortSignal.timeout(8000),
+        });
+        if (!res.ok || token !== catalogImageToken.current) return;
+        const blob = await res.blob();
+        if (!blob.size || token !== catalogImageToken.current) return;
+        const compressed = await compressAuctionItemImage(blob);
+        if (token !== catalogImageToken.current || !compressed) return;
+        setImageData(compressed);
+      } catch {
+        // Prices are already filled. A missing screenshot can still be pasted.
+      }
+    })();
   }
 
   async function handleImagePaste(e: React.ClipboardEvent) {
@@ -365,7 +384,7 @@ export function AddAuctionItemForm({
                 <p className="px-3 py-2 text-xs text-[var(--text-muted)]">
                   {name.trim()
                     ? "拍品库没有这个名字，添加后会自动记住"
-                    : "拍品库暂无记录，添加过的拍品下次可搜名字带出价格"}
+                    : "拍品库暂无记录，添加过的拍品下次可搜名字带出价格和装备图"}
                 </p>
               ) : (
                 <ul className="max-h-56 overflow-y-auto py-1">
@@ -382,8 +401,16 @@ export function AddAuctionItemForm({
                           onMouseEnter={() => setHighlight(index)}
                           onClick={() => applyCatalog(entry)}
                         >
+                          {entry.imageItemId ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              src={`/api/auction/item-image?id=${entry.imageItemId}`}
+                              alt=""
+                              className="h-10 w-10 shrink-0 rounded-md bg-[#0f1320] object-contain"
+                            />
+                          ) : null}
                           <span
-                            className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full"
+                            className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full"
                             style={{
                               background: qualityMeta(entry.quality).color,
                             }}
@@ -406,7 +433,7 @@ export function AddAuctionItemForm({
           )}
           {name.trim().length < 2 ? (
             <p className="mt-1 text-xs text-[var(--text-muted)]">
-              从拍品库点选会带出上次起拍价 / 加价 / 颜色；填写名称后显示同名历史成交价
+              从拍品库点选会带出上次起拍价 / 加价 / 颜色，有装备图时一并带出；填写名称后显示同名历史成交价
             </p>
           ) : priceStatsLoading ? (
             <p className="mt-1 text-xs text-[var(--text-muted)]">
@@ -532,7 +559,7 @@ export function AddAuctionItemForm({
             </div>
           ) : (
             <p className="text-sm text-[var(--text-muted)]">
-              点击此区域后 Ctrl+V 粘贴装备图（可选，不识别名称）
+              点击此区域后 Ctrl+V 粘贴装备图（可选）。从上方拍品库点选名字时，会带出上次的装备图
             </p>
           )}
         </div>

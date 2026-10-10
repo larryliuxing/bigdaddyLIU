@@ -431,6 +431,10 @@ function seedIfEmpty(database: Database.Database) {
     "has_image",
     "INTEGER NOT NULL DEFAULT 0",
   );
+  database.exec(
+    `CREATE INDEX IF NOT EXISTS idx_auction_items_has_image
+      ON auction_items(has_image, id)`,
+  );
   ensureColumn(
     database,
     "leaderboard_entries",
@@ -721,7 +725,7 @@ function backfillSaleHistory(database: Database.Database) {
   tx();
 }
 
-function toCatalogEntry(row: {
+type CatalogRow = {
   name: string;
   quality: string;
   last_start_price: number;
@@ -730,7 +734,29 @@ function toCatalogEntry(row: {
   last_bid_max: number | null;
   last_sold_price: number | null;
   use_count: number;
-}): ItemCatalogEntry {
+};
+
+function latestImageItemIdByNameKey(database: Database.Database) {
+  const rows = database
+    .prepare(
+      `SELECT id, name FROM auction_items
+       WHERE has_image = 1
+       ORDER BY id DESC`,
+    )
+    .all() as Array<{ id: number; name: string }>;
+  const map = new Map<string, number>();
+  for (const row of rows) {
+    const key = normalizeItemNameKey(row.name);
+    if (!key || map.has(key)) continue;
+    map.set(key, row.id);
+  }
+  return map;
+}
+
+function toCatalogEntry(
+  row: CatalogRow,
+  imageIds: Map<string, number>,
+): ItemCatalogEntry {
   return {
     name: row.name,
     quality: row.quality as ItemQuality,
@@ -740,6 +766,7 @@ function toCatalogEntry(row: {
     lastBidMax: row.last_bid_max ?? null,
     lastSoldPrice: row.last_sold_price ?? null,
     useCount: row.use_count,
+    imageItemId: imageIds.get(normalizeItemNameKey(row.name)) ?? null,
   };
 }
 
@@ -786,6 +813,7 @@ export function upsertItemCatalog(input: {
 export function searchItemCatalog(query: string, limit = 20): ItemCatalogEntry[] {
   const cap = Math.min(40, Math.max(1, limit));
   const database = ensureDb();
+  const imageIds = latestImageItemIdByNameKey(database);
   const q = query.trim();
   if (!q) {
     const rows = database
@@ -795,17 +823,8 @@ export function searchItemCatalog(query: string, limit = 20): ItemCatalogEntry[]
          ORDER BY updated_at DESC, use_count DESC, id DESC
          LIMIT ?`,
       )
-      .all(cap) as Array<{
-      name: string;
-      quality: string;
-      last_start_price: number;
-      last_bid_increment: number;
-      last_bid_min: number | null;
-      last_bid_max: number | null;
-      last_sold_price: number | null;
-      use_count: number;
-    }>;
-    return rows.map(toCatalogEntry);
+      .all(cap) as CatalogRow[];
+    return rows.map((row) => toCatalogEntry(row, imageIds));
   }
   const key = normalizeItemNameKey(q);
   const like = `%${q.replace(/[%_\\]/g, (ch) => `\\${ch}`)}%`;
@@ -825,17 +844,8 @@ export function searchItemCatalog(query: string, limit = 20): ItemCatalogEntry[]
          updated_at DESC
        LIMIT ?`,
     )
-    .all(like, keyLike, key, `${key}%`, cap) as Array<{
-    name: string;
-    quality: string;
-    last_start_price: number;
-    last_bid_increment: number;
-    last_bid_min: number | null;
-    last_bid_max: number | null;
-    last_sold_price: number | null;
-    use_count: number;
-  }>;
-  return rows.map(toCatalogEntry);
+    .all(like, keyLike, key, `${key}%`, cap) as CatalogRow[];
+  return rows.map((row) => toCatalogEntry(row, imageIds));
 }
 
 function backfillItemCatalog(database: Database.Database) {

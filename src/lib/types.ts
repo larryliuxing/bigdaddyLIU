@@ -142,6 +142,8 @@ export interface ItemCatalogEntry {
   lastBidMax: number | null;
   lastSoldPrice: number | null;
   useCount: number;
+  /** Latest lot that stored a screenshot for this name. Null when none. */
+  imageItemId: number | null;
 }
 
 export interface AuctionBid {

@@ -88,6 +88,36 @@ async function main() {
     assert.equal(pink.lastBidMin, 10);
     assert.equal(pink.lastBidMax, 80);
 
+    const beforeImage = db.searchItemCatalog("魔道书", 20)[0];
+    assert.equal(beforeImage.imageItemId, null);
+
+    const jpeg = `data:image/jpeg;base64,${"A".repeat(80)}`;
+    const older = db.createAuctionItem({
+      sessionId: session.id,
+      name: "魔道书 (回音魔力催化)",
+      quality: "purple",
+      startPrice: 8,
+      bidIncrement: 2,
+      dividendMemberIds: [member.id],
+    });
+    assert.ok(db.setAuctionItemImage(older.id, jpeg));
+    const withOlderImage = db.searchItemCatalog("魔道书", 20)[0];
+    assert.equal(withOlderImage.imageItemId, older.id);
+
+    const newer = db.createAuctionItem({
+      sessionId: session.id,
+      name: "魔道书 (回音魔力催化)",
+      quality: "purple",
+      startPrice: 8,
+      bidIncrement: 2,
+      dividendMemberIds: [member.id],
+    });
+    const stillOlder = db.searchItemCatalog("魔道书", 20)[0];
+    assert.equal(stillOlder.imageItemId, older.id);
+    assert.ok(db.setAuctionItemImage(newer.id, jpeg));
+    const withNewerImage = db.searchItemCatalog("魔道书", 20)[0];
+    assert.equal(withNewerImage.imageItemId, newer.id);
+
     const miss = db.searchItemCatalog("没有这件装", 20);
     assert.equal(miss.length, 0);
 
