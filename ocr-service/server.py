@@ -14,6 +14,10 @@ os.environ.setdefault("OMP_NUM_THREADS", "1")
 os.environ.setdefault("MKL_NUM_THREADS", "1")
 os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
+# oneDNN retunes on every new crop size and holds the process long enough
+# for the site to report 识别超时. Same model, no kernel autotune.
+os.environ.setdefault("FLAGS_use_mkldnn", "0")
+os.environ.setdefault("FLAGS_enable_mkldnn", "0")
 
 import base64
 import io
@@ -36,9 +40,12 @@ HOST = os.environ.get("GUILD_OCR_HOST", "127.0.0.1")
 PORT = int(os.environ.get("GUILD_OCR_PORT", "8765"))
 MAX_IMAGE_BYTES = 6_000_000
 MAX_IMAGES = 4
-PADDLE_TIMEOUT_SEC = 6.0
-LEFTOVER_PADDLE_TIMEOUT_SEC = 2.5
-RECOGNIZE_DEADLINE_SEC = 8.0
+PADDLE_TIMEOUT_SEC = 12.0
+# Ordinary roster lines share this budget with the one CPU thread.
+# Shorter than the Node request timeout so a slow read still returns
+# the ornate names already matched.
+LEFTOVER_PADDLE_TIMEOUT_SEC = 8.0
+RECOGNIZE_DEADLINE_SEC = 14.0
 
 DATA_URL_RE = re.compile(
     r"^data:image/(png|jpeg|jpg|webp);base64,(.+)$",
@@ -83,7 +90,12 @@ def get_ocr() -> Any:
             use_doc_orientation_classify=False,
             use_doc_unwarping=False,
             use_textline_orientation=False,
-            text_det_limit_side_len=4096,
+            # 4096 with the pipeline's default limit_type "min" enlarged a
+            # 76px-tall ordinary name line until one CPU thread exceeded
+            # the HTTP timeout. Detection only needs the long side; the
+            # recognizer still crops the original pixels. Ornate names
+            # never reach this model — they stay on the glyph templates.
+            text_det_limit_side_len=960,
             text_det_limit_type="max",
         )
         _ocr_api = "predict"

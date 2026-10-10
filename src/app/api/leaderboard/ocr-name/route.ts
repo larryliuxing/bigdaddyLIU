@@ -41,7 +41,7 @@ export async function POST(request: Request) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ task: "leaderboard_name", images }),
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(18000),
     });
     const data = (await res.json().catch(() => ({}))) as {
       text?: string;

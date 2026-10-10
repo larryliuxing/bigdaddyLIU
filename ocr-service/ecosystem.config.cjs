@@ -20,6 +20,8 @@ module.exports = {
         MKL_NUM_THREADS: "1",
         OPENBLAS_NUM_THREADS: "1",
         NUMEXPR_NUM_THREADS: "1",
+        FLAGS_use_mkldnn: "0",
+        FLAGS_enable_mkldnn: "0",
       },
     },
   ],

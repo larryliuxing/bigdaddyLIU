@@ -53,7 +53,7 @@ export async function recognizeWithPaddle(
   if (signal?.aborted) {
     throw new DOMException("Aborted", "AbortError");
   }
-  const timeout = AbortSignal.timeout(12000);
+  const timeout = AbortSignal.timeout(22000);
   let res: Response;
   try {
     res = await fetch("/api/ocr/recognize", {

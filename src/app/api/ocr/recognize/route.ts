@@ -68,7 +68,7 @@ async function recognizePost(request: Request) {
         task: String(body?.task || "general"),
         images,
       }),
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(18000),
     });
     const data = (await res.json().catch(() => ({}))) as {
       text?: string;

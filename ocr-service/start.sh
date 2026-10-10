@@ -20,5 +20,7 @@ export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 export OPENBLAS_NUM_THREADS=1
 export NUMEXPR_NUM_THREADS=1
+export FLAGS_use_mkldnn=0
+export FLAGS_enable_mkldnn=0
 
 exec "$PY" "$ROOT/ocr-service/server.py"
