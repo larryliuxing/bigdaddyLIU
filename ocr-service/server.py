@@ -1,11 +1,40 @@
 #!/usr/bin/env python3
-"""Local PaddleOCR service for every guild screenshot recognition path."""
+"""Local PaddleOCR service for every guild screenshot recognition path.
+
+CPU threads are capped at 1 so a name or item scan cannot pin every core
+and freeze the Next.js process. Crops, templates, and score cutoffs are
+unchanged — thread count does not alter the recognized text.
+"""
 from __future__ import annotations
+
+import os
+
+# Must be set before numpy / paddle load their BLAS pools.
+# Assignment, not setdefault: a parent env of "8" must not win.
+# ACTIVE wait (the default) keeps those threads spinning after the model
+# loads. On a quiet VPS that spin plus the default CPU-memory reserve grows
+# until the box swaps and only a hard reboot recovers it. PASSIVE parks
+# the threads. One thread, same pixels, same text.
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+os.environ["OMP_WAIT_POLICY"] = "PASSIVE"
+os.environ["KMP_BLOCKTIME"] = "0"
+os.environ["MKL_DYNAMIC"] = "FALSE"
+# oneDNN retunes on every new crop size and holds the process long enough
+# for the site to report 识别超时. Same model, no kernel autotune.
+os.environ["FLAGS_use_mkldnn"] = "0"
+os.environ["FLAGS_enable_mkldnn"] = "0"
+# Default allocator reserves a large slice of RAM at startup. auto_growth
+# only takes what the model uses, so an idle box does not slide into swap.
+os.environ["FLAGS_allocator_strategy"] = "auto_growth"
+os.environ["FLAGS_eager_delete_tensor_gb"] = "0"
 
 import base64
 import io
 import json
-import os
 import re
 import sys
 import threading
@@ -24,9 +53,12 @@ HOST = os.environ.get("GUILD_OCR_HOST", "127.0.0.1")
 PORT = int(os.environ.get("GUILD_OCR_PORT", "8765"))
 MAX_IMAGE_BYTES = 6_000_000
 MAX_IMAGES = 4
-PADDLE_TIMEOUT_SEC = 6.0
-LEFTOVER_PADDLE_TIMEOUT_SEC = 2.5
-RECOGNIZE_DEADLINE_SEC = 8.0
+PADDLE_TIMEOUT_SEC = 12.0
+# Ordinary roster lines share this budget with the one CPU thread.
+# Shorter than the Node request timeout so a slow read still returns
+# the ornate names already matched.
+LEFTOVER_PADDLE_TIMEOUT_SEC = 8.0
+RECOGNIZE_DEADLINE_SEC = 14.0
 
 DATA_URL_RE = re.compile(
     r"^data:image/(png|jpeg|jpg|webp);base64,(.+)$",
@@ -39,8 +71,54 @@ _models_ready = False
 _models_error = ""
 _load_lock = threading.Lock()
 _paddle_lock = threading.Lock()
+_recognize_lock = threading.Lock()
 _paddle_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="paddle")
 PADDLE_MAX_EDGE = 640
+BUSY_ERROR = "上一次识别还在进行，请稍后再试"
+
+
+def _park_blas_threads() -> None:
+    """Ask a loaded OpenMP runtime to sleep instead of spin. Best effort."""
+    import ctypes
+
+    for libname in ("libiomp5.so", "libomp.so", "libgomp.so.1"):
+        try:
+            lib = ctypes.CDLL(libname)
+        except OSError:
+            continue
+        blocktime = getattr(lib, "kmp_set_blocktime", None)
+        if blocktime:
+            blocktime.argtypes = [ctypes.c_int]
+            blocktime(0)
+        omp_threads = getattr(lib, "omp_set_num_threads", None)
+        if omp_threads:
+            omp_threads.argtypes = [ctypes.c_int]
+            omp_threads(1)
+        return
+
+
+def _limit_cpu_threads() -> None:
+    """One intra-op thread. Same pixels in, same text out."""
+    try:
+        import paddle
+
+        setter = getattr(paddle, "set_num_threads", None)
+        if setter:
+            setter(1)
+        flags = getattr(paddle, "set_flags", None)
+        if flags:
+            flags(
+                {
+                    "FLAGS_use_mkldnn": False,
+                    "FLAGS_enable_mkldnn": False,
+                }
+            )
+    except Exception as exc:
+        print(f"[guild-ocr] could not cap paddle threads: {exc}", flush=True)
+    try:
+        _park_blas_threads()
+    except Exception as exc:
+        print(f"[guild-ocr] could not park blas threads: {exc}", flush=True)
 
 
 def get_ocr() -> Any:
@@ -50,20 +128,36 @@ def get_ocr() -> Any:
     from paddleocr import PaddleOCR
 
     # PaddleOCR 3.x — PP-OCRv5 server is better on decorative CJK.
-    try:
-        _ocr = PaddleOCR(
-            lang="ch",
-            ocr_version="PP-OCRv5",
-            use_doc_orientation_classify=False,
-            use_doc_unwarping=False,
-            use_textline_orientation=False,
-            text_det_limit_side_len=4096,
-            text_det_limit_type="max",
-        )
-        _ocr_api = "predict"
-        return _ocr
-    except TypeError:
-        pass
+    # cpu_threads / enable_mkldnn are applied when the predictor is built.
+    # The env vars alone lose: the pipeline defaults to every core and
+    # oneDNN, then those threads keep spinning after the call returns.
+    base_kwargs: dict[str, Any] = {
+        "lang": "ch",
+        "ocr_version": "PP-OCRv5",
+        "use_doc_orientation_classify": False,
+        "use_doc_unwarping": False,
+        "use_textline_orientation": False,
+        # 4096 with the pipeline's default limit_type "min" enlarged a
+        # 76px-tall ordinary name line until one CPU thread exceeded
+        # the HTTP timeout. Detection only needs the long side; the
+        # recognizer still crops the original pixels. Ornate names
+        # never reach this model — they stay on the glyph templates.
+        "text_det_limit_side_len": 960,
+        "text_det_limit_type": "max",
+    }
+    for extra in (
+        {"device": "cpu", "cpu_threads": 1, "enable_mkldnn": False},
+        {"cpu_threads": 1, "enable_mkldnn": False},
+        {},
+    ):
+        try:
+            _ocr = PaddleOCR(**base_kwargs, **extra)
+            _ocr_api = "predict"
+            _limit_cpu_threads()
+            return _ocr
+        except TypeError:
+            _ocr = None
+            continue
 
     # PaddleOCR 2.x
     try:
@@ -71,6 +165,7 @@ def get_ocr() -> Any:
     except TypeError:
         _ocr = PaddleOCR(use_angle_cls=True, lang="ch")
     _ocr_api = "ocr"
+    _limit_cpu_threads()
     return _ocr
 
 
@@ -167,44 +262,53 @@ def run_one(
     import numpy as np
 
     def _call() -> list[tuple[float, str, float]]:
-        ocr = get_ocr()
-        arr = np.array(img)
-        if _ocr_api == "predict" and hasattr(ocr, "predict"):
-            return collect_from_predict(ocr.predict(arr))
-        if hasattr(ocr, "ocr"):
+        try:
+            ocr = get_ocr()
+            arr = np.array(img)
+            if _ocr_api == "predict" and hasattr(ocr, "predict"):
+                rows = collect_from_predict(ocr.predict(arr))
+            elif hasattr(ocr, "ocr"):
+                try:
+                    rows = collect_from_ocr(ocr.ocr(arr, cls=True))
+                except TypeError:
+                    rows = collect_from_ocr(ocr.ocr(arr))
+            elif hasattr(ocr, "predict"):
+                rows = collect_from_predict(ocr.predict(arr))
+            else:
+                raise RuntimeError("unsupported PaddleOCR API")
+            return rows
+        finally:
+            # Re-park after predict. Some builds turn the wait policy back
+            # to spin when the op ends, and the next idle minute burns a core.
             try:
-                return collect_from_ocr(ocr.ocr(arr, cls=True))
-            except TypeError:
-                return collect_from_ocr(ocr.ocr(arr))
-        if hasattr(ocr, "predict"):
-            return collect_from_predict(ocr.predict(arr))
-        raise RuntimeError("unsupported PaddleOCR API")
+                _limit_cpu_threads()
+            except Exception:
+                pass
+            _paddle_lock.release()
 
-    if not _paddle_lock.acquire(timeout=0.4):
+    # Do not queue a second predict while one is still inside the runtime.
+    # The old reap released this lock after 120s even if predict was still
+    # running, so later scans stacked threads that never exited.
+    if not _paddle_lock.acquire(blocking=False):
         print("[guild-ocr] skip paddle, still busy", flush=True)
         return [], True
 
-    future = _paddle_pool.submit(_call)
     try:
-        result = future.result(timeout=timeout_sec)
-    except FuturesTimeout:
-        print("[guild-ocr] paddle timed out", flush=True)
-
-        def _reap() -> None:
-            try:
-                future.result(timeout=120)
-            except Exception as exc:
-                print(f"[guild-ocr] paddle reap: {exc}", flush=True)
-            _paddle_lock.release()
-
-        threading.Thread(target=_reap, daemon=True, name="paddle-reap").start()
-        return [], True
+        future = _paddle_pool.submit(_call)
     except Exception as exc:
-        print(f"[guild-ocr] paddle failed: {exc}", flush=True)
+        print(f"[guild-ocr] paddle submit failed: {exc}", flush=True)
         _paddle_lock.release()
         return [], False
 
-    _paddle_lock.release()
+    try:
+        result = future.result(timeout=timeout_sec)
+    except FuturesTimeout:
+        print("[guild-ocr] paddle timed out; slot stays held until it finishes", flush=True)
+        return [], True
+    except Exception as exc:
+        print(f"[guild-ocr] paddle failed: {exc}", flush=True)
+        return [], False
+
     return result, False
 
 
@@ -432,28 +536,36 @@ class Handler(BaseHTTPRequestHandler):
         if length > 3_000_000:
             self._send(413, {"ok": False, "error": "payload too large"})
             return
-        try:
-            body = json.loads(self.rfile.read(length) or b"{}")
-        except Exception:
-            self._send(400, {"ok": False, "error": "invalid json"})
-            return
-        images = list(body.get("images") or [])
-        if body.get("image"):
-            images.insert(0, body["image"])
-        if body.get("imageData"):
-            images.insert(0, body["imageData"])
-        images = [str(v) for v in images if v]
-        if not images:
-            self._send(400, {"ok": False, "error": "missing image"})
-            return
         if _models_error:
+            self.rfile.read(length)
             self._send(503, {"ok": False, "error": f"识别模型加载失败：{_models_error}"})
             return
         if not _models_ready:
+            self.rfile.read(length)
             self._send(503, {"ok": False, "error": "识别模型加载中，请稍等再试"})
+            return
+        # One scan at a time. Reject before decoding so a second click
+        # does not stack JSON and ornate matching on top of Paddle.
+        if not _recognize_lock.acquire(blocking=False):
+            self.rfile.read(length)
+            self._send(503, {"ok": False, "error": BUSY_ERROR})
             return
         started = time.time()
         try:
+            try:
+                body = json.loads(self.rfile.read(length) or b"{}")
+            except Exception:
+                self._send(400, {"ok": False, "error": "invalid json"})
+                return
+            images = list(body.get("images") or [])
+            if body.get("image"):
+                images.insert(0, body["image"])
+            if body.get("imageData"):
+                images.insert(0, body["imageData"])
+            images = [str(v) for v in images if v]
+            if not images:
+                self._send(400, {"ok": False, "error": "missing image"})
+                return
             task = str(body.get("task") or "general")
             if task == "auction_item_name":
                 result = recognize_item_name_images(images)
@@ -464,6 +576,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, result)
         except Exception as exc:
             self._send(500, {"ok": False, "error": f"ocr failed: {exc}"})
+        finally:
+            _recognize_lock.release()
 
 
 def _load_models() -> None:

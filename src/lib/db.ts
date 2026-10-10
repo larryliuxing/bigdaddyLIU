@@ -81,6 +81,8 @@ export function ensureDb(): Database.Database {
   db = new Database(dbPath);
   db.pragma("journal_mode = WAL");
   db.pragma("busy_timeout = 5000");
+  // WAL + NORMAL keeps a screenshot write from fsync-stalling every poll.
+  db.pragma("synchronous = NORMAL");
   db.exec(`
     CREATE TABLE IF NOT EXISTS members (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -429,6 +431,10 @@ function seedIfEmpty(database: Database.Database) {
     "has_image",
     "INTEGER NOT NULL DEFAULT 0",
   );
+  database.exec(
+    `CREATE INDEX IF NOT EXISTS idx_auction_items_has_image
+      ON auction_items(has_image, id)`,
+  );
   ensureColumn(
     database,
     "leaderboard_entries",
@@ -719,7 +725,7 @@ function backfillSaleHistory(database: Database.Database) {
   tx();
 }
 
-function toCatalogEntry(row: {
+type CatalogRow = {
   name: string;
   quality: string;
   last_start_price: number;
@@ -728,7 +734,29 @@ function toCatalogEntry(row: {
   last_bid_max: number | null;
   last_sold_price: number | null;
   use_count: number;
-}): ItemCatalogEntry {
+};
+
+function latestImageItemIdByNameKey(database: Database.Database) {
+  const rows = database
+    .prepare(
+      `SELECT id, name FROM auction_items
+       WHERE has_image = 1
+       ORDER BY id DESC`,
+    )
+    .all() as Array<{ id: number; name: string }>;
+  const map = new Map<string, number>();
+  for (const row of rows) {
+    const key = normalizeItemNameKey(row.name);
+    if (!key || map.has(key)) continue;
+    map.set(key, row.id);
+  }
+  return map;
+}
+
+function toCatalogEntry(
+  row: CatalogRow,
+  imageIds: Map<string, number>,
+): ItemCatalogEntry {
   return {
     name: row.name,
     quality: row.quality as ItemQuality,
@@ -738,6 +766,7 @@ function toCatalogEntry(row: {
     lastBidMax: row.last_bid_max ?? null,
     lastSoldPrice: row.last_sold_price ?? null,
     useCount: row.use_count,
+    imageItemId: imageIds.get(normalizeItemNameKey(row.name)) ?? null,
   };
 }
 
@@ -784,6 +813,7 @@ export function upsertItemCatalog(input: {
 export function searchItemCatalog(query: string, limit = 20): ItemCatalogEntry[] {
   const cap = Math.min(40, Math.max(1, limit));
   const database = ensureDb();
+  const imageIds = latestImageItemIdByNameKey(database);
   const q = query.trim();
   if (!q) {
     const rows = database
@@ -793,17 +823,8 @@ export function searchItemCatalog(query: string, limit = 20): ItemCatalogEntry[]
          ORDER BY updated_at DESC, use_count DESC, id DESC
          LIMIT ?`,
       )
-      .all(cap) as Array<{
-      name: string;
-      quality: string;
-      last_start_price: number;
-      last_bid_increment: number;
-      last_bid_min: number | null;
-      last_bid_max: number | null;
-      last_sold_price: number | null;
-      use_count: number;
-    }>;
-    return rows.map(toCatalogEntry);
+      .all(cap) as CatalogRow[];
+    return rows.map((row) => toCatalogEntry(row, imageIds));
   }
   const key = normalizeItemNameKey(q);
   const like = `%${q.replace(/[%_\\]/g, (ch) => `\\${ch}`)}%`;
@@ -823,17 +844,8 @@ export function searchItemCatalog(query: string, limit = 20): ItemCatalogEntry[]
          updated_at DESC
        LIMIT ?`,
     )
-    .all(like, keyLike, key, `${key}%`, cap) as Array<{
-    name: string;
-    quality: string;
-    last_start_price: number;
-    last_bid_increment: number;
-    last_bid_min: number | null;
-    last_bid_max: number | null;
-    last_sold_price: number | null;
-    use_count: number;
-  }>;
-  return rows.map(toCatalogEntry);
+    .all(like, keyLike, key, `${key}%`, cap) as CatalogRow[];
+  return rows.map((row) => toCatalogEntry(row, imageIds));
 }
 
 function backfillItemCatalog(database: Database.Database) {
@@ -1598,17 +1610,21 @@ export function listItems(
 export function listItemImages(
   sessionId: number,
 ): Array<{ id: number; imageData: string | null }> {
-  return ensureDb()
+  const rows = ensureDb()
     .prepare(
-      `SELECT id, image_data FROM auction_items
+      `SELECT id, image_data, has_image FROM auction_items
        WHERE session_id = ?
        ORDER BY sort_order ASC, id ASC`,
     )
-    .all(sessionId)
-    .map((row) => {
-      const typed = row as { id: number; image_data: string | null };
-      return { id: typed.id, imageData: typed.image_data };
-    });
+    .all(sessionId) as Array<{
+    id: number;
+    image_data: string | null;
+    has_image: number | null;
+  }>;
+  return rows.map((row) => ({
+    id: row.id,
+    imageData: resolveAuctionItemImage(row.id, row.image_data, row.has_image),
+  }));
 }
 
 /** Latest high bidder per item in a session (by max bid id = current price). */
@@ -1833,11 +1849,87 @@ export function getItemById(
     : null;
 }
 
+function auctionItemImagePath(itemId: number) {
+  return path.join(dataDir, "item-images", `${itemId}.txt`);
+}
+
+function resolveAuctionItemImage(
+  itemId: number,
+  imageData: string | null | undefined,
+  hasImage: number | null | undefined,
+): string | null {
+  if (imageData && imageData.length > 32) return imageData;
+  if (!hasImage) return null;
+  try {
+    const text = fs.readFileSync(auctionItemImagePath(itemId), "utf8");
+    return text.length > 32 ? text : null;
+  } catch {
+    return null;
+  }
+}
+
 export function getItemImageData(itemId: number): string | null {
   const row = ensureDb()
-    .prepare(`SELECT image_data FROM auction_items WHERE id = ?`)
-    .get(itemId) as { image_data: string | null } | undefined;
-  return row?.image_data ?? null;
+    .prepare(
+      `SELECT image_data, has_image FROM auction_items WHERE id = ?`,
+    )
+    .get(itemId) as
+    | { image_data: string | null; has_image: number | null }
+    | undefined;
+  if (!row) return null;
+  return resolveAuctionItemImage(itemId, row.image_data, row.has_image);
+}
+
+export async function readAuctionItemImage(
+  itemId: number,
+): Promise<string | null> {
+  const row = ensureDb()
+    .prepare(
+      `SELECT image_data, has_image FROM auction_items WHERE id = ?`,
+    )
+    .get(itemId) as
+    | { image_data: string | null; has_image: number | null }
+    | undefined;
+  if (!row) return null;
+  if (row.image_data && row.image_data.length > 32) return row.image_data;
+  if (!row.has_image) return null;
+  try {
+    const text = await fs.promises.readFile(auctionItemImagePath(itemId), "utf8");
+    return text.length > 32 ? text : null;
+  } catch {
+    return null;
+  }
+}
+
+function markAuctionItemImage(itemId: number) {
+  ensureDb()
+    .prepare(
+      `UPDATE auction_items SET image_data = NULL, has_image = 1 WHERE id = ?`,
+    )
+    .run(itemId);
+}
+
+function writeAuctionItemImageFileSync(itemId: number, dataUrl: string) {
+  const dest = auctionItemImagePath(itemId);
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  const tmp = `${dest}.tmp`;
+  fs.writeFileSync(tmp, dataUrl);
+  fs.renameSync(tmp, dest);
+  markAuctionItemImage(itemId);
+}
+
+/** Disk write stays off the SQLite lock so live auction polls keep moving. */
+export async function writeAuctionItemImageFile(itemId: number, dataUrl: string) {
+  const dest = auctionItemImagePath(itemId);
+  await fs.promises.mkdir(path.dirname(dest), { recursive: true });
+  const tmp = `${dest}.${process.pid}.tmp`;
+  await fs.promises.writeFile(tmp, dataUrl);
+  await fs.promises.rename(tmp, dest);
+  markAuctionItemImage(itemId);
+}
+
+function removeAuctionItemImageFile(itemId: number) {
+  fs.rmSync(auctionItemImagePath(itemId), { force: true });
 }
 
 /** Attach a screenshot after the lot exists so create is never blocked by the blob. */
@@ -1849,11 +1941,7 @@ export function setAuctionItemImage(
   if (!existing) return null;
   const sanitized = sanitizeAuctionItemImage(imageData);
   if (!sanitized) return null;
-  ensureDb()
-    .prepare(
-      `UPDATE auction_items SET image_data = ?, has_image = 1 WHERE id = ?`,
-    )
-    .run(sanitized, itemId);
+  writeAuctionItemImageFileSync(itemId, sanitized);
   return getItemById(itemId, { includeImages: false })!;
 }
 
@@ -1880,7 +1968,6 @@ export function createAuctionItem(input: {
   const bidMax = pink ? (input.bidMax ?? null) : null;
   const startPrice = pink ? (bidMin ?? input.startPrice) : input.startPrice;
   const imageData = sanitizeAuctionItemImage(input.imageData);
-  const hasImage = Boolean(imageData && imageData.length > 32);
   const dividendIds = [
     ...new Set(input.dividendMemberIds.map(Number).filter((id) => id > 0)),
   ];
@@ -1901,8 +1988,8 @@ export function createAuctionItem(input: {
         input.quality,
         startPrice,
         input.bidIncrement,
-        imageData,
-        hasImage ? 1 : 0,
+        null,
+        0,
         maxOrder.max_order + 1,
         startPrice,
         bidMin,
@@ -1915,6 +2002,10 @@ export function createAuctionItem(input: {
     }
     return id;
   })();
+
+  if (imageData) {
+    writeAuctionItemImageFileSync(itemId, imageData);
+  }
 
   upsertItemCatalog({
     name: input.name,
@@ -2013,6 +2104,7 @@ export function deleteAuctionItem(itemId: number): boolean {
   const result = database
     .prepare(`DELETE FROM auction_items WHERE id = ?`)
     .run(itemId);
+  if (result.changes > 0) removeAuctionItemImageFile(itemId);
   return result.changes > 0;
 }
 

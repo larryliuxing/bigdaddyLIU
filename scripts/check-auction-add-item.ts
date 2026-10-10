@@ -44,6 +44,15 @@ async function main() {
     });
     assert.equal(kept.hasImage, true);
     assert.equal(db.getItemImageData(kept.id), small);
+    const keptRow = db
+      .ensureDb()
+      .prepare(`SELECT image_data FROM auction_items WHERE id = ?`)
+      .get(kept.id) as { image_data: string | null };
+    assert.equal(
+      keptRow.image_data,
+      null,
+      "screenshot bytes must stay out of the SQLite row",
+    );
 
     const started = Date.now();
     const dropped = db.createAuctionItem({

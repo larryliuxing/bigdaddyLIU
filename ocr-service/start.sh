@@ -15,4 +15,18 @@ if ! "$PY" -c "from PIL import Image" >/dev/null 2>&1; then
   exit 1
 fi
 
+# One BLAS thread, and it must sleep when idle. Name accuracy is unchanged.
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+export NUMEXPR_NUM_THREADS=1
+export VECLIB_MAXIMUM_THREADS=1
+export OMP_WAIT_POLICY=PASSIVE
+export KMP_BLOCKTIME=0
+export MKL_DYNAMIC=FALSE
+export FLAGS_use_mkldnn=0
+export FLAGS_enable_mkldnn=0
+export FLAGS_allocator_strategy=auto_growth
+export FLAGS_eager_delete_tensor_gb=0
+
 exec "$PY" "$ROOT/ocr-service/server.py"

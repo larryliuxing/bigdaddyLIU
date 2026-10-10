@@ -6,6 +6,10 @@ import {
   upsertLeaderboardEntry,
 } from "@/lib/db";
 import { parseCombatPowerScreenshot } from "@/lib/leaderboard/parse";
+import {
+  readJsonBodyCapped,
+  sanitizeAuctionItemImage,
+} from "@/lib/auction/itemImage";
 
 export const runtime = "nodejs";
 
@@ -19,14 +23,20 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "请先选择身份登录" }, { status: 401 });
   }
 
-  const body = await request.json().catch(() => null);
+  const parsedBody = await readJsonBodyCapped(request, 1_500_000);
+  if (parsedBody.tooLarge) {
+    return NextResponse.json(
+      { error: "截图太大，已阻止以免卡住服务器。请重新粘贴后再提交" },
+      { status: 413 },
+    );
+  }
+  const body = (parsedBody.body ?? null) as Record<string, unknown> | null;
   const ocrText = String(body?.ocrText ?? "");
   const ocrNameText = String(body?.ocrNameText ?? "");
   const ocrPowerTopText = String(body?.ocrPowerTopText ?? "");
   const powerTop =
     typeof body?.powerTop === "number" ? body.powerTop : null;
-  const imageData =
-    typeof body?.imageData === "string" ? body.imageData : null;
+  const imageData = sanitizeAuctionItemImage(body?.imageData);
 
   if (!ocrNameText.trim()) {
     return NextResponse.json(

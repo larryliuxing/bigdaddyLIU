@@ -10,6 +10,9 @@ const OCR_BASE = (process.env.GUILD_OCR_URL || "http://127.0.0.1:8765").replace(
 );
 const MAX_IMAGE_CHARS = 500_000;
 const MAX_OCR_POST_BYTES = 3_000_000;
+const OCR_BUSY = "上一次识别还在进行，请稍后再试";
+
+let ocrInFlight = false;
 
 export async function POST(request: Request) {
   const user = await getSession();
@@ -17,6 +20,23 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "请先登录" }, { status: 401 });
   }
 
+  if (ocrInFlight) {
+    await request.body?.cancel().catch(() => undefined);
+    return NextResponse.json(
+      { text: "", lines: [], error: OCR_BUSY },
+      { status: 503 },
+    );
+  }
+  ocrInFlight = true;
+
+  try {
+    return await recognizePost(request);
+  } finally {
+    ocrInFlight = false;
+  }
+}
+
+async function recognizePost(request: Request) {
   const parsed = await readJsonBodyCapped(request, MAX_OCR_POST_BYTES);
   if (parsed.tooLarge) {
     return NextResponse.json(
@@ -48,7 +68,7 @@ export async function POST(request: Request) {
         task: String(body?.task || "general"),
         images,
       }),
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(18000),
     });
     const data = (await res.json().catch(() => ({}))) as {
       text?: string;
@@ -58,7 +78,7 @@ export async function POST(request: Request) {
     if (!res.ok) {
       return NextResponse.json(
         { text: "", lines: [], error: data.error || "识别服务失败" },
-        { status: 502 },
+        { status: res.status === 503 || res.status === 413 ? res.status : 502 },
       );
     }
     const lines = Array.isArray(data.lines)
