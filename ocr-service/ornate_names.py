@@ -26,6 +26,13 @@ NAME_5 = "\u9468\u9468\u9f93\u9468\u9468\u9468"
 NAME_6 = "\u9468\u7216\u5dc4\u5dc3\u7932\u8c45"
 NAME_7 = "\u9468\u9f93\u5fbf\u8d1a\u8d1a\u9468"
 NAME_8 = "\u5131\u5131\u5131\u6f0b\u6f0b\u6f0b"
+# 爖徿贚巄礲蠬-bob1-carry. 虫字旁 蠬 is new.
+NAME_9 = "\u7216\u5fbf\u8d1a\u5dc4\u7932\u882c"
+# 鑨龓鑨龓爖爖-天堂GM. The third glyph's 金 radical sits in a gap
+# the valley splitter used to clip off, leaving a 贝-shaped remnant.
+NAME_10 = "\u9468\u9f93\u9468\u9f93\u7216\u7216"
+# 鑨徿龓躘豅巃-红唇猎客. 足字旁 躘 must stay distinct from 金 鑨.
+NAME_11 = "\u9468\u5fbf\u9f93\u8e98\u8c45\u5dc3"
 NAME_LUOLONG = NAME_1
 KNOWN_NAMES = (
     NAME_1,
@@ -36,6 +43,9 @@ KNOWN_NAMES = (
     NAME_6,
     NAME_7,
     NAME_8,
+    NAME_9,
+    NAME_10,
+    NAME_11,
 )
 
 # Human-read labels for sample crops (left-to-right).
@@ -53,6 +63,9 @@ SEED_LABELS = {
     "name-7b.png": list(NAME_7),
     "name-8.png": list(NAME_8),
     "name-8b.png": list(NAME_8),
+    "name-9.png": list(NAME_9),
+    "name-10.png": list(NAME_10),
+    "name-11.png": list(NAME_11),
 }
 
 
@@ -146,6 +159,28 @@ def _refine_bands(col: np.ndarray, bands: list[tuple[int, int]], search: int = 5
     return [(cuts[i], cuts[i + 1]) for i in range(len(cuts) - 1)]
 
 
+def _row_glyph_bands(row: Image.Image, expected: int = 6) -> tuple[int, int, list[tuple[int, int]]]:
+    gray = np.array(row.convert("L"))
+    invert = gray.mean() > 140
+    ink = _ink_mask(gray, invert=invert)
+    left = _left_text_x(ink)
+    text = ink[:, left:]
+    _height, width = text.shape
+    col = text.sum(axis=0)
+    span = _ink_span(col, min_val=2.0) or _ink_span(col, min_val=1.0) or (0, width)
+    if (span[1] - span[0]) >= expected * 8:
+        bands = _refine_bands(col, _equal_bands(span[0], span[1], expected))
+    elif width >= expected * 8:
+        bands = _refine_bands(col, _equal_bands(0, width, expected))
+    else:
+        bands = [(0, width)]
+    return left, width, bands
+
+
+def _crop_band(row: Image.Image, left: int, width: int, start: int, end: int) -> Image.Image:
+    return row.crop((left + max(0, start - 1), 0, left + min(width, end + 1), row.height))
+
+
 def split_glyphs(row: Image.Image, expected: int | None = None) -> list[Image.Image]:
     gray = np.array(row.convert("L"))
     invert = gray.mean() > 140
@@ -170,8 +205,67 @@ def split_glyphs(row: Image.Image, expected: int | None = None) -> list[Image.Im
         merged = [(0, width)]
     glyphs = []
     for a, b in merged:
-        crop = row.crop((left + max(0, a - 1), 0, left + min(width, b + 1), row.height))
-        glyphs.append(crop)
+        glyphs.append(_crop_band(row, left, width, a, b))
+    return glyphs
+
+
+# Clipping the left radical turns 金 (鑨) into something the templates call 贝 (贚).
+# 足 (躘) is the other lookalike. A wider crop is kept only for that swap.
+_RADICAL_TWINS = (
+    frozenset({"\u9468", "\u8d1a"}),  # 金 / 贝
+    frozenset({"\u9468", "\u8e98"}),  # 金 / 足
+)
+
+
+def _plain_label(
+    glyph: Image.Image,
+    templates: dict[str, np.ndarray],
+) -> tuple[str, float]:
+    return _score_vec(_feature(glyph), templates)
+
+
+def glyphs_for_row(
+    row: Image.Image,
+    templates: dict[str, np.ndarray] | None = None,
+    expected: int = 6,
+) -> list[Image.Image]:
+    """Split a name row.
+
+    A cell much narrower than its neighbors has usually lost its left
+    radical: the gap between 金 and the dragon body was treated as the
+    character boundary, so 金 was read as 贝. Put that radical back only
+    when the new label is the 金/贝 or 金/足 twin. Other narrow cells
+    (a correct 贝, a 火) stay as the valley split drew them.
+    """
+    left, width, bands = _row_glyph_bands(row, expected)
+    glyphs = [_crop_band(row, left, width, a, b) for a, b in bands]
+    if not templates or len(bands) != expected:
+        return glyphs
+    widths = [b - a for a, b in bands]
+    median = sorted(widths)[len(widths) // 2]
+    if median < 8:
+        return glyphs
+    for i, (start, end) in enumerate(bands):
+        if widths[i] >= median * 0.75:
+            continue
+        base_label, base_score = _plain_label(glyphs[i], templates)
+        if base_label not in {"\u9468", "\u8d1a", "\u8e98"}:
+            continue
+        best_glyph = glyphs[i]
+        best_label = base_label
+        best_score = base_score
+        for extra in range(6, 14):
+            na = start - extra
+            if na < bands[0][0] - 2 or end - na > median * 1.25:
+                continue
+            candidate = _crop_band(row, left, width, na, end)
+            label, score = _plain_label(candidate, templates)
+            if score > best_score + 0.01 and frozenset({label, base_label}) in _RADICAL_TWINS:
+                best_score = score
+                best_label = label
+                best_glyph = candidate
+        if best_label != base_label:
+            glyphs[i] = best_glyph
     return glyphs
 
 
@@ -231,9 +325,21 @@ def _shifted_glyphs(glyph: Image.Image) -> list[Image.Image]:
     return out
 
 
+# Crops that must not join an existing class. name-9's first glyph is 爖 but
+# scores like 鑨 and would steal a real 金; its 巄 crop flips another row's
+# third glyph. name-10 is recovered by putting the 金 radical back, so its
+# glyphs stay out of the banks. name-11 only contributes the new 足 radical.
+SEED_SKIP_INDEX = {
+    "name-9.png": {0, 2, 3, 4},
+    "name-10.png": {0, 1, 2, 3, 4, 5},
+    "name-11.png": {0, 1, 2, 4, 5},
+}
+
+
 def collect_seed_pairs(exclude: set[str] | None = None) -> list[tuple[str, Image.Image]]:
     skip = exclude or set()
     pairs: list[tuple[str, Image.Image]] = []
+    templates = load_templates()
     for filename, chars in SEED_LABELS.items():
         if filename in skip:
             continue
@@ -241,10 +347,15 @@ def collect_seed_pairs(exclude: set[str] | None = None) -> list[tuple[str, Image
         if not path.is_file():
             raise FileNotFoundError(path)
         img = Image.open(path).convert("RGB")
-        glyphs = split_glyphs((split_rows(img) or [img])[0], expected=len(chars))
+        row = (split_rows(img) or [img])[0]
+        glyphs = glyphs_for_row(row, templates, expected=len(chars))
         if len(glyphs) != len(chars):
             raise ValueError(f"{filename}: glyph count mismatch")
-        pairs.extend(zip(chars, glyphs))
+        dropped = SEED_SKIP_INDEX.get(filename, set())
+        for index, (label, glyph) in enumerate(zip(chars, glyphs)):
+            if index in dropped:
+                continue
+            pairs.append((label, glyph))
     return pairs
 
 
@@ -382,7 +493,7 @@ def best_ornate_match(
         return "", 0.0
     best_name = ""
     best_key = (-1.0, -1.0)
-    glyphs = split_glyphs(row, expected=6)
+    glyphs = glyphs_for_row(row, templates, expected=6)
     if len(glyphs) == 6:
         name, score, parts = match_glyphs(glyphs, templates)
         best_key = (score, min(parts) if parts else -1.0)

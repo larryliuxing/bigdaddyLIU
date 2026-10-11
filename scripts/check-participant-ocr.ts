@@ -118,6 +118,26 @@ const grayBean = `${nameMix}-\u7070\u8c46`;
 assert.equal(scoreNameMatch(nameOther, grayBean), 0);
 assert.equal(findBestMemberForOcrName(nameOther, [{ id: 31, name: grayBean }]), null);
 
+// 3rd + 5th glyphs are enough. Other positions may be a 金/足 miss.
+const bob1 = "\u7216\u5fbf\u8d1a\u5dc4\u7932\u882c";
+const bob1Clipped = "\u9468\u8d1a\u8d1a\u5dc4\u7932\u5dc4";
+const tiantang = "\u9468\u9f93\u9468\u9f93\u7216\u7216";
+const tiantangBei = "\u9468\u9f93\u8d1a\u9f93\u7216\u7216";
+const hongchun = "\u9468\u5fbf\u9f93\u8e98\u8c45\u5dc3";
+const hongchunGold = "\u9468\u5fbf\u9f93\u9468\u8c45\u5dc3";
+const ornateRoster = [
+  { id: 51, name: `${bob1}-bob1-carry` },
+  { id: 52, name: `${tiantang}-\u5929\u5802GM` },
+  { id: 53, name: `${hongchun}-\u7ea2\u5507\u730e\u5ba2` },
+];
+assert.equal(findBestMemberForOcrName(bob1, ornateRoster)?.id, 51);
+assert.equal(findBestMemberForOcrName(bob1Clipped, ornateRoster)?.id, 51);
+assert.equal(findBestMemberForOcrName(tiantang, ornateRoster)?.id, 52);
+assert.equal(findBestMemberForOcrName(tiantangBei, ornateRoster), null);
+assert.equal(findBestMemberForOcrName(hongchun, ornateRoster)?.id, 53);
+assert.equal(findBestMemberForOcrName(hongchunGold, ornateRoster)?.id, 53);
+assert.equal(scoreNameMatch("\u59d0\u59d0\u597d\u5e05\u7684\u5200", `${bob1}-bob1-carry`), 0);
+
 const pasteLines = [
   name1,
   name7,
