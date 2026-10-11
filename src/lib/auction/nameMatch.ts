@@ -81,6 +81,24 @@ function isOrnateSix(text: string) {
   return text.length === 6 && /^[\u4e00-\u9fff]{6}$/.test(text);
 }
 
+/** Glyphs that only appear in the game's ornate name font. */
+const ORNATE_GLYPHS = new Set(
+  "鑨龓豅爖贚礲徿巄漋儱巃蠬躘".split(""),
+);
+
+/**
+ * Roster pairing uses only the 3rd and 5th glyphs. The other four are
+ * often a clipped 金 radical, a 足/金 swap, or a new phonetic, and
+ * requiring them made a correct member look unrecognized.
+ */
+function ornatePairKey(text: string): string | null {
+  if (!isOrnateSix(text)) return null;
+  const third = text[2];
+  const fifth = text[4];
+  if (!ORNATE_GLYPHS.has(third) || !ORNATE_GLYPHS.has(fifth)) return null;
+  return third + fifth;
+}
+
 export function scoreNameMatch(ocrName: string, memberName: string): number {
   const token = compactName(ocrName).replace(NAME_SEP_ALL, "");
   const { prefix, nickname, compact, parts } = splitRosterName(memberName);
@@ -97,9 +115,14 @@ export function scoreNameMatch(ocrName: string, memberName: string): number {
   // Game screenshots only show the ornate 6-glyph prefix.
   if (token === prefix && prefix.length >= 2) return 94;
   if (token === nickname && nickname.length >= 2) return 88;
-  // Six-glyph names share gold-radical characters. Bag-of-chars overlap
-  // would pair 鑨贚贚豅爖巃 with 鑨豅贚鑨贚巄. Require an exact prefix.
-  if (isOrnateSix(token) && isOrnateSix(prefix)) return 0;
+  // Six-glyph names share radicals. Bag-of-chars overlap would pair
+  // 鑨贚贚豅爖巃 with 鑨豅贚鑨贚巄. Only the 3rd and 5th glyphs decide.
+  if (isOrnateSix(token) && isOrnateSix(prefix)) {
+    const ocrKey = ornatePairKey(token);
+    const rosterKey = ornatePairKey(prefix);
+    if (ocrKey && rosterKey && ocrKey === rosterKey) return 92;
+    return 0;
+  }
   if (
     prefix.length >= 4 &&
     token.length >= 4 &&
