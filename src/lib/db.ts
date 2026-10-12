@@ -1548,6 +1548,92 @@ export function deleteAuctionSession(sessionId: number): boolean {
   return true;
 }
 
+function copyAuctionItemImage(fromId: number, toId: number) {
+  const row = ensureDb()
+    .prepare(`SELECT image_data, has_image FROM auction_items WHERE id = ?`)
+    .get(fromId) as
+    | { image_data: string | null; has_image: number | null }
+    | undefined;
+  if (!row) return;
+  if (row.image_data && row.image_data.length > 32) {
+    writeAuctionItemImageFileSync(toId, row.image_data);
+    return;
+  }
+  if (!row.has_image) return;
+  const src = auctionItemImagePath(fromId);
+  if (!fs.existsSync(src)) return;
+  const dest = auctionItemImagePath(toId);
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  fs.copyFileSync(src, dest);
+  markAuctionItemImage(toId);
+}
+
+/**
+ * Open a new session from a finished one. The source session, its sales,
+ * and its dividend report stay as history. Copied lots start pending.
+ */
+export function reauctionSession(input: {
+  sourceSessionId: number;
+  itemIds: number[];
+  scheduledStart: string;
+  durationMinutes?: number;
+}): { session: AuctionSession; itemCount: number } {
+  const source = getSessionById(input.sourceSessionId);
+  if (!source) throw new Error("场次不存在");
+  if (source.status !== "ended") throw new Error("只能重拍已完成的场次");
+
+  const startMs = new Date(input.scheduledStart).getTime();
+  if (!Number.isFinite(startMs)) throw new Error("请设置开始时间");
+
+  const duration = input.durationMinutes ?? source.durationMinutes;
+  if (!(duration >= 5) || !(duration <= 180)) {
+    throw new Error("时长需在 5–180 分钟");
+  }
+
+  const wanted = [
+    ...new Set(input.itemIds.map(Number).filter((id) => id > 0)),
+  ];
+  if (wanted.length === 0) throw new Error("请选择要重拍的拍品");
+
+  const sourceItems = listItems(source.id, {
+    includeImages: false,
+    includeDividends: true,
+  });
+  const byId = new Map(sourceItems.map((item) => [item.id, item]));
+  const picked = wanted.map((id) => byId.get(id));
+  if (picked.some((item) => !item)) {
+    throw new Error("所选拍品不属于该场次");
+  }
+  const lots = picked.filter((item): item is AuctionItem => Boolean(item));
+  lots.sort((a, b) => a.sortOrder - b.sortOrder || a.id - b.id);
+
+  const session = createDraftSession({
+    scheduledStart: input.scheduledStart,
+    durationMinutes: duration,
+    taxRate: source.taxRate,
+    note: `重拍自场次 #${source.id}`,
+  });
+
+  for (const item of lots) {
+    const created = createAuctionItem({
+      sessionId: session.id,
+      name: item.name,
+      quality: item.quality,
+      startPrice: item.startPrice,
+      bidIncrement: item.bidIncrement,
+      dividendMemberIds: item.dividendMemberIds,
+      bidMin: item.bidMin,
+      bidMax: item.bidMax,
+    });
+    copyAuctionItemImage(item.id, created.id);
+  }
+
+  return {
+    session: getSessionById(session.id)!,
+    itemCount: lots.length,
+  };
+}
+
 export function listItems(
   sessionId: number,
   opts?: { includeImages?: boolean; includeDividends?: boolean },

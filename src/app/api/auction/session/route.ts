@@ -6,6 +6,7 @@ import {
   endAuctionSession,
   getSessionById,
   listSessionSummaries,
+  reauctionSession,
   startAuctionSession,
   updateSessionSchedule,
 } from "@/lib/db";
@@ -139,6 +140,55 @@ export async function POST(request: Request) {
         session,
         sessions: listSessionSummaries(),
         room: buildRoomState(sessionId, { lite: true }),
+      });
+    }
+
+    if (action === "reauction") {
+      const sessionId = Number(body?.sessionId);
+      if (!sessionId) {
+        return NextResponse.json({ error: "缺少场次 ID" }, { status: 400 });
+      }
+      const existing = getSessionById(sessionId);
+      if (!existing) {
+        return NextResponse.json({ error: "场次不存在" }, { status: 404 });
+      }
+      if (existing.status !== "ended") {
+        return NextResponse.json(
+          { error: "只能重拍已完成的场次" },
+          { status: 400 },
+        );
+      }
+      const scheduledStart =
+        typeof body?.scheduledStart === "string" ? body.scheduledStart : "";
+      if (!scheduledStart || Number.isNaN(new Date(scheduledStart).getTime())) {
+        return NextResponse.json(
+          { error: "请设置开始时间" },
+          { status: 400 },
+        );
+      }
+      const itemIds = Array.isArray(body?.itemIds)
+        ? body.itemIds.map(Number).filter((id: number) => id > 0)
+        : [];
+      if (itemIds.length === 0) {
+        return NextResponse.json(
+          { error: "请选择要重拍的拍品" },
+          { status: 400 },
+        );
+      }
+      const durationMinutes = Number(
+        body?.durationMinutes ?? existing.durationMinutes,
+      );
+      const result = reauctionSession({
+        sourceSessionId: sessionId,
+        itemIds,
+        scheduledStart,
+        durationMinutes,
+      });
+      return NextResponse.json({
+        session: result.session,
+        itemCount: result.itemCount,
+        sessions: listSessionSummaries(),
+        room: buildRoomState(result.session.id, { lite: true }),
       });
     }
 
