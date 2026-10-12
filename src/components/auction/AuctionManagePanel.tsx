@@ -533,6 +533,16 @@ export function AuctionManagePanel({
     await loadDetail(sessionId);
   }
 
+  async function openReauction(sessionId: number) {
+    await openSession(sessionId);
+    window.setTimeout(() => {
+      document.getElementById("reauction-panel")?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    }, 50);
+  }
+
   const session = room?.session;
   const items: AuctionItem[] = room?.items ?? [];
   const editable = session ? isSessionEditable(session.status) : false;
@@ -700,6 +710,16 @@ export function AuctionManagePanel({
                         >
                           {sessionLifecycleLabel(s.status)}
                         </span>
+                        {s.status === "ended" && (
+                          <button
+                            type="button"
+                            className="rounded-full bg-[#e23d4a] px-3 py-1 text-xs font-semibold disabled:opacity-50"
+                            disabled={busy}
+                            onClick={() => void openReauction(s.id)}
+                          >
+                            重拍
+                          </button>
+                        )}
                         {canEdit && (
                           <button
                             type="button"
@@ -730,11 +750,27 @@ export function AuctionManagePanel({
                   </h2>
                 </div>
                 {session && (
-                  <span
-                    className={`rounded-full px-2.5 py-1 text-xs ${statusTone(session.status)}`}
-                  >
-                    {sessionLifecycleLabel(session.status)}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`rounded-full px-2.5 py-1 text-xs ${statusTone(session.status)}`}
+                    >
+                      {sessionLifecycleLabel(session.status)}
+                    </span>
+                    {session.status === "ended" && (
+                      <button
+                        type="button"
+                        className="rounded-full bg-[#e23d4a] px-3 py-1 text-xs font-semibold"
+                        onClick={() =>
+                          document.getElementById("reauction-panel")?.scrollIntoView({
+                            behavior: "smooth",
+                            block: "start",
+                          })
+                        }
+                      >
+                        重拍
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
 
@@ -856,7 +892,10 @@ export function AuctionManagePanel({
                 )}
               </div>
               {session?.status === "ended" && (
-                <div className="mt-4 rounded-xl border border-[var(--border-soft)] bg-[#121722] p-3">
+                <div
+                  id="reauction-panel"
+                  className="mt-4 rounded-xl border border-[var(--border-soft)] bg-[#121722] p-3"
+                >
                   <p className="text-sm font-medium">重拍</p>
                   <p className="mt-1 text-xs text-[var(--text-muted)]">
                     另开一场，勾选要再拍的东西，或直接全部重拍。原场成交和分红保留。税率沿用本场{" "}
