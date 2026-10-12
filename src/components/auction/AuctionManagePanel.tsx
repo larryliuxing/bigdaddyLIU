@@ -106,6 +106,10 @@ export function AuctionManagePanel({
     "members",
   );
   const [editOcrNonce, setEditOcrNonce] = useState(0);
+  const [reDate, setReDate] = useState(beijingTodayDate);
+  const [reTime, setReTime] = useState("15:00");
+  const [reDuration, setReDuration] = useState(30);
+  const [reauctionIds, setReauctionIds] = useState<number[]>([]);
 
   const syncEditFields = useCallback((nextRoom: AuctionRoomState | null) => {
     const session = nextRoom?.session;
@@ -117,6 +121,19 @@ export function AuctionManagePanel({
     }
     setEditDuration(session.durationMinutes || 30);
     setTaxPercent(Number((session.taxRate * 100).toFixed(1)));
+  }, []);
+
+  const primeReauction = useCallback((nextRoom: AuctionRoomState | null) => {
+    const nextSession = nextRoom?.session;
+    if (!nextSession || nextSession.status !== "ended") {
+      setReauctionIds([]);
+      return;
+    }
+    setReauctionIds((nextRoom?.items ?? []).map((item) => item.id));
+    const start = nextSession.scheduledStart || nextSession.startedAt;
+    setReTime(start ? beijingHmFromIso(start) : "15:00");
+    setReDate(beijingTodayDate());
+    setReDuration(nextSession.durationMinutes || 30);
   }, []);
 
   const loadList = useCallback(async () => {
@@ -136,11 +153,12 @@ export function AuctionManagePanel({
       setSessions(data.sessions || []);
       setRoom(data.room);
       syncEditFields(data.room);
+      primeReauction(data.room);
       const report =
         (data.room?.dividendReport as DividendReport | null) ?? null;
       setDividendReport(report);
     },
-    [syncEditFields],
+    [primeReauction, syncEditFields],
   );
 
   useEffect(() => {
@@ -305,6 +323,67 @@ export function AuctionManagePanel({
     }
   }
 
+  function toggleReauction(id: number) {
+    setReauctionIds((prev) =>
+      prev.includes(id) ? prev.filter((itemId) => itemId !== id) : [...prev, id],
+    );
+  }
+
+  async function reauction(mode: "all" | "selected") {
+    if (selectedId == null || !room?.session) return;
+    const sourceItems = room.items ?? [];
+    const ids =
+      mode === "all"
+        ? sourceItems.map((item) => item.id)
+        : reauctionIds.filter((id) => sourceItems.some((item) => item.id === id));
+    if (ids.length === 0) {
+      setError(mode === "all" ? "本场没有拍品" : "请选择要重拍的拍品");
+      setMessage("");
+      return;
+    }
+    const scheduledStart = fromBeijingDateAndTime(reDate, reTime);
+    const when = formatBeijingSessionLabel(scheduledStart);
+    const scope =
+      ids.length === sourceItems.length
+        ? `全部 ${ids.length} 件`
+        : `所选 ${ids.length} 件`;
+    const ok = window.confirm(
+      `确认重拍${scope}？\n\n新场次开始时间：${when}\n时长 ${reDuration} 分钟\n\n原场次的成交和分红会保留。`,
+    );
+    if (!ok) return;
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const res = await fetch("/api/auction/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "reauction",
+          sessionId: selectedId,
+          itemIds: ids,
+          scheduledStart,
+          durationMinutes: reDuration,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "重拍失败");
+        return;
+      }
+      const nextId = Number(data.session?.id);
+      setMessage(`已新建场次，重拍 ${data.itemCount ?? ids.length} 件`);
+      if (nextId) {
+        setSelectedId(nextId);
+        await loadDetail(nextId);
+      }
+    } catch {
+      setError("网络错误");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function removeItem(id: number) {
     if (!window.confirm("确认删除该拍品？删除不可恢复。")) return;
     if (selectedId == null) return;
@@ -452,6 +531,16 @@ export function AuctionManagePanel({
     setMessage("");
     setSelectedId(sessionId);
     await loadDetail(sessionId);
+  }
+
+  async function openReauction(sessionId: number) {
+    await openSession(sessionId);
+    window.setTimeout(() => {
+      document.getElementById("reauction-panel")?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    }, 50);
   }
 
   const session = room?.session;
@@ -621,6 +710,16 @@ export function AuctionManagePanel({
                         >
                           {sessionLifecycleLabel(s.status)}
                         </span>
+                        {s.status === "ended" && (
+                          <button
+                            type="button"
+                            className="rounded-full bg-[#e23d4a] px-3 py-1 text-xs font-semibold disabled:opacity-50"
+                            disabled={busy}
+                            onClick={() => void openReauction(s.id)}
+                          >
+                            重拍
+                          </button>
+                        )}
                         {canEdit && (
                           <button
                             type="button"
@@ -651,11 +750,27 @@ export function AuctionManagePanel({
                   </h2>
                 </div>
                 {session && (
-                  <span
-                    className={`rounded-full px-2.5 py-1 text-xs ${statusTone(session.status)}`}
-                  >
-                    {sessionLifecycleLabel(session.status)}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`rounded-full px-2.5 py-1 text-xs ${statusTone(session.status)}`}
+                    >
+                      {sessionLifecycleLabel(session.status)}
+                    </span>
+                    {session.status === "ended" && (
+                      <button
+                        type="button"
+                        className="rounded-full bg-[#e23d4a] px-3 py-1 text-xs font-semibold"
+                        onClick={() =>
+                          document.getElementById("reauction-panel")?.scrollIntoView({
+                            behavior: "smooth",
+                            block: "start",
+                          })
+                        }
+                      >
+                        重拍
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
 
@@ -722,6 +837,8 @@ export function AuctionManagePanel({
                   本场税率{" "}
                   {((session?.taxRate ?? 0) * 100).toFixed(1)}%。
                   进行中 / 已完成场次的时间设置不可更改。
+                  {session?.status === "ended" &&
+                    " 要再拍一轮，请在下方设置新时间后重拍。"}
                   {session?.status === "live" && (
                     <span className="ml-2">
                       剩余 {formatCountdown(room?.remainingSeconds ?? null)}
@@ -774,6 +891,74 @@ export function AuctionManagePanel({
                   </button>
                 )}
               </div>
+              {session?.status === "ended" && (
+                <div
+                  id="reauction-panel"
+                  className="mt-4 rounded-xl border border-[var(--border-soft)] bg-[#121722] p-3"
+                >
+                  <p className="text-sm font-medium">重拍</p>
+                  <p className="mt-1 text-xs text-[var(--text-muted)]">
+                    另开一场，勾选要再拍的东西，或直接全部重拍。原场成交和分红保留。税率沿用本场{" "}
+                    {((session.taxRate ?? 0) * 100).toFixed(1)}
+                    %，新场次里还可以改。
+                  </p>
+                  <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-end">
+                    <label className="block flex-1 space-y-1.5">
+                      <span className="text-xs text-[var(--text-muted)]">
+                        新日期
+                      </span>
+                      <input
+                        className="field"
+                        type="date"
+                        value={reDate}
+                        onChange={(e) => setReDate(e.target.value)}
+                      />
+                    </label>
+                    <label className="block flex-1 space-y-1.5">
+                      <span className="text-xs text-[var(--text-muted)]">
+                        新开始时间
+                      </span>
+                      <input
+                        className="field"
+                        type="time"
+                        value={reTime}
+                        onChange={(e) => setReTime(e.target.value)}
+                      />
+                    </label>
+                    <label className="block flex-1 space-y-1.5">
+                      <span className="text-xs text-[var(--text-muted)]">
+                        时长（分钟）
+                      </span>
+                      <input
+                        className="field"
+                        type="number"
+                        min={5}
+                        max={180}
+                        value={reDuration}
+                        onChange={(e) => setReDuration(Number(e.target.value))}
+                      />
+                    </label>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      className="rounded-xl bg-[#e23d4a] px-4 py-2 text-sm font-semibold disabled:opacity-50"
+                      disabled={busy || items.length === 0}
+                      onClick={() => reauction("all")}
+                    >
+                      全部重拍
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-ghost text-sm"
+                      disabled={busy || reauctionIds.length === 0}
+                      onClick={() => reauction("selected")}
+                    >
+                      重拍所选（{reauctionIds.length}）
+                    </button>
+                  </div>
+                </div>
+              )}
             </section>
 
             {editable && (
@@ -788,8 +973,25 @@ export function AuctionManagePanel({
             )}
 
             <section className="mt-5 overflow-hidden rounded-2xl border border-[var(--border-soft)] bg-[rgba(18,22,34,0.95)]">
-              <div className="border-b border-[var(--border-soft)] px-4 py-3 text-sm text-[var(--text-muted)]">
-                {editable ? "本场拍品" : "拍品记录"}（{items.length}）
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border-soft)] px-4 py-3 text-sm text-[var(--text-muted)]">
+                <span>
+                  {editable ? "本场拍品" : "拍品记录"}（{items.length}）
+                </span>
+                {session?.status === "ended" && items.length > 0 && (
+                  <button
+                    type="button"
+                    className="text-xs text-[var(--text-primary)]"
+                    onClick={() =>
+                      setReauctionIds((prev) =>
+                        prev.length === items.length
+                          ? []
+                          : items.map((item) => item.id),
+                      )
+                    }
+                  >
+                    {reauctionIds.length === items.length ? "取消全选" : "全选"}
+                  </button>
+                )}
               </div>
               <ul className="divide-y divide-[var(--border-soft)]">
                 {items.length === 0 && (
@@ -809,6 +1011,16 @@ export function AuctionManagePanel({
                     <li key={item.id} className="flex flex-col gap-3 px-4 py-3">
                       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                         <div className="flex items-center gap-3">
+                          {session?.status === "ended" && (
+                            <label className="flex shrink-0 items-center">
+                              <input
+                                type="checkbox"
+                                checked={reauctionIds.includes(item.id)}
+                                onChange={() => toggleReauction(item.id)}
+                                aria-label={`重拍 ${item.name}`}
+                              />
+                            </label>
+                          )}
                           <AuctionItemThumb
                             itemId={item.id}
                             imageData={item.imageData}
