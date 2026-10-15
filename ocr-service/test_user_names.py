@@ -18,6 +18,7 @@ from ornate_names import (
     NAME_9,
     NAME_10,
     NAME_11,
+    NAME_12,
     SAMPLE_DIR,
     SEED_LABELS,
     collect_seed_pairs,
@@ -103,6 +104,7 @@ def main() -> None:
         "name-9.png": "\u7216\u5fbf\u8d1a\u5dc4\u7932\u882c",
         "name-10.png": "\u9468\u9f93\u9468\u9f93\u7216\u7216",
         "name-11.png": "\u9468\u5fbf\u9f93\u8e98\u8c45\u5dc3",
+        "name-12.png": "\u9468\u9f93\u9468\u9f93\u8d1a\u7216",
     }
     if NAME_1 != expected["name-luolong-1.png"]:
         raise SystemExit(f"NAME_1 codepoints wrong: {_hex(NAME_1)}")
@@ -126,6 +128,11 @@ def main() -> None:
         raise SystemExit(f"NAME_10 codepoints wrong: {_hex(NAME_10)}")
     if NAME_11 != expected["name-11.png"]:
         raise SystemExit(f"NAME_11 codepoints wrong: {_hex(NAME_11)}")
+    if NAME_12 != expected["name-12.png"]:
+        raise SystemExit(f"NAME_12 codepoints wrong: {_hex(NAME_12)}")
+    pair_keys = [(name[2], name[4]) for name in (NAME_1, NAME_2, NAME_3, NAME_4, NAME_5, NAME_6, NAME_7, NAME_8, NAME_9, NAME_10, NAME_11, NAME_12)]
+    if len(pair_keys) != len(set(pair_keys)):
+        raise SystemExit(f"3rd+5th pair keys collide: {pair_keys}")
     if set(SEED_LABELS) != set(expected):
         raise SystemExit("SEED_LABELS keys mismatch")
 
@@ -152,6 +159,10 @@ def main() -> None:
         raise SystemExit("snap must keep an exact known name")
     if snap_known_name(NAME_5) != NAME_5:
         raise SystemExit("snap must not collapse NAME_5 into NAME_3")
+    if snap_known_name(NAME_12) != NAME_12:
+        raise SystemExit(f"snap rewrote 灰豆 into {snap_known_name(NAME_12)}")
+    if snap_known_name(NAME_10) != NAME_10:
+        raise SystemExit("snap must keep 天堂GM")
     print("OK snap 鑨/贚 on NAME_6")
 
 
