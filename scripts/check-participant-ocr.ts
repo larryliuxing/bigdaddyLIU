@@ -115,8 +115,23 @@ assert.equal(findBestMemberForOcrName(name4, sameOrnatePrefix), null);
 const nameMix = "\u9468\u9f93\u9468\u9f93\u8d1a\u7216";
 const nameOther = "\u8d1a\u9468\u7216\u9468\u9f93\u7216";
 const grayBean = `${nameMix}-\u7070\u8c46`;
+const heavenGm = "\u9468\u9f93\u9468\u9f93\u7216\u7216-\u5929\u5802GM";
 assert.equal(scoreNameMatch(nameOther, grayBean), 0);
 assert.equal(findBestMemberForOcrName(nameOther, [{ id: 31, name: grayBean }]), null);
+assert.equal(
+  findBestMemberForOcrName(nameMix, [
+    { id: 31, name: grayBean },
+    { id: 32, name: heavenGm },
+  ])?.id,
+  31,
+);
+assert.equal(
+  findBestMemberForOcrName(heavenGm.split("-")[0], [
+    { id: 31, name: grayBean },
+    { id: 32, name: heavenGm },
+  ])?.id,
+  32,
+);
 
 // 3rd + 5th glyphs are enough. Other positions may be a 金/足 miss.
 const bob1 = "\u7216\u5fbf\u8d1a\u5dc4\u7932\u882c";

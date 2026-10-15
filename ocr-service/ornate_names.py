@@ -33,6 +33,11 @@ NAME_9 = "\u7216\u5fbf\u8d1a\u5dc4\u7932\u882c"
 NAME_10 = "\u9468\u9f93\u9468\u9f93\u7216\u7216"
 # 鑨徿龓躘豅巃-红唇猎客. 足字旁 躘 must stay distinct from 金 鑨.
 NAME_11 = "\u9468\u5fbf\u9f93\u8e98\u8c45\u5dc3"
+# 鑨龓鑨龓贚爖-灰豆. Same 金 third glyph as 天堂GM; the fifth is 贝
+# 贚, not 火 爖. These two names differ by that one glyph, so the
+# 贝 reading must stay a known name or the 1-edit snap rewrites it
+# into 天堂GM.
+NAME_12 = "\u9468\u9f93\u9468\u9f93\u8d1a\u7216"
 NAME_LUOLONG = NAME_1
 KNOWN_NAMES = (
     NAME_1,
@@ -46,6 +51,7 @@ KNOWN_NAMES = (
     NAME_9,
     NAME_10,
     NAME_11,
+    NAME_12,
 )
 
 # Human-read labels for sample crops (left-to-right).
@@ -66,6 +72,7 @@ SEED_LABELS = {
     "name-9.png": list(NAME_9),
     "name-10.png": list(NAME_10),
     "name-11.png": list(NAME_11),
+    "name-12.png": list(NAME_12),
 }
 
 
@@ -333,6 +340,9 @@ SEED_SKIP_INDEX = {
     "name-9.png": {0, 2, 3, 4},
     "name-10.png": {0, 1, 2, 3, 4, 5},
     "name-11.png": {0, 1, 2, 4, 5},
+    # 灰豆 is already read as 贝 with the existing banks. Teaching those
+    # crops would move 金 / 火 scores on other rows.
+    "name-12.png": {0, 1, 2, 3, 4, 5},
 }
 
 
@@ -403,8 +413,10 @@ def _score_vec(vec: np.ndarray, templates: dict[str, np.ndarray]) -> tuple[str, 
 
 
 def snap_known_name(name: str) -> str:
-    """Small list crops often swap 鑨/贚 on the first glyph. Known names
-    differ by at least two positions, so a unique 1-glyph miss is safe."""
+    """Small list crops often swap 鑨/贚 on the first glyph. A unique
+    1-glyph miss snaps to that known name. 天堂GM and 灰豆 differ only
+    at the fifth glyph (火 爖 / 贝 贚); both stay in KNOWN_NAMES so a
+    correct 贝 is not rewritten into 火."""
     if not name or name in KNOWN_NAMES:
         return name
     if len(name) != 6:
