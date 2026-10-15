@@ -671,6 +671,14 @@ export function AuctionManagePanel({
               <AddAuctionItemForm
                 members={initialMembers}
                 sessionId={selectedId}
+                previousItem={
+                  items.length > 0
+                    ? {
+                        name: items[items.length - 1].name,
+                        memberIds: items[items.length - 1].dividendMemberIds,
+                      }
+                    : null
+                }
                 onCreated={() => {
                   setMessage("拍品已添加");
                   void loadDetail(selectedId);

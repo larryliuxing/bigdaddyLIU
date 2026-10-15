@@ -10,12 +10,15 @@ import { ItemPriceStatsLine } from "./ItemPriceStatsLine";
 interface AddAuctionItemFormProps {
   members: Member[];
   sessionId: number;
+  /** Last lot already in this session, so the next drop can reuse its roster. */
+  previousItem?: { name: string; memberIds: number[] } | null;
   onCreated: () => void;
 }
 
 export function AddAuctionItemForm({
   members,
   sessionId,
+  previousItem,
   onCreated,
 }: AddAuctionItemFormProps) {
   const [name, setName] = useState("");
@@ -31,6 +34,7 @@ export function AddAuctionItemForm({
   const [loading, setLoading] = useState(false);
   const [priceStats, setPriceStats] = useState<ItemPriceStats | null>(null);
   const [priceStatsLoading, setPriceStatsLoading] = useState(false);
+  const [copyNote, setCopyNote] = useState("");
   const pasteRef = useRef<HTMLDivElement>(null);
   const memberPasteRef = useRef<HTMLDivElement>(null);
 
@@ -38,6 +42,20 @@ export function AddAuctionItemForm({
     () => members.filter((m) => selectedIds.includes(m.id)),
     [members, selectedIds],
   );
+  const previousMemberIds = useMemo(() => {
+    if (!previousItem) return [];
+    const known = new Set(members.map((member) => member.id));
+    return previousItem.memberIds.filter((id) => known.has(id));
+  }, [members, previousItem]);
+
+  function copyPreviousParticipants() {
+    if (previousMemberIds.length === 0) return;
+    setSelectedIds(previousMemberIds);
+    setCopyNote(
+      `已选上一件「${previousItem?.name ?? ""}」的 ${previousMemberIds.length} 人`,
+    );
+    setTab("members");
+  }
 
   function toggleMember(id: number) {
     setSelectedIds((prev) =>
@@ -156,6 +174,7 @@ export function AddAuctionItemForm({
       setNamePreview(null);
       setSelectedIds([]);
       setOcrStatus("");
+      setCopyNote("");
       setPriceStats(null);
       setPriceStatsLoading(false);
       onCreated();
@@ -305,12 +324,32 @@ export function AddAuctionItemForm({
       </div>
 
       <div className="space-y-2">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="text-xs text-[var(--text-muted)]">分红成员</span>
-          <span className="text-xs text-[var(--text-muted)]">
-            已选 {selectedMembers.length}
-          </span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="rounded-lg border border-[var(--border-soft)] bg-[#1c2230] px-2.5 py-1 text-xs font-medium disabled:opacity-40"
+              disabled={previousMemberIds.length === 0}
+              title={
+                previousItem
+                  ? previousMemberIds.length > 0
+                    ? `用「${previousItem.name}」的参与人员替换当前选择`
+                    : "上一件没有参与人员"
+                  : "本场还没有上一件拍品"
+              }
+              onClick={copyPreviousParticipants}
+            >
+              上一件的人员
+            </button>
+            <span className="text-xs text-[var(--text-muted)]">
+              已选 {selectedMembers.length}
+            </span>
+          </div>
         </div>
+        {copyNote && (
+          <p className="text-xs text-[var(--text-muted)]">{copyNote}</p>
+        )}
         <div className="grid gap-3 lg:grid-cols-[1.4fr_1fr]">
           <div className="rounded-xl border border-[var(--border-soft)] bg-[#0f1320] p-3">
             <div className="mb-3 flex gap-2">
