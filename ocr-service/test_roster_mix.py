@@ -18,6 +18,9 @@ sys.path.insert(0, str(ROOT))
 
 from ornate_names import (  # noqa: E402
     MIN_SCORE,
+    NAME_6,
+    NAME_7,
+    NAME_11,
     ORNATE_FONT_SCORE,
     best_ornate_match,
     load_templates,
@@ -50,6 +53,16 @@ def main() -> None:
         raise SystemExit(f"expected 6 rows, got {len(bands)}")
     if len(kept) != 4 or len(leftover) != 2:
         raise SystemExit(f"kept {kept} leftover {len(leftover)}")
+    # Row 0 is 鑨爖巄巃礲豅. Its 火 and 山 radicals used to be clipped into
+    # 贝 and 金 (鑨贚鑨巃礲豅). Row 4 must stay the unlisted 金/火 string.
+    expected = [
+        NAME_6,
+        NAME_7,
+        NAME_11,
+        "\u9468\u9468\u5fbf\u9468\u7216\u7216",
+    ]
+    if kept != expected:
+        raise SystemExit(f"kept names changed: {kept}")
     if elapsed > 1.0:
         raise SystemExit(f"template pass too slow: {elapsed:.3f}s")
     stacked = _stack_bands([crop_name_ink(band) for band in leftover])
