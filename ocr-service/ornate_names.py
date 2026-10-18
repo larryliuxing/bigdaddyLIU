@@ -20,6 +20,7 @@ _TEMPLATE_CACHE: dict[str, np.ndarray] | None = None
 # Do not use the lookalikes U+9458 / U+5D84 / U+5D83.
 NAME_1 = "\u9468\u9f93\u5dc4\u9f93\u5dc3\u9468"
 NAME_2 = "\u9468\u8c45\u8d1a\u9468\u8d1a\u5dc4"
+# 鑨鑨爖龓鑨鑨-南伊.
 NAME_3 = "\u9468\u9468\u7216\u9f93\u9468\u9468"
 NAME_4 = "\u9468\u8d1a\u8d1a\u8c45\u7216\u5dc3"
 NAME_5 = "\u9468\u9468\u9f93\u9468\u9468\u9468"
@@ -38,6 +39,10 @@ NAME_11 = "\u9468\u5fbf\u9f93\u8e98\u8c45\u5dc3"
 # 贝 reading must stay a known name or the 1-edit snap rewrites it
 # into 天堂GM.
 NAME_12 = "\u9468\u9f93\u9468\u9f93\u8d1a\u7216"
+# 鑨鑨爖鑨龓爖-老子. Third is 火 and fifth is 龙; 南伊 is 火 then 金.
+# The second glyph's unshifted crop prefers 贝, and the shift search
+# recovers 金. A single 贝 slip must stay this known name.
+NAME_13 = "\u9468\u9468\u7216\u9468\u9f93\u7216"
 NAME_LUOLONG = NAME_1
 KNOWN_NAMES = (
     NAME_1,
@@ -52,6 +57,7 @@ KNOWN_NAMES = (
     NAME_10,
     NAME_11,
     NAME_12,
+    NAME_13,
 )
 
 # Human-read labels for sample crops (left-to-right).
@@ -59,6 +65,9 @@ SEED_LABELS = {
     "name-luolong-1.png": list(NAME_1),
     "name-2.png": list(NAME_2),
     "name-3.png": list(NAME_3),
+    # 南伊, same six glyphs as name-3. Already read exactly; keep it
+    # out of the banks.
+    "name-3b.png": list(NAME_3),
     "name-4.png": list(NAME_4),
     "name-4b.png": list(NAME_4),
     "name-4c.png": list(NAME_4),
@@ -77,6 +86,7 @@ SEED_LABELS = {
     "name-10.png": list(NAME_10),
     "name-11.png": list(NAME_11),
     "name-12.png": list(NAME_12),
+    "name-13.png": list(NAME_13),
 }
 
 
@@ -394,6 +404,10 @@ SEED_SKIP_INDEX = {
     # 山/石 is already NAME_6 once the clipped radicals are restored.
     # Seeding those crops would move 火 / 山 scores on other rows.
     "name-6c.png": {0, 1, 2, 3, 4, 5},
+    # 南伊 is already NAME_3. 老子 is already read with the current
+    # banks; its second glyph is a 金/贝 borderline and must not be taught.
+    "name-3b.png": {0, 1, 2, 3, 4, 5},
+    "name-13.png": {0, 1, 2, 3, 4, 5},
 }
 
 

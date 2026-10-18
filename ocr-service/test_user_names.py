@@ -19,6 +19,7 @@ from ornate_names import (
     NAME_10,
     NAME_11,
     NAME_12,
+    NAME_13,
     SAMPLE_DIR,
     SEED_LABELS,
     collect_seed_pairs,
@@ -91,6 +92,7 @@ def main() -> None:
         "name-luolong-1.png": "\u9468\u9f93\u5dc4\u9f93\u5dc3\u9468",
         "name-2.png": "\u9468\u8c45\u8d1a\u9468\u8d1a\u5dc4",
         "name-3.png": "\u9468\u9468\u7216\u9f93\u9468\u9468",
+        "name-3b.png": "\u9468\u9468\u7216\u9f93\u9468\u9468",
         "name-4.png": "\u9468\u8d1a\u8d1a\u8c45\u7216\u5dc3",
         "name-4b.png": "\u9468\u8d1a\u8d1a\u8c45\u7216\u5dc3",
         "name-4c.png": "\u9468\u8d1a\u8d1a\u8c45\u7216\u5dc3",
@@ -106,6 +108,7 @@ def main() -> None:
         "name-10.png": "\u9468\u9f93\u9468\u9f93\u7216\u7216",
         "name-11.png": "\u9468\u5fbf\u9f93\u8e98\u8c45\u5dc3",
         "name-12.png": "\u9468\u9f93\u9468\u9f93\u8d1a\u7216",
+        "name-13.png": "\u9468\u9468\u7216\u9468\u9f93\u7216",
     }
     if NAME_1 != expected["name-luolong-1.png"]:
         raise SystemExit(f"NAME_1 codepoints wrong: {_hex(NAME_1)}")
@@ -131,7 +134,11 @@ def main() -> None:
         raise SystemExit(f"NAME_11 codepoints wrong: {_hex(NAME_11)}")
     if NAME_12 != expected["name-12.png"]:
         raise SystemExit(f"NAME_12 codepoints wrong: {_hex(NAME_12)}")
-    pair_keys = [(name[2], name[4]) for name in (NAME_1, NAME_2, NAME_3, NAME_4, NAME_5, NAME_6, NAME_7, NAME_8, NAME_9, NAME_10, NAME_11, NAME_12)]
+    if NAME_13 != expected["name-13.png"]:
+        raise SystemExit(f"NAME_13 codepoints wrong: {_hex(NAME_13)}")
+    if NAME_3 != expected["name-3b.png"]:
+        raise SystemExit(f"NAME_3 codepoints wrong: {_hex(NAME_3)}")
+    pair_keys = [(name[2], name[4]) for name in (NAME_1, NAME_2, NAME_3, NAME_4, NAME_5, NAME_6, NAME_7, NAME_8, NAME_9, NAME_10, NAME_11, NAME_12, NAME_13)]
     if len(pair_keys) != len(set(pair_keys)):
         raise SystemExit(f"3rd+5th pair keys collide: {pair_keys}")
     if set(SEED_LABELS) != set(expected):
@@ -164,6 +171,14 @@ def main() -> None:
         raise SystemExit(f"snap rewrote 灰豆 into {snap_known_name(NAME_12)}")
     if snap_known_name(NAME_10) != NAME_10:
         raise SystemExit("snap must keep 天堂GM")
+    if snap_known_name(NAME_13) != NAME_13:
+        raise SystemExit(f"snap rewrote 老子 into {snap_known_name(NAME_13)}")
+    if snap_known_name(NAME_3) != NAME_3:
+        raise SystemExit("snap must keep 南伊")
+    # 老子's second glyph can score as 贝. That one miss must not become 南伊.
+    laozi_shell = NAME_13[0] + "\u8d1a" + NAME_13[2:]
+    if snap_known_name(laozi_shell) != NAME_13:
+        raise SystemExit(f"snap {laozi_shell} -> {snap_known_name(laozi_shell)} != {NAME_13}")
     print("OK snap 鑨/贚 on NAME_6")
 
 
