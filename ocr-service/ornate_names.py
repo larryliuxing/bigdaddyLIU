@@ -65,6 +65,10 @@ SEED_LABELS = {
     "name-5.png": list(NAME_5),
     "name-6.png": list(NAME_6),
     "name-6b.png": list(NAME_6),
+    # Same 山/石 name. The valley cut drops 火 and 山, so the row used to
+    # read 鑨贚鑨巃礲豅. Recovered by putting those radicals back; the crops
+    # stay out of the banks.
+    "name-6c.png": list(NAME_6),
     "name-7.png": list(NAME_7),
     "name-7b.png": list(NAME_7),
     "name-8.png": list(NAME_8),
@@ -222,6 +226,10 @@ _RADICAL_TWINS = (
     frozenset({"\u9468", "\u8d1a"}),  # 金 / 贝
     frozenset({"\u9468", "\u8e98"}),  # 金 / 足
 )
+_GOLD = "\u9468"
+_SHELL = "\u8d1a"
+_MOUNTAIN = "\u5dc4"
+_FIRE = "\u7216"
 
 
 def _plain_label(
@@ -238,11 +246,15 @@ def glyphs_for_row(
 ) -> list[Image.Image]:
     """Split a name row.
 
-    A cell much narrower than its neighbors has usually lost its left
-    radical: the gap between 金 and the dragon body was treated as the
-    character boundary, so 金 was read as 贝. Put that radical back only
-    when the new label is the 金/贝 or 金/足 twin. Other narrow cells
-    (a correct 贝, a 火) stay as the valley split drew them.
+    The valley cut likes the gap between a left radical and the dragon
+    body. A narrow remnant of 金 is put back only for the 金/贝 or 金/足
+    twin. Two other clips stay local:
+
+    - 火 clipped to a narrow 贝. Accept 火 only when the wider crop is a
+      clear match (score ≥ 0.90), so a real 贝 is left alone.
+    - 山 clipped by 1–3px. The cell is still full width and scores as a
+      weak 金 (about 0.50). A real 金 is already ≥ 0.75, so only that
+      weak reading may become 山, and only when 山 itself clears 0.85.
     """
     left, width, bands = _row_glyph_bands(row, expected)
     glyphs = [_crop_band(row, left, width, a, b) for a, b in bands]
@@ -253,21 +265,57 @@ def glyphs_for_row(
     if median < 8:
         return glyphs
     for i, (start, end) in enumerate(bands):
-        if widths[i] >= median * 0.75:
-            continue
         base_label, base_score = _plain_label(glyphs[i], templates)
-        if base_label not in {"\u9468", "\u8d1a", "\u8e98"}:
+        replaced = False
+        if widths[i] < median * 0.75 and base_label in {_GOLD, _SHELL, "\u8e98"}:
+            best_glyph = glyphs[i]
+            best_label = base_label
+            best_score = base_score
+            for extra in range(6, 14):
+                na = start - extra
+                if na < bands[0][0] - 2 or end - na > median * 1.25:
+                    continue
+                candidate = _crop_band(row, left, width, na, end)
+                label, score = _plain_label(candidate, templates)
+                twin = (
+                    score > best_score + 0.01
+                    and frozenset({label, base_label}) in _RADICAL_TWINS
+                )
+                # 贝 remnant of 火. A small bump is not enough: the wider
+                # crop has to be an obvious 火, above the original 贝.
+                fire = (
+                    base_label == _SHELL
+                    and label == _FIRE
+                    and score >= 0.90
+                    and score > base_score + 0.12
+                    and score > best_score
+                )
+                if twin or fire:
+                    best_score = score
+                    best_label = label
+                    best_glyph = candidate
+            if best_label != base_label:
+                glyphs[i] = best_glyph
+                replaced = True
+        # 山 sits in a 1–3px gap, so the cell is not narrow and the
+        # remnant is a weak 金. Do not touch a 金 the banks already trust.
+        if replaced or base_label != _GOLD or base_score >= 0.70:
             continue
         best_glyph = glyphs[i]
         best_label = base_label
         best_score = base_score
-        for extra in range(6, 14):
+        for extra in range(1, 5):
             na = start - extra
             if na < bands[0][0] - 2 or end - na > median * 1.25:
                 continue
             candidate = _crop_band(row, left, width, na, end)
             label, score = _plain_label(candidate, templates)
-            if score > best_score + 0.01 and frozenset({label, base_label}) in _RADICAL_TWINS:
+            if (
+                label == _MOUNTAIN
+                and score >= 0.85
+                and score > base_score + 0.25
+                and score > best_score
+            ):
                 best_score = score
                 best_label = label
                 best_glyph = candidate
@@ -343,6 +391,9 @@ SEED_SKIP_INDEX = {
     # 灰豆 is already read as 贝 with the existing banks. Teaching those
     # crops would move 金 / 火 scores on other rows.
     "name-12.png": {0, 1, 2, 3, 4, 5},
+    # 山/石 is already NAME_6 once the clipped radicals are restored.
+    # Seeding those crops would move 火 / 山 scores on other rows.
+    "name-6c.png": {0, 1, 2, 3, 4, 5},
 }
 
 
