@@ -153,6 +153,19 @@ assert.equal(findBestMemberForOcrName(hongchun, ornateRoster)?.id, 53);
 assert.equal(findBestMemberForOcrName(hongchunGold, ornateRoster)?.id, 53);
 assert.equal(scoreNameMatch("\u59d0\u59d0\u597d\u5e05\u7684\u5200", `${bob1}-bob1-carry`), 0);
 
+// 老子 is 火 then 龙; 南伊 is 火 then 金. Same opening glyphs, different pair.
+const laozi = "\u9468\u9468\u7216\u9468\u9f93\u7216";
+const nanyi = "\u9468\u9468\u7216\u9f93\u9468\u9468";
+const pairRoster = [
+  { id: 61, name: `${laozi}-\u8001\u5b50` },
+  { id: 62, name: `${nanyi}-\u5357\u4f0a` },
+];
+assert.equal(findBestMemberForOcrName(laozi, pairRoster)?.id, 61);
+assert.equal(findBestMemberForOcrName(nanyi, pairRoster)?.id, 62);
+assert.equal(scoreNameMatch(laozi, pairRoster[1].name), 0);
+assert.equal(scoreNameMatch(nanyi, pairRoster[0].name), 0);
+assert.equal(findBestMemberForOcrName(laozi[0] + "\u8d1a" + laozi.slice(2), pairRoster)?.id, 61);
+
 const pasteLines = [
   name1,
   name7,
