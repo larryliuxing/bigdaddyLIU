@@ -166,6 +166,20 @@ assert.equal(scoreNameMatch(laozi, pairRoster[1].name), 0);
 assert.equal(scoreNameMatch(nanyi, pairRoster[0].name), 0);
 assert.equal(findBestMemberForOcrName(laozi[0] + "\u8d1a" + laozi.slice(2), pairRoster)?.id, 61);
 
+// 秒杀的快感 is 贝 then 金. 南伊 is 火 then 金. Same 金 ending, different pair.
+const miaosha = "\u9468\u9468\u8d1a\u5fbf\u9468\u9468";
+const miaoshaRoster = [
+  { id: 61, name: `${laozi}-\u8001\u5b50` },
+  { id: 62, name: `${nanyi}-\u5357\u4f0a` },
+  { id: 63, name: `${miaosha}-\u79d2\u6740\u7684\u5feb\u611f` },
+  { id: 53, name: `${hongchun}-\u7ea2\u5507\u730e\u5ba2` },
+];
+assert.equal(findBestMemberForOcrName(miaosha, miaoshaRoster)?.id, 63);
+assert.equal(findBestMemberForOcrName(hongchun, miaoshaRoster)?.id, 53);
+assert.equal(scoreNameMatch(miaosha, `${nanyi}-\u5357\u4f0a`), 0);
+assert.equal(scoreNameMatch(nanyi, `${miaosha}-\u79d2\u6740\u7684\u5feb\u611f`), 0);
+assert.equal(scoreNameMatch(miaosha, `${hongchun}-\u7ea2\u5507\u730e\u5ba2`), 0);
+
 const pasteLines = [
   name1,
   name7,

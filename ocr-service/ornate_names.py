@@ -43,6 +43,9 @@ NAME_12 = "\u9468\u9f93\u9468\u9f93\u8d1a\u7216"
 # The second glyph's unshifted crop prefers 贝, and the shift search
 # recovers 金. A single 贝 slip must stay this known name.
 NAME_13 = "\u9468\u9468\u7216\u9468\u9f93\u7216"
+# 鑨鑨贚徿鑨鑨-秒杀的快感. Third is 贝, fifth is 金.
+# A tall row used to read the middle two glyphs as 人 (儱).
+NAME_14 = "\u9468\u9468\u8d1a\u5fbf\u9468\u9468"
 NAME_LUOLONG = NAME_1
 KNOWN_NAMES = (
     NAME_1,
@@ -58,6 +61,7 @@ KNOWN_NAMES = (
     NAME_11,
     NAME_12,
     NAME_13,
+    NAME_14,
 )
 
 # Human-read labels for sample crops (left-to-right).
@@ -85,8 +89,11 @@ SEED_LABELS = {
     "name-9.png": list(NAME_9),
     "name-10.png": list(NAME_10),
     "name-11.png": list(NAME_11),
+    # 红唇猎客 at a taller screenshot size. Same six glyphs as name-11.
+    "name-11b.png": list(NAME_11),
     "name-12.png": list(NAME_12),
     "name-13.png": list(NAME_13),
+    "name-14.png": list(NAME_14),
 }
 
 
@@ -249,6 +256,21 @@ def _plain_label(
     return _score_vec(_feature(glyph), templates)
 
 
+# Valley search is a fixed 5px window tuned on ~32px-tall rows. A taller
+# screenshot lands that cut inside the radical, so 徿 / 龓 / 贚 read as
+# 金 or 人. Shrink only those tall rows; samples already near this
+# height stay pixel-for-pixel.
+_TEMPLATE_ROW_HEIGHT = 34
+_TALL_ROW_HEIGHT = 40
+
+
+def _fit_template_row(row: Image.Image) -> Image.Image:
+    if row.height <= _TALL_ROW_HEIGHT:
+        return row
+    width = max(8, int(round(row.width * _TEMPLATE_ROW_HEIGHT / row.height)))
+    return row.resize((width, _TEMPLATE_ROW_HEIGHT), Image.Resampling.LANCZOS)
+
+
 def glyphs_for_row(
     row: Image.Image,
     templates: dict[str, np.ndarray] | None = None,
@@ -266,6 +288,7 @@ def glyphs_for_row(
       weak 金 (about 0.50). A real 金 is already ≥ 0.75, so only that
       weak reading may become 山, and only when 山 itself clears 0.85.
     """
+    row = _fit_template_row(row)
     left, width, bands = _row_glyph_bands(row, expected)
     glyphs = [_crop_band(row, left, width, a, b) for a, b in bands]
     if not templates or len(bands) != expected:
@@ -408,6 +431,10 @@ SEED_SKIP_INDEX = {
     # banks; its second glyph is a 金/贝 borderline and must not be taught.
     "name-3b.png": {0, 1, 2, 3, 4, 5},
     "name-13.png": {0, 1, 2, 3, 4, 5},
+    # Tall crops of names the current banks already read once the row
+    # is back at template height. Do not teach those pixels into a class.
+    "name-11b.png": {0, 1, 2, 3, 4, 5},
+    "name-14.png": {0, 1, 2, 3, 4, 5},
 }
 
 
@@ -568,6 +595,7 @@ def best_ornate_match(
         templates = load_templates()
     if not templates:
         return "", 0.0
+    row = _fit_template_row(row)
     best_name = ""
     best_key = (-1.0, -1.0)
     glyphs = glyphs_for_row(row, templates, expected=6)

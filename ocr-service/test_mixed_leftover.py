@@ -11,6 +11,10 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
 from ornate_names import (  # noqa: E402
+    NAME_2,
+    NAME_7,
+    NAME_12,
+    NAME_14,
     ORNATE_FONT_SCORE,
     best_ornate_match,
     load_templates,
@@ -39,7 +43,7 @@ def main() -> None:
             continue
         leftover.append(band)
 
-    if len(ornate) < 3:
+    if ornate != [NAME_2, NAME_7, NAME_14, NAME_12]:
         raise SystemExit(f"expected ornate rows, got {ornate}")
     if len(leftover) < 2:
         raise SystemExit(f"expected leftover ordinary rows, got {len(leftover)}")
