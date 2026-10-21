@@ -19,6 +19,8 @@ _TEMPLATE_CACHE: dict[str, np.ndarray] | None = None
 # User-confirmed names (6 glyphs each).
 # Do not use the lookalikes U+9458 / U+5D84 / U+5D83.
 NAME_1 = "\u9468\u9f93\u5dc4\u9f93\u5dc3\u9468"
+# 鑨豅贚鑨贚巄-乐哥-天刀-惊灵. Third and fifth are both 贝.
+# A tall row cuts the third glyph into 人 until the row is shrunk.
 NAME_2 = "\u9468\u8c45\u8d1a\u9468\u8d1a\u5dc4"
 # 鑨鑨爖龓鑨鑨-南伊.
 NAME_3 = "\u9468\u9468\u7216\u9f93\u9468\u9468"
@@ -68,6 +70,9 @@ KNOWN_NAMES = (
 SEED_LABELS = {
     "name-luolong-1.png": list(NAME_1),
     "name-2.png": list(NAME_2),
+    # 乐哥 at a taller size. Third 贝 is recovered by shrinking the row.
+    # The second glyph still prefers 金; do not teach that crop.
+    "name-2b.png": list(NAME_2),
     "name-3.png": list(NAME_3),
     # 南伊, same six glyphs as name-3. Already read exactly; keep it
     # out of the banks.
@@ -435,6 +440,7 @@ SEED_SKIP_INDEX = {
     # is back at template height. Do not teach those pixels into a class.
     "name-11b.png": {0, 1, 2, 3, 4, 5},
     "name-14.png": {0, 1, 2, 3, 4, 5},
+    "name-2b.png": {0, 1, 2, 3, 4, 5},
 }
 
 

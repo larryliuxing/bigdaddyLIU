@@ -180,6 +180,17 @@ assert.equal(scoreNameMatch(miaosha, `${nanyi}-\u5357\u4f0a`), 0);
 assert.equal(scoreNameMatch(nanyi, `${miaosha}-\u79d2\u6740\u7684\u5feb\u611f`), 0);
 assert.equal(scoreNameMatch(miaosha, `${hongchun}-\u7ea2\u5507\u730e\u5ba2`), 0);
 
+// 乐哥-天刀-惊灵. Third and fifth are both 贝. A 人 or 金 in the third slot must not match.
+const yuege = "\u9468\u8c45\u8d1a\u9468\u8d1a\u5dc4";
+const yueMember = `${yuege}-\u4e50\u54e5-\u5929\u5200-\u60ca\u7075`;
+const yueRoster = [{ id: 71, name: yueMember }];
+assert.equal(findBestMemberForOcrName(yuege, yueRoster)?.id, 71);
+assert.equal(findBestMemberForOcrName("\u4e50\u54e5", yueRoster)?.id, 71);
+assert.equal(findBestMemberForOcrName("\u5929\u5200", yueRoster)?.id, 71);
+assert.equal(findBestMemberForOcrName("\u60ca\u7075", yueRoster)?.id, 71);
+assert.equal(scoreNameMatch(yuege.slice(0, 2) + "\u9468" + yuege.slice(3), yueMember), 0);
+assert.equal(scoreNameMatch("\u9468\u9f93\u5131\u9468\u8d1a\u5dc4", yueMember), 0);
+
 const pasteLines = [
   name1,
   name7,
