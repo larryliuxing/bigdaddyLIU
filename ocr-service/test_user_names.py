@@ -20,6 +20,7 @@ from ornate_names import (
     NAME_11,
     NAME_12,
     NAME_13,
+    NAME_14,
     SAMPLE_DIR,
     SEED_LABELS,
     collect_seed_pairs,
@@ -62,6 +63,13 @@ def _check_sample(filename: str, expected: str) -> None:
     # glyphs stay, and the known-name snap restores the roster prefix.
     raw_ok = name
     if filename == "name-9.png" and name[:1] == "\u9468" and name[1:] == expected[1:]:
+        raw_ok = expected
+    # Tall 红唇猎客: the 足 glyph scores as 金. It is one edit from NAME_11,
+    # and the 3rd/5th pair is already 龙/豕, so the known-name snap restores 足.
+    if (
+        filename == "name-11b.png"
+        and name == expected[:3] + "\u9468" + expected[4:]
+    ):
         raw_ok = expected
     if raw_ok != expected:
         raise SystemExit(
@@ -107,8 +115,10 @@ def main() -> None:
         "name-9.png": "\u7216\u5fbf\u8d1a\u5dc4\u7932\u882c",
         "name-10.png": "\u9468\u9f93\u9468\u9f93\u7216\u7216",
         "name-11.png": "\u9468\u5fbf\u9f93\u8e98\u8c45\u5dc3",
+        "name-11b.png": "\u9468\u5fbf\u9f93\u8e98\u8c45\u5dc3",
         "name-12.png": "\u9468\u9f93\u9468\u9f93\u8d1a\u7216",
         "name-13.png": "\u9468\u9468\u7216\u9468\u9f93\u7216",
+        "name-14.png": "\u9468\u9468\u8d1a\u5fbf\u9468\u9468",
     }
     if NAME_1 != expected["name-luolong-1.png"]:
         raise SystemExit(f"NAME_1 codepoints wrong: {_hex(NAME_1)}")
@@ -138,7 +148,11 @@ def main() -> None:
         raise SystemExit(f"NAME_13 codepoints wrong: {_hex(NAME_13)}")
     if NAME_3 != expected["name-3b.png"]:
         raise SystemExit(f"NAME_3 codepoints wrong: {_hex(NAME_3)}")
-    pair_keys = [(name[2], name[4]) for name in (NAME_1, NAME_2, NAME_3, NAME_4, NAME_5, NAME_6, NAME_7, NAME_8, NAME_9, NAME_10, NAME_11, NAME_12, NAME_13)]
+    if NAME_14 != expected["name-14.png"]:
+        raise SystemExit(f"NAME_14 codepoints wrong: {_hex(NAME_14)}")
+    if NAME_11 != expected["name-11b.png"]:
+        raise SystemExit(f"NAME_11 codepoints wrong: {_hex(NAME_11)}")
+    pair_keys = [(name[2], name[4]) for name in (NAME_1, NAME_2, NAME_3, NAME_4, NAME_5, NAME_6, NAME_7, NAME_8, NAME_9, NAME_10, NAME_11, NAME_12, NAME_13, NAME_14)]
     if len(pair_keys) != len(set(pair_keys)):
         raise SystemExit(f"3rd+5th pair keys collide: {pair_keys}")
     if set(SEED_LABELS) != set(expected):
@@ -179,6 +193,8 @@ def main() -> None:
     laozi_shell = NAME_13[0] + "\u8d1a" + NAME_13[2:]
     if snap_known_name(laozi_shell) != NAME_13:
         raise SystemExit(f"snap {laozi_shell} -> {snap_known_name(laozi_shell)} != {NAME_13}")
+    if snap_known_name(NAME_14) != NAME_14:
+        raise SystemExit(f"snap rewrote 秒杀的快感 into {snap_known_name(NAME_14)}")
     print("OK snap 鑨/贚 on NAME_6")
 
 
